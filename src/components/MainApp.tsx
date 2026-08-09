@@ -8,6 +8,9 @@ import McpGateway from '@/components/McpGateway';
 import RetrievalPlayground from '@/components/RetrievalPlayground';
 import SecurityCenter from '@/components/SecurityCenter';
 import AnalyticsView from '@/components/AnalyticsView';
+import AuthScreen from '@/components/AuthScreen';
+import { auth, logOutUser } from '@/lib/auth/firebaseAuth';
+import { onAuthStateChanged } from 'firebase/auth';
 
 import {
   MessageSquare,
@@ -16,6 +19,7 @@ import {
   Search,
   ShieldCheck,
   BarChart3,
+  Layers,
 } from 'lucide-react';
 
 type TabType = 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics';
@@ -24,6 +28,40 @@ export default function MainApp() {
   const [tenantId, setTenantId] = useState('tenant-acme-01');
   const [lang, setLang] = useState<'ar' | 'en'>('ar');
   const [activeTab, setActiveTab] = useState<TabType>('chat');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  // Subscribe to Firebase Auth state changes
+  useEffect(() => {
+    if (!auth) {
+      setIsAuthenticated(false);
+      return;
+    }
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setIsAuthenticated(true);
+        setTenantId(`tenant-${user.uid}`);
+        setUserEmail(user.email || '');
+      } else {
+        setIsAuthenticated(false);
+        setUserEmail(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogOut = async () => {
+    try {
+      if (auth) {
+        await logOutUser();
+      }
+      setIsAuthenticated(false);
+      setUserEmail(null);
+      setTenantId('tenant-acme-01');
+    } catch (e) {
+      console.error('Logout error:', e);
+    }
+  };
 
   // Initialize active tab from URL search params if present
   useEffect(() => {
@@ -88,6 +126,31 @@ export default function MainApp() {
     },
   ];
 
+  if (isAuthenticated === null) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-200">
+        <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center animate-spin mb-4">
+          <Layers className="w-6 h-6 text-white" />
+        </div>
+        <p className="text-xs font-mono tracking-widest text-indigo-400">OMNIRAG v2.4 SECURE CONTAINER BOOTING...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <AuthScreen
+        onAuthSuccess={(tid, email) => {
+          setTenantId(tid);
+          setUserEmail(email);
+          setIsAuthenticated(true);
+        }}
+        lang={lang}
+        onLangChange={setLang}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       {/* Top Main Navigation Header */}
@@ -97,6 +160,8 @@ export default function MainApp() {
         lang={lang}
         onLangChange={setLang}
         onNavigateTab={handleTabChange}
+        userEmail={userEmail}
+        onLogOut={handleLogOut}
       />
 
       {/* Main Workspace Navigation Bar */}

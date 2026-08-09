@@ -153,6 +153,61 @@ export interface AuditLogEntry {
   timestamp: string;
 }
 
+export type SourceType =
+  | 'file'
+  | 'url'
+  | 'rss'
+  | 'youtube'
+  | 'github'
+  | 'notion'
+  | 'gdrive'
+  | 'confluence'
+  | 'slack'
+  | 'email'
+  | 'database'
+  | 'api';
+
+export type SourceStatus = 'healthy' | 'syncing' | 'degraded' | 'error' | 'paused';
+
+export interface SourceConnector {
+  id: string;
+  tenantId: TenantId;
+  name: string;
+  type: SourceType;
+  status: SourceStatus;
+  config: Record<string, any>;
+  syncSchedule: string; // Cron e.g. "0 */6 * * *" or "manual"
+  lastSyncAt?: string;
+  nextSyncAt?: string;
+  documentCount: number;
+  totalBytes?: number;
+  collectionIds: string[];
+  lastError?: string;
+  createdAt: string;
+}
+
+export interface SyncLogEntry {
+  id: string;
+  tenantId: TenantId;
+  sourceId: string;
+  sourceName: string;
+  status: 'success' | 'failed' | 'warning';
+  itemsProcessed: number;
+  durationMs: number;
+  message: string;
+  timestamp: string;
+}
+
+export interface McpResourceItem {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType: string;
+  tenantId: TenantId;
+  sourceId?: string;
+  updatedAt: string;
+}
+
 export interface SearchQuery {
   query: string;
   tenantId: TenantId;

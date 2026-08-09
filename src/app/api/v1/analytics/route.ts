@@ -5,10 +5,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
-  const auditLogs = db.getAuditLogs(tenantId);
-  const toolCalls = db.getToolCalls(tenantId);
-  const docs = db.getDocuments(tenantId);
-  const chunks = db.getChunks(tenantId);
+  const auditLogs = await db.getAuditLogs(tenantId);
+  const toolCalls = await db.getToolCalls(tenantId);
+  const docs = await db.getDocuments(tenantId);
+  const chunks = await db.getChunks(tenantId);
 
   const stats = {
     totalDocuments: docs.length,

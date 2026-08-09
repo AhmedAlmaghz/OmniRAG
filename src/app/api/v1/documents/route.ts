@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
-  const docs = db.getDocuments(tenantId);
+  const docs = await db.getDocuments(tenantId);
   return NextResponse.json({ documents: docs });
 }
 
@@ -43,9 +43,10 @@ export async function POST(req: NextRequest) {
     }
 
     newDoc.chunkCount = chunkTextList.length;
-    db.addDocument(newDoc);
+    await db.addDocument(newDoc);
 
-    chunkTextList.forEach((text, index) => {
+    for (let index = 0; index < chunkTextList.length; index++) {
+      const text = chunkTextList[index];
       const chunk: DocumentChunk = {
         id: `chunk-${docId}-${index + 1}`,
         tenantId,
@@ -57,8 +58,8 @@ export async function POST(req: NextRequest) {
         language,
         metadata: { position: index },
       };
-      db.addChunk(chunk);
-    });
+      await db.addChunk(chunk);
+    }
 
     return NextResponse.json({ success: true, document: newDoc }, { status: 201 });
   } catch (err: any) {
@@ -72,6 +73,6 @@ export async function DELETE(req: NextRequest) {
 
   if (!docId) return NextResponse.json({ error: 'Missing document id' }, { status: 400 });
 
-  db.deleteDocument(docId, tenantId);
+  await db.deleteDocument(docId, tenantId);
   return NextResponse.json({ success: true });
 }

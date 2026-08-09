@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
-  const collections = db.getCollections(tenantId);
+  const collections = await db.getCollections(tenantId);
   return NextResponse.json({ collections });
 }
 
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       createdAt: new Date().toISOString(),
     };
 
-    db.addCollection(col);
+    await db.addCollection(col);
     return NextResponse.json({ collection: col }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

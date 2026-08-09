@@ -13,7 +13,7 @@ import {
   Cpu,
   Zap,
 } from 'lucide-react';
-import { HookHarness } from '@/lib/harness/hook-harness';
+import { runHookHarness } from '@/actions/hookHarnessAction';
 
 interface SecurityCenterProps {
   tenantId: string;
@@ -25,7 +25,7 @@ export default function SecurityCenter({ tenantId, lang }: SecurityCenterProps) 
   const [testResult, setTestResult] = useState<any | null>(null);
 
   const runTestHarness = async () => {
-    const res = await HookHarness.run('pre_inference', {
+    const res = await runHookHarness('pre_inference', {
       tenantId,
       prompt: testPrompt,
     });

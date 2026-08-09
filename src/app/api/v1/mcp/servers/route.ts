@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
-  const servers = db.getMcpServers(tenantId);
+  const servers = await db.getMcpServers(tenantId);
   return NextResponse.json({ servers });
 }
 
@@ -23,16 +23,16 @@ export async function POST(req: NextRequest) {
         latencyMs: Math.floor(Math.random() * 30) + 15,
         lastChecked: new Date().toISOString(),
       };
-      db.addMcpServer(newServer);
-      return NextResponse.json({ success: true, server: newServer, servers: db.getMcpServers(tenantId) }, { status: 201 });
+      await db.addMcpServer(newServer);
+      return NextResponse.json({ success: true, server: newServer, servers: await db.getMcpServers(tenantId) }, { status: 201 });
     }
 
     const { serverId, toolName } = body;
     if (serverId && toolName) {
-      db.toggleMcpTool(serverId, toolName, tenantId);
+      await db.toggleMcpTool(serverId, toolName, tenantId);
     }
 
-    return NextResponse.json({ success: true, servers: db.getMcpServers(tenantId) });
+    return NextResponse.json({ success: true, servers: await db.getMcpServers(tenantId) });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

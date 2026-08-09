@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Layers, ShieldCheck, Cpu, Database, RefreshCw } from 'lucide-react';
-import { INITIAL_TENANTS } from '@/lib/storage/db';
+import { INITIAL_TENANTS } from '@/lib/storage/constants';
 
 interface HeaderProps {
   currentTenantId: string;
@@ -10,9 +10,11 @@ interface HeaderProps {
   lang: 'ar' | 'en';
   onLangChange: (lang: 'ar' | 'en') => void;
   onNavigateTab: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics') => void;
+  userEmail?: string | null;
+  onLogOut?: () => void;
 }
 
-export default function Header({ currentTenantId, onTenantChange, lang, onLangChange, onNavigateTab }: HeaderProps) {
+export default function Header({ currentTenantId, onTenantChange, lang, onLangChange, onNavigateTab, userEmail, onLogOut }: HeaderProps) {
   const currentTenant = INITIAL_TENANTS.find((t) => t.id === currentTenantId) || INITIAL_TENANTS[0];
 
   return (
@@ -81,6 +83,22 @@ export default function Header({ currentTenantId, onTenantChange, lang, onLangCh
               ))}
             </select>
           </div>
+
+          {/* User Profile & Logout */}
+          {userEmail && (
+            <div className="flex items-center gap-2 bg-slate-850 p-1.5 rounded-xl border border-slate-700/60 max-h-9 select-none">
+              <span className="text-[11px] text-indigo-300 font-medium font-mono hidden lg:inline max-w-[140px] truncate px-1.5" title={userEmail}>
+                {userEmail}
+              </span>
+              <button
+                type="button"
+                onClick={onLogOut}
+                className="px-2.5 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-[10px] text-rose-300 border border-rose-800/40 hover:border-rose-700 transition font-bold cursor-pointer select-none"
+              >
+                {lang === 'ar' ? 'خروج' : 'Logout'}
+              </button>
+            </div>
+          )}
 
           {/* Language Toggle */}
           <button
