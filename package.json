@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node dev-server.js",
-    "build": "NODE_ENV=production next build && mkdir -p dist && cp -r .next/* dist/",
+    "build": "next build",
     "start": "next start -p 3000 -H 0.0.0.0",
     "clean": "rm -rf .next dist",
     "lint": "tsc --noEmit"
@@ -21,8 +21,7 @@
     "next": "^16.3.0",
     "postcss": "^8.5.26",
     "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "vite": "^6.2.3"
+    "react-dom": "^19.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
