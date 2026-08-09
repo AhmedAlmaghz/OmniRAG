@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { Document, DocumentChunk } from '@/lib/types/omnirag';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
   const docs = db.getDocuments(tenantId);

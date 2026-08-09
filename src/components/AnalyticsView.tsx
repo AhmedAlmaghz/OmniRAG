@@ -53,8 +53,10 @@ export default function AnalyticsView({ tenantId, lang }: AnalyticsViewProps) {
         </div>
 
         <button
+          type="button"
           onClick={fetchAnalytics}
-          className="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-600 transition"
+          className="p-2.5 bg-slate-100 hover:bg-slate-200 rounded-xl text-slate-600 transition cursor-pointer"
+          title="تحديث البيانات"
         >
           <RefreshCw className="w-4 h-4" />
         </button>

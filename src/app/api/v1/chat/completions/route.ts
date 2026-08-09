@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch, generateRagCompletion } from '@/lib/rag/engine';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();

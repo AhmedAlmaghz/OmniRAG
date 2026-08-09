@@ -27,6 +27,15 @@ interface McpGatewayProps {
 export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   const [servers, setServers] = useState<MCPServerConfig[]>([]);
   const [isTesting, setIsTesting] = useState<string | null>(null);
+  const [pingNotice, setPingNotice] = useState<string | null>(null);
+
+  // New MCP Server Modal State
+  const [showAddServerModal, setShowAddServerModal] = useState(false);
+  const [newServerName, setNewServerName] = useState('');
+  const [newEndpointUrl, setNewEndpointUrl] = useState('');
+  const [newSandboxTier, setNewSandboxTier] = useState<string>('T1_LIMITED');
+  const [newDescription, setNewDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fetchServers = async () => {
     try {
@@ -42,6 +51,40 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     fetchServers();
   }, [tenantId]);
 
+  const handleAddServerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newServerName.trim() || !newEndpointUrl.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/v1/mcp/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId,
+          name: newServerName,
+          endpointUrl: newEndpointUrl,
+          sandboxTier: newSandboxTier,
+          description: newDescription || 'خادم MCP مخصص للمؤسسة',
+        }),
+      });
+
+      if (res.ok) {
+        setNewServerName('');
+        setNewEndpointUrl('');
+        setNewDescription('');
+        setShowAddServerModal(false);
+        fetchServers();
+        setPingNotice(lang === 'ar' ? 'تم تسجيل خادم MCP الجديد وفحصه بنجاح!' : 'New MCP Server registered successfully!');
+        setTimeout(() => setPingNotice(null), 4000);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const toggleTool = async (serverId: string, toolName: string) => {
     await fetch('/api/v1/mcp/servers', {
       method: 'POST',
@@ -55,7 +98,8 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     setIsTesting(serverId);
     setTimeout(() => {
       setIsTesting(null);
-      alert('تم فحص اتصال الخادم: الاستجابة ممتازة (Latency: 28ms, Status: Healthy).');
+      setPingNotice(lang === 'ar' ? `تم فحص الاتصال الخادم (${serverId}): الاستجابة ممتازة (Latency: 28ms, Status: Healthy).` : `Server ${serverId} healthy (28ms).`);
+      setTimeout(() => setPingNotice(null), 4000);
     }, 600);
   };
 
@@ -81,17 +125,36 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAddServerModal(true)}
+            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+          >
+            <Plug className="w-3.5 h-3.5" />
+            <span>{lang === 'ar' ? 'تسجيل خادم جديد' : 'Register Server'}</span>
+          </button>
+
           <span className="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono text-xs font-bold">
             Protocol: 2026-07-28
           </span>
           <button
+            type="button"
             onClick={fetchServers}
-            className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-600 transition"
+            className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-600 transition cursor-pointer"
+            title="تحديث البيانات"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
         </div>
       </div>
+
+      {/* Ping Status Toast */}
+      {pingNotice && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-xs font-medium flex items-center gap-2 animate-fadeIn">
+          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{pingNotice}</span>
+        </div>
+      )}
 
       {/* Grid of Registered MCP Servers */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -183,7 +246,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <button
                   onClick={() => testServerPing(server.id)}
                   disabled={isTesting === server.id}
-                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition"
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
                 >
                   <Play className="w-3 h-3 text-indigo-600" />
                   <span>{isTesting === server.id ? 'جاري الفحص...' : 'فحص الاتصال'}</span>
@@ -193,6 +256,94 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           );
         })}
       </div>
+
+      {/* Modal: Register New MCP Server */}
+      {showAddServerModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full border border-slate-200 shadow-xl space-y-4">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Plug className="w-5 h-5 text-indigo-600" />
+              <span>{lang === 'ar' ? 'تسجيل خادم MCP جديد' : 'Register New MCP Server'}</span>
+            </h3>
+
+            <form onSubmit={handleAddServerSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  {lang === 'ar' ? 'اسم الخادم:' : 'Server Name:'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newServerName}
+                  onChange={(e) => setNewServerName(e.target.value)}
+                  placeholder="مثال: Internal Jira MCP Connector"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  {lang === 'ar' ? 'رابط Endpoint:' : 'Endpoint URL:'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newEndpointUrl}
+                  onChange={(e) => setNewEndpointUrl(e.target.value)}
+                  placeholder="https://mcp.internal.company.com/v1"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  {lang === 'ar' ? 'مستوى الحماية (Sandbox Tier):' : 'Sandbox Tier:'}
+                </label>
+                <select
+                  value={newSandboxTier}
+                  onChange={(e) => setNewSandboxTier(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="T0_READ_ONLY">T0_READ_ONLY (قراءة فقط - آمن جداً)</option>
+                  <option value="T1_LIMITED">T1_LIMITED (محدود الصلاحيات)</option>
+                  <option value="T2_ELEVATED">T2_ELEVATED (مستوى عالٍ - يتطلب تأكيد)</option>
+                  <option value="T3_FULL_EXECUTION">T3_FULL_EXECUTION (تنفيذ كامل - للأنظمة الحرجة)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  {lang === 'ar' ? 'الوصف والغرض:' : 'Description:'}
+                </label>
+                <textarea
+                  rows={3}
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="شرح موجز لأدوات هذا الخادم ودواعيه..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition cursor-pointer"
+                >
+                  {isSubmitting ? 'جاري التسجيل...' : 'تسجيل واختبار'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddServerModal(false)}
+                  className="py-2.5 px-4 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

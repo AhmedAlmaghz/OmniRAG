@@ -385,6 +385,10 @@ class OmniRAGDatabase {
     return this.mcpServers.filter((s) => s.tenantId === tenantId);
   }
 
+  addMcpServer(server: MCPServerConfig) {
+    this.mcpServers.unshift(server);
+  }
+
   toggleMcpTool(serverId: string, toolName: string, tenantId: string) {
     const server = this.mcpServers.find((s) => s.id === serverId && s.tenantId === tenantId);
     if (!server) return;

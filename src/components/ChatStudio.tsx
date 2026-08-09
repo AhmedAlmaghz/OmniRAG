@@ -17,15 +17,20 @@ import {
   Bot,
   User,
   ExternalLink,
+  Trash2,
+  Download,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react';
 import { Message, ChatMode, Citation, MCPToolCall } from '@/lib/types/omnirag';
 
 interface ChatStudioProps {
   tenantId: string;
   lang: 'ar' | 'en';
+  onNavigateTab?: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics') => void;
 }
 
-export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
+export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudioProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'msg-welcome',
@@ -53,6 +58,35 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
     hybrid: lang === 'ar' ? 'وضع هجين: دموج الاسترجاع المتجهي مع المعجمي وRRF' : 'Hybrid: Vector + Lexical RRF Fusion',
     general: lang === 'ar' ? 'وضع عام: المعرفة العامة المباشرة' : 'General: Direct Model Knowledge',
     analysis: lang === 'ar' ? 'وضع التحليل المعمق: استخدام Gemini Pro للاستدلال المتقدم' : 'Analysis: Gemini 3.1 Pro Deep Reasoning',
+  };
+
+  const handleClearChat = () => {
+    setMessages([
+      {
+        id: 'msg-welcome',
+        tenantId,
+        conversationId: 'conv-init',
+        role: 'assistant',
+        content:
+          lang === 'ar'
+            ? 'تمت إعادة ضبط المحادثة. كيف يمكنني مساعدتك اليوم؟'
+            : 'Conversation reset. How can I assist you today?',
+        createdAt: new Date().toISOString(),
+        modelUsed: 'gemini-3.6-flash',
+      },
+    ]);
+    setActiveCitation(null);
+    setSecurityNotice(null);
+  };
+
+  const handleExportChat = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(messages, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `omnirag-chat-${tenantId}-${Date.now()}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
   };
 
   const handleSendMessage = async (promptToSend?: string) => {
@@ -93,7 +127,19 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
 
       if (!res.ok) {
         // Blocked by HookHarness guardrail
-        setSecurityNotice(data.error || 'تم حظر الطلب بواسطة محرك الأمان الحتمي.');
+        const blockedReason = data.error || 'تم حظر الطلب بواسطة محرك الأمان الحتمي (HookHarness).';
+        setSecurityNotice(blockedReason);
+
+        const blockedMsg: Message = {
+          id: `msg-blocked-${Date.now()}`,
+          tenantId,
+          conversationId: 'conv-init',
+          role: 'assistant',
+          content: `🛑 [درع أمن OmniRAG]: ${blockedReason}`,
+          createdAt: new Date().toISOString(),
+          modelUsed: 'HookHarness Defense Engine',
+        };
+        setMessages((prev) => [...prev, blockedMsg]);
         setIsLoading(false);
         return;
       }
@@ -138,8 +184,16 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
     });
   };
 
+  const [mcpApprovalSuccess, setMcpApprovalSuccess] = useState<string | null>(null);
+
+  const sampleQuestions = [
+    { label: lang === 'ar' ? '📜 اتفاقية NDA لعام 2026' : '📜 NDA Terms', query: 'ما هي شروط اتفاقية عدم الإفصاح والسرية NDA؟' },
+    { label: lang === 'ar' ? '🛡️ سياسة أمن ISO27001' : '🛡️ ISO27001 Security', query: 'ما هي سياسة الاستجابة للحوادث السيبرانية ISO27001؟' },
+    { label: lang === 'ar' ? '🔒 تشفير عزل المستأجرين' : '🔒 Tenant Isolation', query: 'كيف يتم حماية وتشفير بيانات المستأجر المعين؟' },
+  ];
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-140px)]">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-[600px] lg:h-[calc(100vh-170px)]">
       {/* Main Chat Area */}
       <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-col h-full overflow-hidden">
         {/* Chat Studio Toolbar */}
@@ -152,8 +206,9 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
               {(['hybrid', 'private', 'general', 'analysis'] as ChatMode[]).map((m) => (
                 <button
                   key={m}
+                  type="button"
                   onClick={() => setSelectedMode(m)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                     selectedMode === m ? 'bg-white text-indigo-600 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -166,11 +221,32 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
             </div>
           </div>
 
-          {/* Quick Demo Controls */}
+          {/* Quick Demo Controls & Chat Session Tools */}
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={handleClearChat}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+              title="مسح المحادثة وإعادة ضبط الاستوديو"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">{lang === 'ar' ? 'مسح' : 'Clear'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportChat}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+              title="تصدير سجل المحادثة كملف JSON"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">{lang === 'ar' ? 'تصدير' : 'Export'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={triggerInjectionTest}
-              className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1.5 transition"
+              className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
               title="اختبار حظر هجمات الحقن حتمياً"
             >
               <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
@@ -178,11 +254,12 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
             </button>
 
             <button
+              type="button"
               onClick={triggerToolApprovalDemo}
-              className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold flex items-center gap-1.5 transition"
+              className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>{lang === 'ar' ? 'محاكاة موافقة MCP Tool' : 'Test MCP Approval'}</span>
+              <span>{lang === 'ar' ? 'محاكاة موافقة MCP' : 'Test MCP'}</span>
             </button>
           </div>
         </div>
@@ -222,8 +299,9 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
                         {msg.citations.map((cit) => (
                           <button
                             key={cit.index}
+                            type="button"
                             onClick={() => setActiveCitation(cit)}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-indigo-200 hover:border-indigo-400 text-indigo-700 text-xs font-medium shadow-2xs transition"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-indigo-200 hover:border-indigo-400 text-indigo-700 text-xs font-medium shadow-2xs transition cursor-pointer"
                           >
                             <BookOpen className="w-3 h-3" />
                             <span>[{cit.index}] {cit.documentTitle}</span>
@@ -268,6 +346,27 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
           )}
         </div>
 
+        {/* Interactive Quick Prompts Bar */}
+        <div className="px-4 py-2 bg-slate-50 border-t border-slate-200 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          <span className="text-[11px] font-bold text-slate-500 shrink-0 flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-indigo-600" />
+            {lang === 'ar' ? 'أسئلة مقترحة بنقرة واحدة:' : 'Quick Prompts:'}
+          </span>
+          {sampleQuestions.map((sq, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => {
+                setInputPrompt(sq.query);
+                handleSendMessage(sq.query);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-indigo-700 text-xs font-medium whitespace-nowrap transition cursor-pointer shrink-0 shadow-2xs"
+            >
+              {sq.label}
+            </button>
+          ))}
+        </div>
+
         {/* Input Bar */}
         <div className="p-4 border-t border-slate-200 bg-white">
           <form
@@ -283,8 +382,8 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
               onChange={(e) => setInputPrompt(e.target.value)}
               placeholder={
                 lang === 'ar'
-                  ? 'اكتب سؤالك هنا (مثال: ما هي شروط اتفاقية عدم الإفصاح NDA؟)'
-                  : 'Type query (e.g. What are NDA terms?)'
+                  ? 'اكتب سؤالك هنا أو اختر من الأسئلة المقترحة اعلاه...'
+                  : 'Type query or select a quick prompt above...'
               }
               className="flex-1 px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 text-sm text-slate-900"
             />
@@ -309,7 +408,7 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
           </h3>
 
           {activeCitation ? (
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-indigo-600">المصدر [{activeCitation.index}]</span>
                 <span className="text-[11px] font-mono text-slate-400">Score: {activeCitation.score}</span>
@@ -318,6 +417,16 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
               <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100 font-mono">
                 "{activeCitation.snippet}"
               </p>
+              {onNavigateTab && (
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab('knowledge')}
+                  className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer border border-indigo-200/80"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>{lang === 'ar' ? 'عرض في مستودع المعرفة' : 'View in Knowledge Base'}</span>
+                </button>
+              )}
             </div>
           ) : (
             <p className="text-xs text-slate-400 leading-relaxed bg-white p-4 rounded-xl border border-slate-200/60">
@@ -325,6 +434,14 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
                 ? 'اضغط على أي رقم مرجع في الاستجابة لمردود تفاصيل القاطعة المقتبسة.'
                 : 'Click any citation badge to inspect chunk origin.'}
             </p>
+          )}
+
+          {/* Toast Notification for Tool Approval */}
+          {mcpApprovalSuccess && (
+            <div className="mt-4 bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-emerald-800 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{mcpApprovalSuccess}</span>
+            </div>
           )}
 
           {/* Pending MCP Tool Approval Modal / Notice */}
@@ -339,17 +456,20 @@ export default function ChatStudio({ tenantId, lang }: ChatStudioProps) {
               </p>
               <div className="flex gap-2 pt-1">
                 <button
+                  type="button"
                   onClick={() => {
-                    alert('تم اعتماد تنفيذ الأداة بنجاح وتحديث سجلات التدقيق.');
+                    setMcpApprovalSuccess(lang === 'ar' ? 'تمت الموافقة على الأداة وتحديث سجلات التدقيق!' : 'Tool approved!');
                     setPendingToolApproval(null);
+                    setTimeout(() => setMcpApprovalSuccess(null), 4000);
                   }}
-                  className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 transition"
+                  className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 transition cursor-pointer"
                 >
                   {lang === 'ar' ? 'موافقة وتنفيذ' : 'Approve'}
                 </button>
                 <button
+                  type="button"
                   onClick={() => setPendingToolApproval(null)}
-                  className="flex-1 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-300 transition"
+                  className="flex-1 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-300 transition cursor-pointer"
                 >
                   {lang === 'ar' ? 'إلغاء' : 'Deny'}
                 </button>

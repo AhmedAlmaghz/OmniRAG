@@ -3,6 +3,8 @@ import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch } from '@/lib/rag/engine';
 import { SearchQuery } from '@/lib/types/omnirag';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const body: SearchQuery = await req.json();

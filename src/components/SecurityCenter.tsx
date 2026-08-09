@@ -145,8 +145,9 @@ export default function SecurityCenter({ tenantId, lang }: SecurityCenterProps) 
             />
 
             <button
+              type="button"
               onClick={runTestHarness}
-              className="mt-3 w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
+              className="mt-3 w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <Play className="w-3.5 h-3.5 text-emerald-400" />
               <span>اختبار الفحص الحتمي</span>
