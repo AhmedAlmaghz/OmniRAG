@@ -45,7 +45,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
   const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
-    fetch('/api/v1/sources/types')
+    fetch('/api/v1/sources/capabilities')
       .then((res) => res.json())
       .then((data) => {
         if (data.sourceTypes) {

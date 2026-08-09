@@ -32,7 +32,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 
   try {
     const response: any = await client.models.embedContent({
-      model: 'gemini-embedding-2-preview',
+      model: 'gemini-embedding-2',
       contents: text,
     });
 

@@ -23,10 +23,10 @@ function getGeminiClient(): GoogleGenAI {
  */
 export function selectSmartModel(query: string, mode: string): string {
   if (mode === 'analysis' || query.length > 250 || query.includes('حلل') || query.includes('مقارنة')) {
-    return 'gemini-3.1-pro-preview';
+    return 'gemini-3.6-flash';
   }
   if (query.length < 30) {
-    return 'gemini-3.1-flash-lite';
+    return 'gemini-3.5-flash-lite';
   }
   return 'gemini-3.6-flash';
 }

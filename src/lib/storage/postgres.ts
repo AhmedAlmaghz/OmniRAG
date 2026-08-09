@@ -12,7 +12,8 @@ export function getPostgresPool(): any {
   }
 
   try {
-    const { Pool } = require('pg');
+    const pg = require('pg');
+    const { Pool } = pg;
     pool = new Pool({
       connectionString,
       ssl: {

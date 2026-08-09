@@ -13,7 +13,7 @@ import { doc, setDoc, getDoc } from 'firebase/firestore';
 import firebaseConfig from '../../../firebase-applet-config.json';
 import { firestore } from '../firebase';
 import { Tenant, Collection, MCPServerConfig, SourceConnector, Document, DocumentChunk } from '../types/omnirag';
-import { seedNewTenant } from './seedTenantAction';
+import { seedNewTenant } from '../../actions/seedTenantAction';
 
 // Initialize Firebase App & Auth with SSR Safety
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
