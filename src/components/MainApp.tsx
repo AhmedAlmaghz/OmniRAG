@@ -8,6 +8,7 @@ import McpGateway from '@/components/McpGateway';
 import RetrievalPlayground from '@/components/RetrievalPlayground';
 import SecurityCenter from '@/components/SecurityCenter';
 import AnalyticsView from '@/components/AnalyticsView';
+import ModelSettingsView from '@/components/ModelSettingsView';
 import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
 import { auth, logOutUser } from '@/lib/auth/firebaseAuth';
@@ -22,9 +23,10 @@ import {
   BarChart3,
   Layers,
   Home,
+  Cpu,
 } from 'lucide-react';
 
-type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics';
+type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models';
 
 export default function MainApp() {
   const [tenantId, setTenantId] = useState('tenant-acme-01');
@@ -71,7 +73,7 @@ export default function MainApp() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab') as TabType;
-      if (tabParam && ['landing', 'chat', 'knowledge', 'mcp', 'search', 'security', 'analytics'].includes(tabParam)) {
+      if (tabParam && ['landing', 'chat', 'knowledge', 'mcp', 'search', 'security', 'analytics', 'models'].includes(tabParam)) {
         setActiveTab(tabParam);
       }
     }
@@ -102,6 +104,12 @@ export default function MainApp() {
       label: lang === 'ar' ? 'استوديو المحادثة المعززة' : 'Agentic Chat Studio',
       icon: MessageSquare,
       badge: 'Gemini 3.6',
+    },
+    {
+      id: 'models',
+      label: lang === 'ar' ? 'إعدادات نماذج AI' : 'AI Models Registry',
+      icon: Cpu,
+      badge: 'إدارة مركزية',
     },
     {
       id: 'knowledge',
@@ -224,6 +232,7 @@ export default function MainApp() {
       {/* Workspace Active Tab View Content */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'chat' && <ChatStudio tenantId={tenantId} lang={lang} onNavigateTab={handleTabChange} />}
+        {activeTab === 'models' && <ModelSettingsView />}
         {activeTab === 'knowledge' && <KnowledgeBase tenantId={tenantId} lang={lang} />}
         {activeTab === 'mcp' && <McpGateway tenantId={tenantId} lang={lang} />}
         {activeTab === 'search' && <RetrievalPlayground tenantId={tenantId} lang={lang} />}

@@ -22,10 +22,24 @@ const ai = new GoogleGenAI({
 
 export async function POST(req: NextRequest) {
   try {
-    const { fileName, fileData, mimeType } = await req.json();
+    const { fileName, fileData, mimeType, model: requestedModel } = await req.json();
 
     if (!fileData) {
       return NextResponse.json({ error: 'محتوى الملف مطلوب' }, { status: 400 });
+    }
+
+    let parseModel = requestedModel;
+    if (!parseModel) {
+      const customConfigHeader = req.headers.get('x-ai-model-config');
+      if (customConfigHeader) {
+        try {
+          const parsed = JSON.parse(customConfigHeader);
+          parseModel = parsed.documentParseModel;
+        } catch {}
+      }
+    }
+    if (!parseModel) {
+      parseModel = 'gemini-3.6-flash';
     }
 
     let extractedText = '';
@@ -37,7 +51,7 @@ export async function POST(req: NextRequest) {
       const cleanBase64 = fileData.replace(/^data:application\/pdf;base64,/, '');
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: parseModel,
         contents: [
           {
             inlineData: {
@@ -65,7 +79,7 @@ export async function POST(req: NextRequest) {
         // Fallback for other binary formats (DOCX, etc.) using Gemini
         const cleanBase64 = fileData.split(',')[1] || fileData;
         const response = await ai.models.generateContent({
-          model: 'gemini-3.6-flash',
+          model: parseModel,
           contents: [
             {
               inlineData: {

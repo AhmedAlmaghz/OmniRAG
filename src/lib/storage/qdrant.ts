@@ -194,15 +194,31 @@ export async function searchQdrantSemantic(params: {
       });
     }
 
-    const results = await (qc as any).search(COLLECTION_NAME, {
-      vector: params.vector,
-      filter: {
-        must: filterConditions,
-      },
-      limit: params.limit,
-      score_threshold: params.scoreThreshold,
-      with_payload: true,
-    });
+    let results: any[] = [];
+
+    if (typeof qc.query === 'function') {
+      const qRes = await qc.query(COLLECTION_NAME, {
+        query: params.vector,
+        filter: {
+          must: filterConditions,
+        },
+        limit: params.limit,
+        score_threshold: params.scoreThreshold,
+        with_payload: true,
+      });
+      results = Array.isArray(qRes) ? qRes : (qRes?.points || []);
+    } else if (typeof (qc as any).search === 'function') {
+      const sRes = await (qc as any).search(COLLECTION_NAME, {
+        vector: params.vector,
+        filter: {
+          must: filterConditions,
+        },
+        limit: params.limit,
+        score_threshold: params.scoreThreshold,
+        with_payload: true,
+      });
+      results = Array.isArray(sRes) ? sRes : (sRes?.points || []);
+    }
 
     return results.map((r: any) => {
       const payload = (r.payload || {}) as any;

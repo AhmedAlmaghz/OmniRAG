@@ -10,7 +10,22 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const tenantId = body.tenantId || req.headers.get('x-tenant-id') || 'tenant-acme-01';
-    const { prompt, mode = 'hybrid', collectionIds } = body;
+    const { prompt, mode = 'hybrid', collectionIds, model: requestedModel } = body;
+
+    // Resolve model name from request or custom header
+    let targetModel = requestedModel;
+    if (!targetModel) {
+      const customConfigHeader = req.headers.get('x-ai-model-config');
+      if (customConfigHeader) {
+        try {
+          const parsed = JSON.parse(customConfigHeader);
+          targetModel = parsed.chatStreamModel;
+        } catch {}
+      }
+    }
+    if (!targetModel) {
+      targetModel = 'gemini-3.6-flash';
+    }
 
     // Stage 1: Auth check
     const authCheck = await HookHarness.run('pre_auth', { tenantId });
@@ -37,7 +52,7 @@ export async function POST(req: NextRequest) {
       .join('\n\n');
 
     const result = streamText({
-      model: google('gemini-2.5-flash'),
+      model: google(targetModel),
       system: `أنت مساعد ذكي لمنصة OmniRAG. استعن بالمستندات المرفقة أدناه للإجابة على استفسار المستخدم بوضوح ودقة عالية:\n\nالمستندات:\n${contextText}`,
       prompt,
     });

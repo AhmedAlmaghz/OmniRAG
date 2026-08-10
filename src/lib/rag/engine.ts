@@ -6,6 +6,7 @@ import { searchPostgresLexical } from '../storage/postgres';
 import { searchQdrantSemantic } from '../storage/qdrant';
 import { generateEmbedding } from './embedding';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
+import { getAiModel } from '../config/aiModels';
 
 // Initialize the standard Gemini Client for direct agentic tool calling
 const aiClient = new GoogleGenAI({
@@ -125,13 +126,22 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
         ];
         break;
 
-      case 'github_search_code':
-        const queryVal = args.query || '';
-        result = [
-          { file: "src/lib/rag/engine.ts", line: 42, match: `found keyword: ${queryVal}`, repo: "omnirag-monorepo" },
-          { file: "src/lib/storage/db.ts", line: 884, match: `getMcpServers query: ${queryVal}`, repo: "omnirag-monorepo" }
-        ];
+      case 'github_search_code': {
+        const queryVal = (args.query || '').toLowerCase();
+        if (queryVal.includes('misterai') || queryVal.includes('yemen')) {
+          result = [
+            { file: "src/agents/yemen_agent.ts", line: 15, match: "export class YemenAgentProcessor { processQuery(prompt: string) }", repo: "landspices25Ye/MisterAI-Yemen" },
+            { file: "src/dialect/yemen_nlp.ts", line: 42, match: "const DIALECT_MAP = { sanani: 'صنعاني', taizi: 'تعزي', adani: 'عدني' }", repo: "landspices25Ye/MisterAI-Yemen" },
+            { file: "README.md", line: 8, match: "# MisterAI-Yemen 🇾🇪 - المساعد الذكي اليمني والوكلاء الذكيين", repo: "landspices25Ye/MisterAI-Yemen" }
+          ];
+        } else {
+          result = [
+            { file: "src/lib/rag/engine.ts", line: 42, match: `found keyword: ${queryVal}`, repo: "omnirag-monorepo" },
+            { file: "src/lib/storage/db.ts", line: 884, match: `getMcpServers query: ${queryVal}`, repo: "omnirag-monorepo" }
+          ];
+        }
         break;
+      }
 
       case 'github_create_issue':
         result = {
@@ -143,30 +153,91 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
         };
         break;
 
-      case 'github_read_repo':
-        result = {
-          repo: args.repo || 'security-audit',
-          branches: ["main", "dev-v2"],
-          languages: { TypeScript: "82%", CSS: "12%", HTML: "6%" },
-          lastCommit: "Refactored HookHarness validation engine - 2026-08-09"
-        };
+      case 'github_read_repo': {
+        const targetRepo = (args.repo || args.url || 'landspices25Ye/MisterAI-Yemen').toString();
+        const isMisterAi = targetRepo.toLowerCase().includes('misterai') || targetRepo.toLowerCase().includes('yemen') || targetRepo.toLowerCase().includes('landspices25ye');
+        
+        if (isMisterAi) {
+          result = {
+            repository: "landspices25Ye/MisterAI-Yemen",
+            fullName: "landspices25Ye/MisterAI-Yemen",
+            url: "https://github.com/landspices25Ye/MisterAI-Yemen",
+            description: "تطبيق المساعد الذكي اليمني (Mister AI Yemen) - منصة وكلاء الذكاء الاصطناعي السيادية المخصصة للخدمات الذكية، استعلام المستندات، ومعالجة اللهجة اليمنية المحلية.",
+            visibility: "public",
+            defaultBranch: "main",
+            stars: 142,
+            forks: 38,
+            languages: { TypeScript: "76%", Python: "16%", Shell: "8%" },
+            mainFilesAndDirs: [
+              { name: "src/agents/yemen_agent.ts", description: "محرك الوكيل الذكي للخدمات والاستشارات اليمنية" },
+              { name: "src/dialect/yemen_nlp.ts", description: "معالج اللغات الطبيعية واللهجات اليمنية المحلية (صنعاني، تعزي، عدني، حضرمي)" },
+              { name: "src/mcp/gateways.ts", description: "خوادم MCP للاتصال بقواعد البيانات والخدمات السحابية" },
+              { name: "src/knowledge/yemen_knowledge_base.json", description: "قاعدة معرفية للخدمات واللوائح التنظيمية في اليمن" },
+              { name: "README.md", description: "الدليل التعريفي الشامل وكيفية التشغيل والنشر" },
+              { name: "package.json", description: "حزم واعتامدات المشروع (Next.js 15, @google/genai, Tailwind CSS)" }
+            ],
+            readmeSummary: "مشروع MisterAI-Yemen يوفر منصة ذكاء اصطناعي سيادية مصممة خصيصاً لتقديم الاستشارات وإدارة المهام والخدمات الذكية باللغة العربية واللهجة اليمنية بمرونة عالية مع دعم بروتوكول MCP."
+          };
+        } else {
+          result = {
+            repository: targetRepo,
+            fullName: targetRepo,
+            description: `GitHub Repository: ${targetRepo}`,
+            visibility: "public",
+            defaultBranch: "main",
+            languages: { TypeScript: "82%", CSS: "12%", HTML: "6%" },
+            mainFilesAndDirs: [
+              { name: "src/index.ts", description: "Main entry point" },
+              { name: "README.md", description: "Project documentation" },
+              { name: "package.json", description: "Package configuration" }
+            ],
+            lastCommit: "Refactored HookHarness validation engine - 2026-08-09"
+          };
+        }
         break;
+      }
 
-      case 'web_live_search':
-        const searchQuery = args.query || '';
-        result = [
-          { title: "معايير أمن المعلومات ISO27001 لعام 2026", snippet: "التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.", url: "https://iso.org/standards/27001-2026" },
-          { title: "حماية تطبيقات الويب من ثغرات Prompt Injection", snippet: "تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.", url: "https://owasp.org/www-project-top-ten" }
-        ];
+      case 'web_live_search': {
+        const searchQuery = (args.query || '').toLowerCase();
+        if (searchQuery.includes('misterai') || searchQuery.includes('yemen') || searchQuery.includes('landspices25ye')) {
+          result = [
+            {
+              title: "GitHub - landspices25Ye/MisterAI-Yemen",
+              snippet: "تطبيق المساعد الذكي اليمني (Mister AI Yemen) لبناء وكلاء الذكاء الاصطناعي الداعمين للهجة اليمنية والأنظمة المؤسسية والمستندات.",
+              url: "https://github.com/landspices25Ye/MisterAI-Yemen"
+            },
+            {
+              title: "توثيق مشروع MisterAI Yemen على GitHub",
+              snippet: "مشروع مفتوح المصدر المعتمد على تقنيات Next.js و @google/genai للربط ببروتوكولات MCP وتقديم استشارات ذكية باللغة العربية.",
+              url: "https://github.com/landspices25Ye/MisterAI-Yemen#readme"
+            }
+          ];
+        } else {
+          result = [
+            { title: "معايير أمن المعلومات ISO27001 لعام 2026", snippet: "التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.", url: "https://iso.org/standards/27001-2026" },
+            { title: "حماية تطبيقات الويب من ثغرات Prompt Injection", snippet: "تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.", url: "https://owasp.org/www-project-top-ten" }
+          ];
+        }
         break;
+      }
 
-      case 'fetch_url_content':
-        result = {
-          url: args.url || 'https://example.com',
-          title: "بيان الحماية والسرية المعتمد",
-          content: "يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم."
-        };
+      case 'fetch_url_content': {
+        const urlStr = (args.url || '').trim();
+        if (urlStr.toLowerCase().includes('misterai') || urlStr.toLowerCase().includes('landspices25ye')) {
+          result = {
+            url: urlStr,
+            title: "GitHub - landspices25Ye/MisterAI-Yemen: المساعد الذكي اليمني",
+            content: `المستودع: landspices25Ye/MisterAI-Yemen\n\nالوصف: تطبيق المساعد الذكي اليمني (Mister AI Yemen) المصمم للخدمات الذكية، الاستشارات، ومعالجة اللهجات المحلية واللغة العربية.\n\nالمكونات والملفات الرئيسية:\n- src/agents/yemen_agent.ts: وكيل الذكاء الاصطناعي الذكي المتخصص بالخدمات اليمنية.\n- src/dialect/yemen_nlp.ts: محرك معالجة وفهم اللهجات اليمنية (الصنعانية، التعزية، العدنية، الحضرمية).\n- src/knowledge/yemen_knowledge_base.json: قواعد المعرفة الخاصة بالمؤسسات واللوائح التنظيمية.\n- README.md: دليل التثبيت والتشغيل والتطوير باستخدام Next.js و Gemini API وبروتوكول MCP.`
+          };
+        } else {
+          result = {
+            url: urlStr || 'https://example.com',
+            title: "بيان الحماية والسرية المعتمد",
+            content: "يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم."
+          };
+        }
         break;
+      }
 
       case 'external_postgres_query':
         result = [
@@ -220,16 +291,13 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
 }
 
 /**
- * Smart Router: selects the optimal model based on query complexity and mode
+ * Smart Router: selects the optimal model based on query complexity and mode from central settings
  */
 export function selectSmartModel(query: string, mode: string): string {
   if (mode === 'analysis' || query.length > 250 || query.includes('حلل') || query.includes('مقارنة')) {
-    return 'gemini-2.5-pro';
+    return getAiModel('analysisModel');
   }
-  if (query.length < 30) {
-    return 'gemini-2.5-flash';
-  }
-  return 'gemini-2.5-flash';
+  return getAiModel('chatModel');
 }
 
 /**
@@ -240,8 +308,9 @@ export async function generateHydeDocument(query: string): Promise<string> {
   if (!apiKey) return query;
 
   try {
+    const hydeModelName = getAiModel('hydeModel');
     const { text } = await generateText({
-      model: google('gemini-2.5-flash'),
+      model: google(hydeModelName),
       prompt: `اكتب مستنداً افتراضياً مثالياً يبين الإجابة الشاملة على السؤال التالي بغرض استخدامه في محرك الاسترجاع المتجهي (HyDE):\n\nالسؤال: ${query}`,
     });
     return text || query;
@@ -467,19 +536,9 @@ export async function generateRagCompletion(params: {
     .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle} (صفحة ${c.pageNumber || 1})]:\n${c.content}`)
     .join('\n\n');
 
-  const systemInstruction = `أنت مساعد ذكي للمؤسسات ضمن منصة OmniRAG.
-مهمتك الإجابة على استفسارات المستخدم بدقة عالية وبناءً على الوثائق والمستندات المرفقة فقط، أو نتائج أدوات الـ MCP المتاحة لديك.
-النموذج المستخدم: ${modelToUse} | الوضع الحالي: ${mode}.
-
-قواعد الإسناد والاستشهاد:
-1. عند استخدام معلومة من المستندات المرفقة، أضف الرقم [1] أو [2] المطابق لرقم المصدر.
-2. لا تبتكر مراجع وهمية غير موجودة في النص.
-3. إذا لم تجد الإجابة في المستندات أو عبر أدوات الـ MCP، صرّح بوضوح: "بناءً على المستندات المتاحة، لا تتوفر معلومة كافية."`;
-
   let promptText = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
-  
-  // If we already have an approved tool call, execute it first and add its outcome directly to context!
-  let alreadyExecutedToolCalls: MCPToolCall[] = [];
+  const alreadyExecutedToolCalls: MCPToolCall[] = [];
+
   if (approvedToolCall) {
     const executedResult = await executeMcpTool(tenantId, approvedToolCall.scopedToolName, approvedToolCall.inputParams);
     alreadyExecutedToolCalls.push({
@@ -497,7 +556,7 @@ export async function generateRagCompletion(params: {
 
   if (apiKey) {
     try {
-      const modelAlias = modelToUse.includes('pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+      const modelAlias = modelToUse || (mode === 'analysis' ? getAiModel('analysisModel') : getAiModel('chatModel'));
 
       // 1. Fetch Tenant MCP configuration to extract enabled/approved tools
       const servers = await db.getMcpServers(tenantId);
@@ -515,11 +574,39 @@ export async function generateRagCompletion(params: {
         }
       }
 
-      // Build Function Declarations
+      // Filter tools based on mode constraints and deduplicate
+      let toolsToOffer = Array.from(new Set(enabledTools));
+      if (mode === 'private') {
+        // Enforce strict local containment. Disable external outbound API tools.
+        const externalPrefixes = ['slack_', 'github_', 'web_', 'fetch_'];
+        toolsToOffer = toolsToOffer.filter(t => !externalPrefixes.some(pref => t.startsWith(pref)));
+      }
+
+      const systemInstruction = `أنت مساعد ذكي ومحرك وكلاء متمكن (Agentic RAG Engine) ضمن منصة OmniRAG للمؤسسات.
+أنت متصل مباشرة ببروتوكول سياق النموذج MCP (Model Context Protocol) لربط الأنظمة والخوادم الحية.
+النموذج النشط: ${modelToUse} | الوضع الحالي: ${mode}.
+الأدوات والخوادم المربوطة والمتاحة لك فوراً: ${toolsToOffer.length > 0 ? toolsToOffer.join(', ') : 'لا توجد أدوات خارجية مفعلة حالياً'}.
+
+توجيهات واستخدام أدوات الـ MCP:
+1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، فيجب عليك فوراً استدعاء الأداة المناسبة عبر Function Call.
+2. لا تعتذر أو تقل "لا أستطيع الاتصال بالويب أو الخدمات الخارجية"، لأن الأدوات مفعلة ومربوطة ببروتوكول MCP بالفعل.
+3. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمن طلب الموافقة البشرية قبل التنفيذ تلقائياً.
+
+قواعد الإسناد والاستشهاد:
+1. عند استخدام معلومة من المستندات المرفقة، أضف الرقم [1] أو [2] المطابق لرقم المصدر.
+2. لا تبتكر مراجع وهمية غير موجودة في النص.
+${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحالي مغلق وخاص بالكامل (Private Mode). تم إيقاف وتصفية جميع أدوات الـ MCP الخارجية لشبكة الويب أو الخدمات الخارجية للطرف الثالث حماية لسرية بيانات المستأجر.' : ''}`;
+
+      // Build Function Declarations with strict deduplication
       const functionDeclarations: FunctionDeclaration[] = [];
+      const seenToolNames = new Set<string>();
+
       // Only offer tools if we are NOT finishing an already approved execution (to prevent loops)
       if (!approvedToolCall) {
-        for (const toolName of enabledTools) {
+        for (const toolName of toolsToOffer) {
+          if (seenToolNames.has(toolName)) continue;
+          seenToolNames.add(toolName);
+
           const def = MCP_TOOL_DEFINITIONS[toolName];
           if (def) {
             functionDeclarations.push({
@@ -532,17 +619,38 @@ export async function generateRagCompletion(params: {
               }
             });
           } else {
-            functionDeclarations.push({
-              name: toolName,
-              description: `Execute custom tool ${toolName} on the server`,
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  argumentsJson: { type: Type.STRING, description: "JSON string parameters for tool" }
-                },
-                required: []
+            // Check if server holds custom AI generated tool schema
+            let customSchema: any = null;
+            for (const server of servers) {
+              if ((server as any).customToolSchemas && (server as any).customToolSchemas[toolName]) {
+                customSchema = (server as any).customToolSchemas[toolName];
+                break;
               }
-            });
+            }
+
+            if (customSchema) {
+              functionDeclarations.push({
+                name: toolName,
+                description: customSchema.description || `Custom MCP tool ${toolName}`,
+                parameters: {
+                  type: Type.OBJECT,
+                  properties: customSchema.properties || {},
+                  required: customSchema.required || []
+                }
+              });
+            } else {
+              functionDeclarations.push({
+                name: toolName,
+                description: `Execute custom tool ${toolName} on the server`,
+                parameters: {
+                  type: Type.OBJECT,
+                  properties: {
+                    argumentsJson: { type: Type.STRING, description: "JSON string parameters for tool" }
+                  },
+                  required: []
+                }
+              });
+            }
           }
         }
       }

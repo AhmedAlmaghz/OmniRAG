@@ -885,7 +885,28 @@ class OmniRAGDatabase {
     await ensureSeeded();
     const q = query(collection(firestore, 'mcpServers'), where('tenantId', '==', tenantId));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map((d) => d.data() as MCPServerConfig);
+    const existing = snapshot.docs.map((d) => d.data() as MCPServerConfig);
+
+    if (existing.length > 0) {
+      return existing;
+    }
+
+    // Auto-seed default MCP gateways for tenant
+    const defaultServers = INITIAL_MCP_SERVERS.map((s) => ({
+      ...s,
+      id: `${s.id}-${tenantId}`,
+      tenantId,
+    }));
+
+    for (const server of defaultServers) {
+      try {
+        await setDoc(doc(firestore, 'mcpServers', server.id), server);
+      } catch (e) {
+        console.warn('Auto-seed MCP server warning:', e);
+      }
+    }
+
+    return defaultServers;
   }
 
   async addMcpServer(server: MCPServerConfig): Promise<void> {

@@ -9,7 +9,7 @@ interface HeaderProps {
   onTenantChange: (id: string) => void;
   lang: 'ar' | 'en';
   onLangChange: (lang: 'ar' | 'en') => void;
-  onNavigateTab: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics') => void;
+  onNavigateTab: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models') => void;
   userEmail?: string | null;
   onLogOut?: () => void;
 }
@@ -53,6 +53,17 @@ export default function Header({ currentTenantId, onTenantChange, lang, onLangCh
           >
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             <span>{lang === 'ar' ? 'درع HookHarness: نشط' : 'HookHarness: Active'}</span>
+          </button>
+
+          {/* AI Models Settings Badge - Clickable to Models Settings */}
+          <button
+            type="button"
+            onClick={() => onNavigateTab('models')}
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900/90 border border-indigo-700/60 text-indigo-300 text-xs font-mono transition cursor-pointer"
+            title={lang === 'ar' ? 'الانتقال إلى إعدادات النماذج' : 'Go to AI Models Registry'}
+          >
+            <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+            <span>{lang === 'ar' ? 'نماذج AI' : 'AI Models'}</span>
           </button>
 
           {/* Database System Badge - Clickable to Knowledge Base */}

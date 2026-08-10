@@ -18,6 +18,16 @@ import {
   Activity,
   Trash2,
   Plus,
+  Wand2,
+  Sparkles,
+  Code2,
+  CheckCircle2,
+  X,
+  Bot,
+  Cpu,
+  Loader2,
+  Copy,
+  Layers,
 } from 'lucide-react';
 import { MCPServerConfig } from '@/lib/types/omnirag';
 
@@ -42,11 +52,31 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   // Custom tool registration per server state
   const [customToolInputs, setCustomToolInputs] = useState<Record<string, string>>({});
 
+  // AI Tool Builder State
+  const [showToolBuilderModal, setShowToolBuilderModal] = useState(false);
+  const [builderTargetServerId, setBuilderTargetServerId] = useState('');
+  const [builderPrompt, setBuilderPrompt] = useState('');
+  const [isGeneratingTool, setIsGeneratingTool] = useState(false);
+  const [generatedToolSchema, setGeneratedToolSchema] = useState<{
+    toolName: string;
+    description: string;
+    properties: Record<string, { type: string; description: string }>;
+    required: string[];
+    sampleResponse?: any;
+  } | null>(null);
+  const [isSavingTool, setIsSavingTool] = useState(false);
+  const [builderError, setBuilderError] = useState<string | null>(null);
+
   const fetchServers = async () => {
     try {
       const res = await fetch(`/api/v1/mcp/servers?tenantId=${tenantId}`);
       const data = await res.json();
-      if (data.servers) setServers(data.servers);
+      if (data.servers) {
+        setServers(data.servers);
+        if (data.servers.length > 0 && !builderTargetServerId) {
+          setBuilderTargetServerId(data.servers[0].id);
+        }
+      }
     } catch (e) {
       console.error(e);
     }
@@ -55,6 +85,75 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   useEffect(() => {
     fetchServers();
   }, [tenantId]);
+
+  const handleGenerateTool = async () => {
+    if (!builderPrompt.trim()) return;
+    setIsGeneratingTool(true);
+    setBuilderError(null);
+
+    try {
+      const res = await fetch('/api/v1/mcp/generate-tool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generate',
+          prompt: builderPrompt,
+          serverId: builderTargetServerId,
+          tenantId,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'فشل توليد مخطط الأداة بالذكاء الاصطناعي');
+      }
+
+      setGeneratedToolSchema(data.toolSchema);
+    } catch (err: any) {
+      setBuilderError(err.message || 'حدث خطأ أثناء الاتصال بالمساعد الاصطناعي لبناء الأداة');
+    } finally {
+      setIsGeneratingTool(false);
+    }
+  };
+
+  const handleSaveTool = async () => {
+    if (!generatedToolSchema || !builderTargetServerId) return;
+    setIsSavingTool(true);
+    setBuilderError(null);
+
+    try {
+      const res = await fetch('/api/v1/mcp/generate-tool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          serverId: builderTargetServerId,
+          toolSchema: generatedToolSchema,
+          tenantId,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'فشل حفظ وحفظ الأداة في الخادم');
+      }
+
+      setPingNotice(
+        lang === 'ar'
+          ? `تم اعتماد وتخزين الأداة الذكية (${generatedToolSchema.toolName}) على الخادم بنجاح!`
+          : `Tool ${generatedToolSchema.toolName} created & saved successfully!`
+      );
+      setShowToolBuilderModal(false);
+      setBuilderPrompt('');
+      setGeneratedToolSchema(null);
+      fetchServers();
+      setTimeout(() => setPingNotice(null), 4000);
+    } catch (err: any) {
+      setBuilderError(err.message || 'حدث خطأ أثناء حفظ الأداة');
+    } finally {
+      setIsSavingTool(false);
+    }
+  };
 
   const handleAddServerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -234,7 +333,21 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              if (servers.length > 0 && !builderTargetServerId) {
+                setBuilderTargetServerId(servers[0].id);
+              }
+              setShowToolBuilderModal(true);
+            }}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-indigo-600 to-indigo-700 hover:from-amber-600 hover:to-indigo-800 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-indigo-600/20"
+          >
+            <Wand2 className="w-4 h-4 text-amber-200 animate-pulse" />
+            <span>{lang === 'ar' ? 'منشئ الأدوات بالذكاء الاصطناعي' : 'AI Tool Builder'}</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowAddServerModal(true)}
@@ -490,6 +603,248 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: AI Tool Builder */}
+      {showToolBuilderModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 max-w-2xl w-full border border-slate-200 shadow-2xl space-y-5 animate-in fade-in-50 zoom-in-95 duration-150 my-8">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-indigo-600 text-white flex items-center justify-center shadow-md">
+                  <Wand2 className="w-5 h-5 text-amber-100" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <span>{lang === 'ar' ? 'منشئ الأدوات بالذكاء الاصطناعي (AI Tool Builder)' : 'AI Tool Schema Builder'}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
+                      MCP 2026-07-28
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {lang === 'ar'
+                      ? 'اكتب وصفاً نصياً لما تريده من الأداة، وسيقوم الذكاء الاصطناعي بتحويله تلقائياً إلى مخطط رسم المعاملات JSON Schema وتخزينه في خادم MCP.'
+                      : 'Describe the tool in natural language, and Gemini will generate a valid JSON Schema & register it to the MCP configuration.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowToolBuilderModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error Message */}
+            {builderError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{builderError}</span>
+              </div>
+            )}
+
+            {/* Step 1: Configuration Form */}
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  {lang === 'ar' ? 'اختر خادم الـ MCP المستهدف لحفظ الأداة فيه:' : 'Target MCP Server:'}
+                </label>
+                <select
+                  value={builderTargetServerId}
+                  onChange={(e) => setBuilderTargetServerId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500 bg-white"
+                >
+                  {servers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.endpointUrl}) - Tier: {s.sandboxTier}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    {lang === 'ar' ? 'الوصف النصي المطلوب للأداة (باللغة العربية أو الإنجليزية):' : 'Tool Natural Language Requirement:'}
+                  </label>
+                  <span className="text-[10px] text-indigo-600 font-semibold flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-500" />
+                    <span>Gemini 3.6 Flash</span>
+                  </span>
+                </div>
+                <textarea
+                  rows={3}
+                  value={builderPrompt}
+                  onChange={(e) => setBuilderPrompt(e.target.value)}
+                  placeholder={
+                    lang === 'ar'
+                      ? 'مثال: أريد أداة تفحص حالة شحنة العميل باستخدام رقم التتبع ورقم الجوال وتسترجع الموقع الحالي وزمن الوصول المتوقع.'
+                      : 'Example: Tool to check customer order tracking status given tracking_number and phone_number.'
+                  }
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500 leading-relaxed"
+                />
+
+                {/* Quick Prompts Suggestions */}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span className="text-[10px] font-bold text-slate-400 self-center">
+                    {lang === 'ar' ? 'أفكار سريعة:' : 'Quick Ideas:'}
+                  </span>
+                  {[
+                    'أداة الاستعلام عن المخزون بالمنتج والفرع',
+                    'أداة فحص حالة الدفع المالي بالفاتورة',
+                    'أداة إرسال إشعار SMS للعميل',
+                    'أداة تحويل العملات واسترجاع سعر الصرف',
+                  ].map((presetPrompt) => (
+                    <button
+                      key={presetPrompt}
+                      type="button"
+                      onClick={() => setBuilderPrompt(presetPrompt)}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 border border-indigo-100 text-indigo-700 text-[10px] font-medium transition cursor-pointer"
+                    >
+                      + {presetPrompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleGenerateTool}
+                  disabled={isGeneratingTool || !builderPrompt.trim()}
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer disabled:opacity-50 shadow-xs"
+                >
+                  {isGeneratingTool ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-200" />
+                      <span>{lang === 'ar' ? 'جاري التوليد بالذكاء الاصطناعي...' : 'Generating Tool Schema...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-4 h-4 text-amber-200" />
+                      <span>{lang === 'ar' ? 'توليد كود ومخطط الأداة' : 'Generate Schema'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Step 2: Generated Schema Preview & Review */}
+            {generatedToolSchema && (
+              <div className="p-4 bg-slate-900 rounded-2xl text-slate-100 space-y-4 border border-slate-800 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2 text-emerald-400 font-mono text-xs font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>{lang === 'ar' ? 'تم توليد مخطط الأداة بنجاح' : 'Schema Generated Successfully'}</span>
+                  </div>
+                  <span className="text-[10px] bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded border border-slate-700">
+                    JSON Schema Validated
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      {lang === 'ar' ? 'اسم الأداة البرمجي (Tool Name):' : 'Tool Identifier:'}
+                    </label>
+                    <input
+                      type="text"
+                      value={generatedToolSchema.toolName}
+                      onChange={(e) =>
+                        setGeneratedToolSchema({ ...generatedToolSchema, toolName: e.target.value })
+                      }
+                      className="w-full px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 font-mono text-xs text-amber-300 focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      {lang === 'ar' ? 'الوصف الوظيفي للأداة:' : 'Description:'}
+                    </label>
+                    <input
+                      type="text"
+                      value={generatedToolSchema.description}
+                      onChange={(e) =>
+                        setGeneratedToolSchema({ ...generatedToolSchema, description: e.target.value })
+                      }
+                      className="w-full px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-400"
+                    />
+                  </div>
+                </div>
+
+                {/* Parameters List */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+                    {lang === 'ar' ? 'المعاملات والمدخلات (Parameters Schema):' : 'Parameters:'}
+                  </label>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {Object.entries(generatedToolSchema.properties || {}).map(([paramKey, paramVal]) => {
+                      const isRequired = generatedToolSchema.required?.includes(paramKey);
+                      return (
+                        <div
+                          key={paramKey}
+                          className="flex items-center justify-between p-2 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-indigo-300 font-bold">{paramKey}</span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-700 text-[10px] text-amber-300 font-mono">
+                              {paramVal.type}
+                            </span>
+                            {isRequired && (
+                              <span className="px-1.5 py-0.5 rounded bg-rose-900/60 text-rose-300 text-[9px] font-bold">
+                                {lang === 'ar' ? 'إجباري' : 'Required'}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-400 max-w-[200px] truncate">
+                            {paramVal.description}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Sample JSON Response */}
+                {generatedToolSchema.sampleResponse && (
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      {lang === 'ar' ? 'نموذج النتيجة المتوقعة (Sample JSON Output):' : 'Sample Output:'}
+                    </label>
+                    <pre className="p-2.5 rounded-lg bg-slate-950 text-emerald-400 font-mono text-[11px] overflow-x-auto border border-slate-800">
+                      {JSON.stringify(generatedToolSchema.sampleResponse, null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Save Button */}
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={handleSaveTool}
+                    disabled={isSavingTool}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-md shadow-emerald-600/20"
+                  >
+                    {isSavingTool ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>{lang === 'ar' ? 'جاري حفظ الأداة...' : 'Persisting Tool...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-100" />
+                        <span>{lang === 'ar' ? 'اعتماد وحفظ الأداة في الـ MCP' : 'Persist Tool to MCP'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

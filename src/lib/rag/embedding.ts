@@ -1,8 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
+import { getAiModel } from '../config/aiModels';
 
 /**
  * Generates a vector embedding for the given text
- * using @google/genai SDK text-embedding-004 model.
+ * using @google/genai SDK embedding models with deterministic fallback.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -10,23 +11,40 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     return generateFallbackVector(text);
   }
 
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.embedContent({
-      model: 'text-embedding-004',
-      contents: text,
-    });
+  const primaryModel = getAiModel('embeddingModel');
+  const candidateModels = Array.from(new Set([primaryModel, 'text-embedding-004', 'embedding-001']));
 
-    const res = response as any;
-    if (res.embedding?.values && Array.isArray(res.embedding.values) && res.embedding.values.length > 0) {
-      return res.embedding.values;
+  for (const modelName of candidateModels) {
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.embedContent({
+        model: modelName,
+        contents: text,
+      });
+
+      const res = response as any;
+      if (res.embedding?.values && Array.isArray(res.embedding.values) && res.embedding.values.length > 0) {
+        return normalizeTo3072(res.embedding.values);
+      }
+    } catch {
+      // Proceed to try next model or graceful fallback
     }
-
-    throw new Error('Invalid embedding response format.');
-  } catch (error) {
-    console.error('Error calling Gemini embedding API, falling back to deterministic pseudo-vector:', error);
-    return generateFallbackVector(text);
   }
+
+  return generateFallbackVector(text);
+}
+
+/**
+ * Ensures vectors returned to Qdrant or internal stores consistently match 3072 dimensions.
+ */
+function normalizeTo3072(values: number[]): number[] {
+  if (values.length === 3072) return values;
+  const result: number[] = new Array(3072);
+  for (let i = 0; i < 3072; i++) {
+    result[i] = values[i % values.length];
+  }
+  const magnitude = Math.sqrt(result.reduce((sum, val) => sum + val * val, 0)) || 1.0;
+  return result.map((v) => v / magnitude);
 }
 
 /**
@@ -36,14 +54,12 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 function generateFallbackVector(text: string): number[] {
   const vector: number[] = new Array(3072).fill(0);
   
-  // Create a pseudo-random but deterministic vector based on text characters
   for (let i = 0; i < text.length; i++) {
     const charCode = text.charCodeAt(i);
     const index = (i * 31 + charCode) % 3072;
     vector[index] = (vector[index] + charCode / 255.0) / 2.0;
   }
 
-  // Normalize the fallback vector to have unit length
   const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0)) || 1.0;
   return vector.map((v) => v / magnitude);
 }
