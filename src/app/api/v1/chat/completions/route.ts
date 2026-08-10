@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const tenantId = body.tenantId || req.headers.get('x-tenant-id') || 'tenant-acme-01';
-    const { prompt, mode = 'hybrid', collectionIds, modelOverride } = body;
+    const { prompt, mode = 'hybrid', collectionIds, modelOverride, approvedToolCall } = body;
 
     // Hook Stage 1: Pre-Auth
     const authCheck = await HookHarness.run('pre_auth', { tenantId });
@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
       mode,
       modelOverride,
       contextChunks: searchResult.chunks,
+      approvedToolCall,
     });
 
     // Hook Stage 3: Post-Inference (PII Redaction & Citation Verification)
@@ -58,6 +59,8 @@ export async function POST(req: NextRequest) {
       tokensUsed: ragResponse.tokensUsed,
       chunksRetrieved: searchResult.chunks.length,
       latencyMs: searchResult.latencyMs,
+      pendingToolCall: ragResponse.pendingToolCall,
+      toolCalls: ragResponse.toolCalls,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 });

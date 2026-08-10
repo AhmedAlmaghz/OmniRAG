@@ -89,7 +89,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
     downloadAnchor.remove();
   };
 
-  const handleSendMessage = async (promptToSend?: string) => {
+  const handleSendMessage = async (promptToSend?: string, approvedToolCall?: MCPToolCall) => {
     const textPrompt = promptToSend || inputPrompt;
     if (!textPrompt.trim() || isLoading) return;
 
@@ -101,7 +101,9 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
       tenantId,
       conversationId: 'conv-init',
       role: 'user',
-      content: textPrompt,
+      content: approvedToolCall 
+        ? `${lang === 'ar' ? '✓ موافقة وتفويض تشغيل أداة الـ MCP:' : '✓ Approved and Authorized MCP Tool:'} ${approvedToolCall.scopedToolName}`
+        : textPrompt,
       createdAt: new Date().toISOString(),
     };
 
@@ -120,6 +122,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
           tenantId,
           prompt: textPrompt,
           mode: selectedMode,
+          approvedToolCall,
         }),
       });
 
@@ -142,6 +145,11 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
         setMessages((prev) => [...prev, blockedMsg]);
         setIsLoading(false);
         return;
+      }
+
+      // Check if there is a pending tool call from the backend
+      if (data.pendingToolCall) {
+        setPendingToolApproval(data.pendingToolCall);
       }
 
       // Assistant Message
@@ -458,9 +466,12 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
                 <button
                   type="button"
                   onClick={() => {
+                    const approvedCall = { ...pendingToolApproval, status: 'approved' as const };
                     setMcpApprovalSuccess(lang === 'ar' ? 'تمت الموافقة على الأداة وتحديث سجلات التدقيق!' : 'Tool approved!');
                     setPendingToolApproval(null);
                     setTimeout(() => setMcpApprovalSuccess(null), 4000);
+                    // Trigger actual approved tool execution on backend
+                    handleSendMessage(inputPrompt || 'تأكيد موافقة أداة الـ MCP', approvedCall);
                   }}
                   className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 transition cursor-pointer"
                 >

@@ -1,10 +1,223 @@
 import { google } from './googleProvider';
 import { generateText } from 'ai';
-import { SearchQuery, SearchResult, DocumentChunk, Citation } from '../types/omnirag';
+import { SearchQuery, SearchResult, DocumentChunk, Citation, MCPToolCall } from '../types/omnirag';
 import { db } from '../storage/db';
 import { searchPostgresLexical } from '../storage/postgres';
 import { searchQdrantSemantic } from '../storage/qdrant';
 import { generateEmbedding } from './embedding';
+import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
+
+// Initialize the standard Gemini Client for direct agentic tool calling
+const aiClient = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || '',
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+});
+
+// Definitions of supported MCP tools and their parameter schemas for Gemini
+const MCP_TOOL_DEFINITIONS: Record<string, { description: string; properties: any; required: string[] }> = {
+  'slack_send_message': {
+    description: "Send a message to a slack channel for team communication/notification",
+    properties: {
+      channel: { type: Type.STRING, description: "The target slack channel starting with #, e.g. #general, #security-alerts" },
+      message: { type: Type.STRING, description: "The message content to send" }
+    },
+    required: ["channel", "message"]
+  },
+  'slack_post_alert': {
+    description: "Post a high-priority security or system alert to slack",
+    properties: {
+      channel: { type: Type.STRING, description: "The target channel starting with #, e.g. #security-alerts" },
+      message: { type: Type.STRING, description: "The security/system alert description" }
+    },
+    required: ["channel", "message"]
+  },
+  'slack_read_channel': {
+    description: "Read recent chat history or message logs from a slack channel",
+    properties: {
+      channel: { type: Type.STRING, description: "The slack channel name to read, e.g. #general" }
+    },
+    required: ["channel"]
+  },
+  'github_search_code': {
+    description: "Search across the repository files for specific keywords, methods or classes",
+    properties: {
+      query: { type: Type.STRING, description: "The search query/keyword" }
+    },
+    required: ["query"]
+  },
+  'github_create_issue': {
+    description: "Create a new issue in the GitHub repository for tracking bug reports or security concerns",
+    properties: {
+      repo: { type: Type.STRING, description: "The repository name, e.g. security-audit" },
+      title: { type: Type.STRING, description: "The issue title" },
+      body: { type: Type.STRING, description: "The issue body/description" }
+    },
+    required: ["repo", "title"]
+  },
+  'github_read_repo': {
+    description: "Retrieve summary and information about the target GitHub repository",
+    properties: {
+      repo: { type: Type.STRING, description: "The repository name to read" }
+    },
+    required: ["repo"]
+  },
+  'web_live_search': {
+    description: "Execute a web search query to retrieve real-time external information or security policies",
+    properties: {
+      query: { type: Type.STRING, description: "The search query" }
+    },
+    required: ["query"]
+  },
+  'fetch_url_content': {
+    description: "Fetch and extract text content from a specific web URL",
+    properties: {
+      url: { type: Type.STRING, description: "The exact URL to fetch" }
+    },
+    required: ["url"]
+  },
+  'external_postgres_query': {
+    description: "Execute a secure Postgres SQL query on the external registered database",
+    properties: {
+      query: { type: Type.STRING, description: "The safe SQL statement to execute" }
+    },
+    required: ["query"]
+  },
+  'get_table_schema': {
+    description: "Describe the database schema/columns for a specific table",
+    properties: {
+      tableName: { type: Type.STRING, description: "The name of the database table" }
+    },
+    required: ["tableName"]
+  }
+};
+
+/**
+ * Execute MCP Tool in a simulated/secure manner and log to Audit Logs
+ */
+async function executeMcpTool(tenantId: string, toolName: string, args: any): Promise<any> {
+  const startTime = Date.now();
+  let result: any;
+  let success = true;
+
+  try {
+    switch (toolName) {
+      case 'slack_send_message':
+      case 'slack_post_alert':
+        result = {
+          success: true,
+          messageId: `msg-slack-${Math.floor(Math.random() * 90000) + 10000}`,
+          channel: args.channel || '#general',
+          message: args.message || '',
+          timestamp: new Date().toISOString(),
+          status: 'delivered'
+        };
+        break;
+
+      case 'slack_read_channel':
+        result = [
+          { user: "سارة (أمن المعلومات)", text: `تم رصد هجمات محاكاة على بوابة المستأجر ${tenantId}`, timestamp: "قبل 10 دقائق" },
+          { user: "منذر (مهندس النظم)", text: "جميع شهادات SSL نشطة ومحدثة لعام 2026", timestamp: "قبل ساعة" },
+          { user: "Bot", text: "تم تحديث سياسات الحماية لمستوى Sandbox للجميع", timestamp: "قبل ساعتين" }
+        ];
+        break;
+
+      case 'github_search_code':
+        const queryVal = args.query || '';
+        result = [
+          { file: "src/lib/rag/engine.ts", line: 42, match: `found keyword: ${queryVal}`, repo: "omnirag-monorepo" },
+          { file: "src/lib/storage/db.ts", line: 884, match: `getMcpServers query: ${queryVal}`, repo: "omnirag-monorepo" }
+        ];
+        break;
+
+      case 'github_create_issue':
+        result = {
+          success: true,
+          issueNumber: Math.floor(Math.random() * 100) + 200,
+          title: args.title || 'تنبيه أمني من OmniRAG',
+          repo: args.repo || 'security-audit',
+          url: `https://github.com/omnirag-org/${args.repo || 'security-audit'}/issues/${Math.floor(Math.random() * 100) + 200}`
+        };
+        break;
+
+      case 'github_read_repo':
+        result = {
+          repo: args.repo || 'security-audit',
+          branches: ["main", "dev-v2"],
+          languages: { TypeScript: "82%", CSS: "12%", HTML: "6%" },
+          lastCommit: "Refactored HookHarness validation engine - 2026-08-09"
+        };
+        break;
+
+      case 'web_live_search':
+        const searchQuery = args.query || '';
+        result = [
+          { title: "معايير أمن المعلومات ISO27001 لعام 2026", snippet: "التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.", url: "https://iso.org/standards/27001-2026" },
+          { title: "حماية تطبيقات الويب من ثغرات Prompt Injection", snippet: "تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.", url: "https://owasp.org/www-project-top-ten" }
+        ];
+        break;
+
+      case 'fetch_url_content':
+        result = {
+          url: args.url || 'https://example.com',
+          title: "بيان الحماية والسرية المعتمد",
+          content: "يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم."
+        };
+        break;
+
+      case 'external_postgres_query':
+        result = [
+          { id: 1, table: "users_log", action: "LOGIN", status: "SUCCESS", ip: "192.168.1.45" },
+          { id: 2, table: "users_log", action: "READ_DOCUMENT", status: "DENIED", ip: "192.168.1.110" }
+        ];
+        break;
+
+      case 'get_table_schema':
+        result = {
+          tableName: args.tableName || 'users_log',
+          columns: [
+            { name: "id", type: "UUID", primary: true },
+            { name: "tenant_id", type: "VARCHAR(50)", nullable: false },
+            { name: "action", type: "VARCHAR(100)" },
+            { name: "status", type: "VARCHAR(20)" },
+            { name: "ip_address", type: "VARCHAR(45)" },
+            { name: "timestamp", type: "TIMESTAMP", default: "NOW()" }
+          ]
+        };
+        break;
+
+      default:
+        result = {
+          success: true,
+          tool: toolName,
+          args: args,
+          message: "تم تنفيذ الأداة المخصصة بنجاح عبر بوابة الـ MCP بنظام الحماية والـ Sandbox المحكم.",
+          timestamp: new Date().toISOString()
+        };
+    }
+  } catch (error: any) {
+    success = false;
+    result = { error: error.message || "Failed to execute tool" };
+  }
+
+  // Log in Audit Logs
+  await db.addAuditLog({
+    id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    tenantId,
+    actorId: 'mcp_gateway_agent',
+    action: 'MCP_TOOL_EXECUTED',
+    resourceType: 'mcp_tool',
+    resourceId: toolName,
+    status: success ? 'success' : 'error',
+    details: `تم تنفيذ الأداة (${toolName}) بنجاح. المدخلات: ${JSON.stringify(args)}.`,
+    timestamp: new Date().toISOString()
+  });
+
+  return result;
+}
 
 /**
  * Smart Router: selects the optimal model based on query complexity and mode
@@ -237,13 +450,16 @@ export async function generateRagCompletion(params: {
   mode: string;
   modelOverride?: string;
   contextChunks: DocumentChunk[];
+  approvedToolCall?: MCPToolCall;
 }): Promise<{
   text: string;
   citations: Citation[];
   modelUsed: string;
   tokensUsed: { input: number; output: number };
+  pendingToolCall?: MCPToolCall;
+  toolCalls?: MCPToolCall[];
 }> {
-  const { query, mode, modelOverride, contextChunks } = params;
+  const { tenantId, query, mode, modelOverride, contextChunks, approvedToolCall } = params;
   const modelToUse = modelOverride || selectSmartModel(query, mode);
 
   // Format context block with citations
@@ -252,27 +468,174 @@ export async function generateRagCompletion(params: {
     .join('\n\n');
 
   const systemInstruction = `أنت مساعد ذكي للمؤسسات ضمن منصة OmniRAG.
-مهمتك الإجابة على استفسارات المستخدم بدقة عالية وبناءً على الوثائق والمستندات المرفقة فقط.
+مهمتك الإجابة على استفسارات المستخدم بدقة عالية وبناءً على الوثائق والمستندات المرفقة فقط، أو نتائج أدوات الـ MCP المتاحة لديك.
 النموذج المستخدم: ${modelToUse} | الوضع الحالي: ${mode}.
 
 قواعد الإسناد والاستشهاد:
 1. عند استخدام معلومة من المستندات المرفقة، أضف الرقم [1] أو [2] المطابق لرقم المصدر.
 2. لا تبتكر مراجع وهمية غير موجودة في النص.
-3. إذا لم تجد الإجابة في المستندات، صرّح بوضوح: "بناءً على المستندات المتاحة، لا تتوفر معلومة كافية."`;
+3. إذا لم تجد الإجابة في المستندات أو عبر أدوات الـ MCP، صرّح بوضوح: "بناءً على المستندات المتاحة، لا تتوفر معلومة كافية."`;
 
-  const promptText = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
+  let promptText = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
+  
+  // If we already have an approved tool call, execute it first and add its outcome directly to context!
+  let alreadyExecutedToolCalls: MCPToolCall[] = [];
+  if (approvedToolCall) {
+    const executedResult = await executeMcpTool(tenantId, approvedToolCall.scopedToolName, approvedToolCall.inputParams);
+    alreadyExecutedToolCalls.push({
+      ...approvedToolCall,
+      status: 'completed',
+      outputResult: executedResult,
+      latencyMs: 35,
+      timestamp: new Date().toISOString()
+    });
+
+    promptText = `${promptText}\n\n[تأكيد تنفيذ أداة الـ MCP]: تمت الموافقة البشرية بنجاح وتم إرجاع نتيجة الأداة (${approvedToolCall.scopedToolName}):\n${JSON.stringify(executedResult, null, 2)}\n\nيرجى دمج هذه البيانات وصياغة الرد النهائي للمستخدم.`;
+  }
+
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 
   if (apiKey) {
     try {
       const modelAlias = modelToUse.includes('pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
-      const { text, usage } = await generateText({
-        model: google(modelAlias),
-        system: systemInstruction,
-        prompt: promptText,
-        temperature: 0.2,
+
+      // 1. Fetch Tenant MCP configuration to extract enabled/approved tools
+      const servers = await db.getMcpServers(tenantId);
+      const enabledTools: string[] = [];
+      const requireApprovalTools: string[] = [];
+
+      for (const server of servers) {
+        if (server.status === 'healthy') {
+          for (const tool of server.enabledTools) {
+            enabledTools.push(tool);
+            if (server.requireConfirmationTools?.includes(tool)) {
+              requireApprovalTools.push(tool);
+            }
+          }
+        }
+      }
+
+      // Build Function Declarations
+      const functionDeclarations: FunctionDeclaration[] = [];
+      // Only offer tools if we are NOT finishing an already approved execution (to prevent loops)
+      if (!approvedToolCall) {
+        for (const toolName of enabledTools) {
+          const def = MCP_TOOL_DEFINITIONS[toolName];
+          if (def) {
+            functionDeclarations.push({
+              name: toolName,
+              description: def.description,
+              parameters: {
+                type: Type.OBJECT,
+                properties: def.properties,
+                required: def.required
+              }
+            });
+          } else {
+            functionDeclarations.push({
+              name: toolName,
+              description: `Execute custom tool ${toolName} on the server`,
+              parameters: {
+                type: Type.OBJECT,
+                properties: {
+                  argumentsJson: { type: Type.STRING, description: "JSON string parameters for tool" }
+                },
+                required: []
+              }
+            });
+          }
+        }
+      }
+
+      // Run generation (with tool definitions if available)
+      const response = await aiClient.models.generateContent({
+        model: modelAlias,
+        contents: promptText,
+        config: {
+          systemInstruction: systemInstruction,
+          temperature: 0.2,
+          tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined
+        }
       });
 
+      // Check if Gemini wants to call a tool
+      const functionCalls = response.functionCalls;
+      if (functionCalls && functionCalls.length > 0) {
+        const fc = functionCalls[0];
+        const toolName = fc.name || '';
+        const args = fc.args as Record<string, any>;
+        const isApprovalRequired = requireApprovalTools.includes(toolName);
+
+        if (isApprovalRequired) {
+          // Requires Human Approval (SideEffectGate)
+          const pendingCall: MCPToolCall = {
+            id: `tc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            tenantId,
+            scopedToolName: toolName,
+            inputParams: args,
+            latencyMs: 0,
+            status: 'pending',
+            hasSideEffect: true,
+            timestamp: new Date().toISOString()
+          };
+
+          return {
+            text: `⚠️ [بوابة موافقة الأدوات MCP]: يقترح المساعد تشغيل الأداة (${toolName}) بمدخلات: ${JSON.stringify(args)}. تتطلب هذه الأداة موافقة بشرية قبل التنفيذ. يرجى تأكيد العملية في القائمة الجانبية للمتابعة.`,
+            citations: [],
+            modelUsed: modelToUse,
+            tokensUsed: { input: 200, output: 80 },
+            pendingToolCall: pendingCall
+          };
+        } else {
+          // Execute immediately on-the-fly (Read-only / No side-effects)
+          const toolResult = await executeMcpTool(tenantId, toolName, args);
+
+          // Second turn: call Gemini with tool outcome
+          const secondPrompt = `${promptText}\n\n[أداة الـ MCP المنفذة تلقائياً]: تم تنفيذ الأداة (${toolName}) بنجاح وإرجاع المخرجات التالية:\n${JSON.stringify(toolResult, null, 2)}\n\nيرجى صياغة الاستجابة النهائية للمستخدم بناءً على هذه المخرجات والمستندات المتاحة.`;
+
+          const secondResponse = await aiClient.models.generateContent({
+            model: modelAlias,
+            contents: secondPrompt,
+            config: {
+              systemInstruction: systemInstruction,
+              temperature: 0.2
+            }
+          });
+
+          const citations: Citation[] = contextChunks.map((chunk, idx) => ({
+            index: idx + 1,
+            chunkId: chunk.id,
+            documentId: chunk.documentId,
+            documentTitle: chunk.documentTitle,
+            pageNumber: chunk.pageNumber,
+            score: chunk.score || 0.85,
+            snippet: chunk.content.substring(0, 120) + '...',
+          }));
+
+          return {
+            text: secondResponse.text || 'تم استدعاء الأداة بنجاح ولكن لم يتم توليد رد نهائي.',
+            citations,
+            modelUsed: modelToUse,
+            tokensUsed: {
+              input: Math.floor(secondPrompt.length / 4),
+              output: Math.floor((secondResponse.text || '').length / 4)
+            },
+            toolCalls: [{
+              id: `tc-${Date.now()}`,
+              tenantId,
+              scopedToolName: toolName,
+              inputParams: args,
+              outputResult: toolResult,
+              latencyMs: 25,
+              status: 'completed',
+              hasSideEffect: false,
+              timestamp: new Date().toISOString()
+            }]
+          };
+        }
+      }
+
+      // No tools called, return normal RAG generation
       const citations: Citation[] = contextChunks.map((chunk, idx) => ({
         index: idx + 1,
         chunkId: chunk.id,
@@ -284,16 +647,17 @@ export async function generateRagCompletion(params: {
       }));
 
       return {
-        text: text || 'لم يتم استخراج نص من النموذج.',
+        text: response.text || 'لم يتم استخراج نص من النموذج.',
         citations,
         modelUsed: modelToUse,
         tokensUsed: {
-          input: usage?.inputTokens || Math.floor(promptText.length / 4),
-          output: usage?.outputTokens || Math.floor((text || '').length / 4),
+          input: Math.floor(promptText.length / 4),
+          output: Math.floor((response.text || '').length / 4),
         },
+        toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined
       };
     } catch (err: any) {
-      console.error('AI SDK execution error, using deterministic fallback:', err);
+      console.error('AI SDK/Google GenAI execution error, using deterministic fallback:', err);
     }
   }
 
@@ -315,5 +679,6 @@ export async function generateRagCompletion(params: {
     citations: fallbackCitations,
     modelUsed: modelToUse,
     tokensUsed: { input: 120, output: 85 },
+    toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined
   };
 }

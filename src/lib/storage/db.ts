@@ -2,7 +2,7 @@ import {
   collection,
   getDocs,
   getDoc,
-  setDoc,
+  setDoc as firestoreSetDoc,
   doc,
   deleteDoc,
   query,
@@ -27,6 +27,29 @@ import {
 import { insertPostgresDocument, insertPostgresChunk, deletePostgresDocument } from './postgres';
 import { upsertQdrantChunk, deleteQdrantDocument } from './qdrant';
 import { generateEmbedding } from '../rag/embedding';
+
+// Helper function to recursively remove all undefined properties from an object
+function cleanUndefined(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(cleanUndefined);
+  }
+  const clean: any = {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (val !== undefined) {
+      clean[key] = cleanUndefined(val);
+    }
+  }
+  return clean;
+}
+
+// Wrapper to intercept setDoc calls and sanitize undefined fields
+async function setDoc(docRef: any, data: any, options?: any) {
+  return firestoreSetDoc(docRef, cleanUndefined(data), options);
+}
 
 
 // Initial Tenants
