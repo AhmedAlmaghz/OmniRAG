@@ -213,6 +213,7 @@ export function DocumentIngestionStudio({
 
   // Processing state
   const [isUploading, setIsUploading] = useState(false);
+  const [isParsingFile, setIsParsingFile] = useState(false);
   const [steps, setSteps] = useState<IngestionProgressStep[]>([]);
   const [estimatedSecondsLeft, setEstimatedSecondsLeft] = useState<number>(8);
   const [overallProgress, setOverallProgress] = useState<number>(0);
@@ -231,7 +232,7 @@ export function DocumentIngestionStudio({
   };
 
   // Handle Real File Selection / Drag & Drop
-  const handleFileProcess = (file: File) => {
+  const handleFileProcess = async (file: File) => {
     if (!file) return;
 
     setSelectedFileName(file.name);
@@ -240,15 +241,75 @@ export function DocumentIngestionStudio({
       setDocTitle(file.name.replace(/\.[^/.]+$/, ''));
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      if (text) {
-        setDocContent(text);
-        setInputTab('text');
-      }
-    };
-    reader.readAsText(file);
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isText = file.type.startsWith('text/') || 
+                   file.name.toLowerCase().endsWith('.txt') || 
+                   file.name.toLowerCase().endsWith('.md') || 
+                   file.name.toLowerCase().endsWith('.json') ||
+                   file.name.toLowerCase().endsWith('.csv');
+
+    if (isText && !isPdf) {
+      // Fast client-side read for plain text files
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        if (text) {
+          setDocContent(text);
+          setInputTab('text');
+        }
+      };
+      reader.readAsText(file);
+    } else {
+      // Send to server-side Gemini PDF/Document parser
+      setIsParsingFile(true);
+      setStatusMessage(null);
+      
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64Data = e.target?.result as string;
+        try {
+          const res = await fetch('/api/v1/documents/parse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: file.name,
+              fileData: base64Data,
+              mimeType: file.type,
+            }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.text) {
+              setDocContent(data.text);
+              setInputTab('text');
+              setStatusMessage({
+                type: 'success',
+                text: lang === 'ar' 
+                  ? 'تم استخراج وتنسيق النصوص بنجاح باستخدام الذكاء الاصطناعي!' 
+                  : 'Text extracted and formatted successfully using Gemini AI!',
+              });
+            } else {
+              throw new Error(lang === 'ar' ? 'لم يتم استخراج أي نص من الملف.' : 'No text could be extracted.');
+            }
+          } else {
+            const err = await res.json();
+            throw new Error(err.error || 'Failed to parse document');
+          }
+        } catch (error: any) {
+          console.error('Error parsing file:', error);
+          setStatusMessage({
+            type: 'error',
+            text: lang === 'ar' 
+              ? `فشل استخراج النص: ${error.message}` 
+              : `Extraction failed: ${error.message}`,
+          });
+        } finally {
+          setIsParsingFile(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -511,49 +572,67 @@ export function DocumentIngestionStudio({
       <form onSubmit={handleIngestSubmit} className="space-y-5">
         {/* TAB 1: DRAG & DROP FILE ZONE */}
         {inputTab === 'upload' && (
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-3xl p-8 text-center transition cursor-pointer flex flex-col items-center justify-center space-y-3 ${
-              dragOver
-                ? 'border-indigo-500 bg-indigo-50/60 scale-[0.99]'
-                : 'border-slate-300 hover:border-indigo-400 bg-slate-50/50 hover:bg-slate-50'
-            }`}
-          >
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={(e) => e.target.files?.[0] && handleFileProcess(e.target.files[0])}
-              accept=".pdf,.docx,.txt,.md,.json,.csv,.py,.ts,.js,.html,.xml"
-              className="hidden"
-            />
-            <div className="w-14 h-14 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
-              <Upload className="w-7 h-7" />
+          isParsingFile ? (
+            <div className="border-2 border-indigo-500 bg-indigo-50/50 rounded-3xl p-12 text-center flex flex-col items-center justify-center space-y-4 animate-pulse">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-md">
+                <Loader2 className="w-8 h-8 animate-spin" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  {lang === 'ar' ? 'جاري تحليل وقراءة المستند دلالياً...' : 'Analyzing & Parsing Document Semantically...'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto leading-relaxed">
+                  {lang === 'ar'
+                    ? 'يتم الآن استخراج النصوص ومعالجة الجداول وصيانة اللغة العربية بدقة متناهية عبر نموذج Gemini 3.6...'
+                    : 'Extracting text structure, processing layout, and optimizing characters via Gemini 3.6 model...'}
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-900">
-                {lang === 'ar' ? 'اسحب واسقط المستند هنا أو انقر للاستعراض' : 'Drag & drop document here or click to browse'}
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                {lang === 'ar'
-                  ? 'يدعم ملفات PDF, DOCX, TXT, Markdown, JSON, CSV وشفرات Python/JS حتى 50MB'
-                  : 'Supports PDF, DOCX, TXT, MD, JSON, CSV, and Python/JS files'}
-              </p>
+          ) : (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-3xl p-8 text-center transition cursor-pointer flex flex-col items-center justify-center space-y-3 ${
+                dragOver
+                  ? 'border-indigo-500 bg-indigo-50/60 scale-[0.99]'
+                  : 'border-slate-300 hover:border-indigo-400 bg-slate-50/50 hover:bg-slate-50'
+              }`}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={(e) => e.target.files?.[0] && handleFileProcess(e.target.files[0])}
+                accept=".pdf,.docx,.txt,.md,.json,.csv,.py,.ts,.js,.html,.xml"
+                className="hidden"
+              />
+              <div className="w-14 h-14 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
+                <Upload className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  {lang === 'ar' ? 'اسحب واسقط المستند هنا أو انقر للاستعراض' : 'Drag & drop document here or click to browse'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  {lang === 'ar'
+                    ? 'يدعم ملفات PDF, DOCX, TXT, Markdown, JSON, CSV وشفرات Python/JS حتى 50MB'
+                    : 'Supports PDF, DOCX, TXT, MD, JSON, CSV, and Python/JS files'}
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-1.5 text-[10px] font-mono font-bold text-slate-400 pt-2">
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PDF</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.DOCX</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.MD</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.TXT</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.JSON</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PYTHON</span>
+              </div>
             </div>
-            <div className="flex flex-wrap justify-center gap-1.5 text-[10px] font-mono font-bold text-slate-400 pt-2">
-              <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PDF</span>
-              <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.DOCX</span>
-              <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.MD</span>
-              <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.TXT</span>
-              <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.JSON</span>
-              <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PYTHON</span>
-            </div>
-          </div>
+          )
         )}
 
         {/* TAB 3: SAMPLE PRESET DOCUMENTS */}
