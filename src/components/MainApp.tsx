@@ -241,10 +241,21 @@ export default function MainApp() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400">
+      <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
-          <span>OmniRAG v2.4 Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
-          <span>Next.js 16 App Router | Gemini 3.6 Flash | Qdrant + Neon RLS</span>
+          <span>
+            POWERED BY{' '}
+            <a
+              href="https://github.com/ahmedAlmaghz/omnirag"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-bold text-indigo-600 hover:text-indigo-800 underline transition"
+            >
+              ENG. AHMED ALMAGHZ
+            </a>{' '}
+            - 2026 - v0.1.8
+          </span>
+          <span>OmniRAG Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
         </div>
       </footer>
     </div>

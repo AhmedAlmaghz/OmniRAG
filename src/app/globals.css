@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 
 :root {
   --bg-primary: #f8fafc;
@@ -20,4 +21,13 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Arabic Math Font & Notation Styles */
+.arabic-math-formula {
+  font-family: 'Amiri', 'Traditional Arabic', 'Sakkal Majalla', serif;
+  direction: rtl;
+  font-size: 1.15em;
+  line-height: 1.6;
+}
+
 

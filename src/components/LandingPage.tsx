@@ -529,8 +529,20 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
 
       {/* Footer */}
       <footer className="py-8 bg-slate-950 border-t border-slate-800 text-xs text-slate-500 text-center">
-        <div className="max-w-7xl mx-auto px-4">
-          <p className="mb-2 font-mono text-slate-400">{t.footerTagline}</p>
+        <div className="max-w-7xl mx-auto px-4 space-y-2">
+          <p className="font-mono text-slate-400">{t.footerTagline}</p>
+          <p className="text-slate-300 font-semibold">
+            POWERED BY{' '}
+            <a
+              href="https://github.com/ahmedAlmaghz/omnirag"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-400 hover:text-indigo-300 underline font-bold transition"
+            >
+              ENG. AHMED ALMAGHZ
+            </a>{' '}
+            - 2026 - v0.1.8
+          </p>
           <p>{t.footerRights}</p>
         </div>
       </footer>

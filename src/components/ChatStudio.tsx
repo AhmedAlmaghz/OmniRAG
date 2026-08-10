@@ -38,6 +38,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { Message, ChatMode, Citation, MCPToolCall, MCPServerConfig, Conversation, Collection } from '@/lib/types/omnirag';
+import { RichMessageRenderer } from '@/components/chat/RichMessageRenderer';
 
 interface ChatStudioProps {
   tenantId: string;
@@ -69,8 +70,20 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
       role: 'assistant',
       content:
         lang === 'ar'
-          ? 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.'
-          : 'Welcome to OmniRAG Agentic Chat Studio. Ask queries regarding contracts, security specs, or multi-tenant policies.',
+          ? `مرحباً بك في **استوديو المحادثة المعززة من منصة OmniRAG (الإصدار v0.1.8)**.
+
+يدعم النظام الآن **تنسيق المعرفة المتقدم الشامل**:
+- 🧮 **الرموز والمعادلات الرياضية (MathJax & MathJax4Arabic):** مثل $E = mc^2$ والتكاملات $$\\int_0^\\infty f(x)dx$$ مع زر تحويل فوري للرموز العربية الأصيلة مثل (س، ص، د(س)).
+- 💻 **الشفرات البرمجية:** مدمجة بمظهر داكن أنيق مع تحديد لغة البرمجة وزر النسخ الفوري.
+- 🎬 **تطبيقات الوسائط:** تشغيل مباشر ومدمج للصور والفيديوهات والصوتيات.
+- 🔊 **القراءة الناطقة (Text-To-Speech):** وتكبير/تصغير الخط وتصدير الإجابات بصيغة Markdown.`
+          : `Welcome to **OmniRAG Agentic Chat Studio (v0.1.8)**.
+
+Supported rich formatting capabilities:
+- 🧮 **Math Equations (MathJax & MathJax4Arabic):** Formulas like $E = mc^2$ and $$\\int_0^\\infty f(x)dx$$ with instant Arabic Math Notation toggle.
+- 💻 **Syntax-Highlighted Code Blocks:** Dark mode code blocks with copy-to-clipboard.
+- 🎬 **Embedded Media:** Direct playback for photos, video clips, and audio tracks.
+- 🔊 **Text-To-Speech (TTS), Font Sizing, and Markdown Exports.**`,
       createdAt: new Date().toISOString(),
       modelUsed: 'gemini-3.6-flash',
     },
@@ -564,14 +577,79 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
     handleSendMessage(inputPrompt || 'تأكيد موافقة أداة الـ MCP', approvedCall);
   };
 
-  const sampleQuestions = [
-    { label: lang === 'ar' ? '📜 اتفاقية NDA لعام 2026' : '📜 NDA Terms', query: 'ما هي شروط اتفاقية عدم الإفصاح والسرية NDA؟' },
-    { label: lang === 'ar' ? '🛡️ سياسة أمن ISO27001' : '🛡️ ISO27001 Security', query: 'ما هي سياسة الاستجابة للحوادث السيبرانية ISO27001؟' },
-    { label: lang === 'ar' ? '💬 إرسال تنبيه لـ Slack (MCP)' : '💬 Send Slack Alert', query: 'أرسل رسالة تنبيه إلى قناة #security-alerts توضح اكتمال فحص معايير التشفير والامتثال للمستأجر' },
-    { label: lang === 'ar' ? '🔍 بحث حقيقي في الويب (MCP)' : '🔍 Live Web Search', query: 'ابحث في الويب عن أحدث التحديثات والمعايير الأمنية لمعمارية ISO27001 لعام 2026' },
-    { label: lang === 'ar' ? '💻 بحث كود GitHub (MCP)' : '💻 GitHub Code Search', query: 'ابحث في كود GitHub المصدري عن ملفات ودوال معالجة التشفير وحظر هجمات الحقن' },
-    { label: lang === 'ar' ? '📊 استعلام PostgreSQL (MCP)' : '📊 Query Postgres DB', query: 'استعلم عن سجلات الامتثال والأمان المتاحة في قاعدة بيانات PostgreSQL التحليلية' },
-  ];
+  // Dynamic Contextual Smart Suggestions Engine
+  const getDynamicSuggestions = (msgList: Message[], language: 'ar' | 'en') => {
+    if (!msgList || msgList.length <= 1) {
+      return [
+        { label: language === 'ar' ? '📜 اتفاقية NDA لعام 2026' : '📜 NDA Terms', query: 'ما هي شروط اتفاقية عدم الإفصاح والسرية NDA؟' },
+        { label: language === 'ar' ? '🛡️ سياسة أمن ISO27001' : '🛡️ ISO27001 Security', query: 'ما هي سياسة الاستجابة للحوادث السيبرانية والمعلوماتية ISO27001؟' },
+        { label: language === 'ar' ? '🔍 بحث حقيقي بالويب (MCP)' : '🔍 Live Web Search', query: 'ابحث في الويب عن أحدث معايير الأمن السيبراني لعام 2026' },
+        { label: language === 'ar' ? '📊 استعلام قاعدة البيانات (MCP)' : '📊 Database Query', query: 'استعلم عن سجلات الامتثال المتاحة في قاعدة البيانات' },
+      ];
+    }
+
+    const lastAssistant = [...msgList].reverse().find((m) => m.role === 'assistant');
+    const lastUser = [...msgList].reverse().find((m) => m.role === 'user');
+    const textContext = ((lastAssistant?.content || '') + ' ' + (lastUser?.content || '')).toLowerCase();
+
+    // Legal / NDA Context
+    if (textContext.includes('nda') || textContext.includes('سرية') || textContext.includes('عقد') || textContext.includes('اتفاقية')) {
+      return [
+        { label: language === 'ar' ? '⚖️ الالتزامات والغرائم' : '⚖️ Liabilities & Penalties', query: 'ما هي الغرامات والالتزامات المالية المنصوص عليها عند الإخلال ببنود السرية؟' },
+        { label: language === 'ar' ? '⏳ مدة صلاحية العقد' : '⏳ Validity Duration', query: 'كم تبلغ مدة سريان التزامات حفظ السرية بعد انتهاء سريان العقد؟' },
+        { label: language === 'ar' ? '🛡️ الاستثناءات المصرح بها' : '🛡️ Allowed Exceptions', query: 'ما هي الحالات والاستثناءات التي يُسمح فيها بالإفصاح عن المعلومات دون مخالفة العقد؟' },
+        { label: language === 'ar' ? '📝 تلخيص النقاط الجوهرية' : '📝 Summarize Key Terms', query: 'لخص أهم 3 نقاط جوهرية في اتفاقية عدم الإفصاح بأسلوب نقاط موجزة' },
+      ];
+    }
+
+    // Security & ISO27001 Context
+    if (textContext.includes('iso') || textContext.includes('أمن') || textContext.includes('security') || textContext.includes('تشفير') || textContext.includes('حقن')) {
+      return [
+        { label: language === 'ar' ? '🔑 سياسات إدارة المفاتيح' : '🔑 Key Management', query: 'ما هي المعايير المعتمدة لتدوير وتشفير مفاتيح API وعزل بيئات المستأجرين؟' },
+        { label: language === 'ar' ? '🚨 الاستجابة للحوادث' : '🚨 Incident Response', query: 'ما هي خطوات الاستجابة للحوادث السيبرانية المعتمدة وفق ISO27001؟' },
+        { label: language === 'ar' ? '🛡️ الوقاية من Prompt Injection' : '🛡️ Prevent Injection', query: 'كيف يحظر نظام OmniRAG محاولات اختراق السياق وهجمات الحقن حتمياً؟' },
+        { label: language === 'ar' ? '📋 قائمة تحقق الامتثال' : '📋 Compliance Checklist', query: 'أعطني قائمة تحقق سريعة لضمان التوافق التام مع معايير الأمان السيبراني' },
+      ];
+    }
+
+    // Code & Programming Context
+    if (textContext.includes('كود') || textContext.includes('برمج') || textContext.includes('code') || textContext.includes('function') || textContext.includes('typescript') || textContext.includes('python')) {
+      return [
+        { label: language === 'ar' ? '🧪 كتابة اختبارات وحدات' : '🧪 Write Unit Tests', query: 'اكتب اختبارات وحدة (Unit Tests) شاملة لهذا الكود للتحقق من أداء الشفرة البرمجية' },
+        { label: language === 'ar' ? '⚡ تحسين الكفاءة والأداء' : '⚡ Optimize Code', query: 'كيف يمكن إعادة صياغة هذا الكود لتقليل زمن التنفيذ وتحسين الاستهلاك؟' },
+        { label: language === 'ar' ? '💬 إضافة تعليقات وتوثيق' : '💬 Add JSDoc Comments', query: 'قم بإضافة تعليقات وتوثيق تفصيلي لكل دالة ومعامل في الشفرة البرمجية' },
+        { label: language === 'ar' ? '🛡️ فحص الأمان والثغرات' : '🛡️ Security Audit', query: 'افحص الشفرة البرمجية السابقة للتأكد من خلوها من أي ثغرات أمنية أو تسريب بيانات' },
+      ];
+    }
+
+    // Math & Equations Context
+    if (textContext.includes('معادلة') || textContext.includes('رياضيات') || textContext.includes('math') || textContext.includes('تكامل') || textContext.includes('احصاء')) {
+      return [
+        { label: language === 'ar' ? '🧮 تحويل لرموز MathJax4Arabic' : '🧮 Convert to Arabic Math', query: 'أعد صياغة المعادلة السابقة باستخدام الرموز والمصطلحات الرياضية العربية الأصيلة' },
+        { label: language === 'ar' ? '📐 شرح الاستنتاج بالتفصيل' : '📐 Step-by-Step Proof', query: 'اشرح الاستنتاج والخطوات الرياضية بالتفصيل المبرهن' },
+        { label: language === 'ar' ? '📈 التطبيقات العملية والفيزيائية' : '📈 Practical Applications', query: 'ما هي التطبيقات العملية والفيزيائية لهذه المعادلة في الواقع؟' },
+        { label: language === 'ar' ? '💡 مسألة إضافية محلولة' : '💡 Practice Example', query: 'اعطني مسألة تطبيقية محلولة مع الحل النموذجي بناءً على هذه القاعدة' },
+      ];
+    }
+
+    // MCP Tools Context
+    if (textContext.includes('mcp') || textContext.includes('slack') || textContext.includes('github') || textContext.includes('postgres') || textContext.includes('أداة')) {
+      return [
+        { label: language === 'ar' ? '💬 إرسال تنبيه عبر Slack' : '💬 Send Slack Alert', query: 'أرسل رسالة تنبيه وملخص للعمليات الأخيرة إلى قناة #security-alerts' },
+        { label: language === 'ar' ? '💻 بحث في كود GitHub' : '💻 GitHub Code Search', query: 'ابحث في مستودع GitHub المصدري عن ملفات التهيئة والمستندات التقنية' },
+        { label: language === 'ar' ? '📊 استعلام PostgreSQL' : '📊 Query Postgres DB', query: 'استعلم عن سجلات الأمان وحالة المجموعات في قاعدة البيانات' },
+        { label: language === 'ar' ? '🛡️ صلاحيات أدوات MCP' : '🛡️ MCP Tool Access', query: 'ما هي الأدوات المتاحة حالياً وما هي الصلاحيات القياسية الممنوحة لها؟' },
+      ];
+    }
+
+    // Fallback Contextual Follow-ups
+    return [
+      { label: language === 'ar' ? '📝 تلخيص الإجابة بنقاط' : '📝 Summary Points', query: 'لخص الإجابة السابقة في 3 نقاط محددة وسهلة المراجعة' },
+      { label: language === 'ar' ? '🔍 التعمق والتوسع في التفاصيل' : '🔍 Deep Dive Details', query: 'اشرح المزيد من التفاصيل والحياديات التقنية حول هذا الموضوع' },
+      { label: language === 'ar' ? '💡 أمثلة ونماذج تطبيقية' : '💡 Practical Examples', query: 'أعطني أمثلة وحالات استخدام عملية لتوضيح الفكرة بأسلوب تطبيقي' },
+      { label: language === 'ar' ? '🌐 البحث عن التحديثات' : '🌐 Live Web Search', query: 'ابحث في الويب عن أحدث التحديثات والمواضيع المتعلقة بهذا النطاق' },
+    ];
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-[600px] lg:h-[calc(100vh-170px)]">
@@ -602,7 +680,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
             </div>
           </div>
 
-          {/* Quick Demo Controls & Chat Session Tools */}
+          {/* Quick Controls & Chat Session Tools */}
           <div className="flex items-center gap-2">
             {/* Sources & Collections Filter Button */}
             <button
@@ -648,7 +726,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
             <button
               type="button"
               onClick={handleCreateNewConversation}
-              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-xs"
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
               title="بدء جلسة محادثة جديدة"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -658,31 +736,11 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
             <button
               type="button"
               onClick={handleExportChat}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+              className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
               title="تصدير سجل المحادثة كملف JSON"
             >
               <Download className="w-3.5 h-3.5 text-slate-500" />
               <span className="hidden sm:inline">{lang === 'ar' ? 'تصدير' : 'Export'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={triggerInjectionTest}
-              className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-              title="اختبار حظر هجمات الحقن حتمياً"
-            >
-              <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
-              <span className="hidden xl:inline">{lang === 'ar' ? 'اختبار الحقن' : 'Test Injection'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={triggerToolApprovalDemo}
-              className="px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-              title="محاكاة موافقة أدوات MCP"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span className="hidden xl:inline">{lang === 'ar' ? 'محاكاة MCP' : 'Simulate MCP'}</span>
             </button>
           </div>
         </div>
@@ -949,10 +1007,18 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
                   </div>
                 )}
 
-                <div className={`max-w-2xl rounded-2xl p-4 text-sm leading-relaxed ${
+                <div className={`max-w-3xl rounded-2xl p-4 text-sm leading-relaxed ${
                   isAssistant ? 'bg-white border border-slate-200/80 text-slate-800 shadow-3xs' : 'bg-indigo-600 text-white font-normal shadow-3xs'
                 }`}>
-                  <p className="whitespace-pre-line">{msg.content}</p>
+                  <RichMessageRenderer
+                    content={msg.content}
+                    role={msg.role}
+                    lang={lang}
+                    onCitationClick={(cit) => {
+                      setActiveCitation(cit);
+                      setActiveRightTab('citations');
+                    }}
+                  />
 
                   {/* Citations Badges */}
                   {msg.citations && msg.citations.length > 0 && (
@@ -1065,28 +1131,35 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
           )}
         </div>
 
-        {/* Interactive Quick Prompts Bar */}
-        <div className="px-4 py-2 bg-slate-50 border-t border-slate-200 flex items-center gap-2 overflow-x-auto no-scrollbar">
-          <span className="text-[11px] font-bold text-slate-500 shrink-0 flex items-center gap-1">
-            <Sparkles className="w-3 h-3 text-indigo-600" />
-            {lang === 'ar' ? 'أسئلة مقترحة بنقرة واحدة:' : 'Quick Prompts:'}
-          </span>
-          {sampleQuestions.map((sq, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => {
-                setInputPrompt(sq.query);
-                handleSendMessage(sq.query);
-              }}
-              className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-indigo-700 text-xs font-medium whitespace-nowrap transition cursor-pointer shrink-0 shadow-3xs"
-            >
-              {sq.label}
-            </button>
-          ))}
-        </div>
+        {/* Dynamic Contextual Smart Suggestions Bar */}
+        {(() => {
+          const suggestions = getDynamicSuggestions(messages, lang);
+          return (
+            <div className="px-4 py-2 bg-slate-50/90 border-t border-slate-200/80 flex items-center gap-2 overflow-x-auto no-scrollbar">
+              <span className="text-[11px] font-bold text-slate-500 shrink-0 flex items-center gap-1 bg-white px-2 py-1 rounded-md border border-slate-200 shadow-3xs">
+                <Sparkles className="w-3 h-3 text-indigo-600 animate-pulse" />
+                <span>{lang === 'ar' ? 'اقتراحات سياقية للمتابعة:' : 'Contextual Follow-ups:'}</span>
+              </span>
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                {suggestions.map((sq, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setInputPrompt(sq.query);
+                      handleSendMessage(sq.query);
+                    }}
+                    className="px-3 py-1 rounded-lg bg-white border border-slate-200/90 hover:border-indigo-500 hover:bg-indigo-50/90 text-indigo-800 text-xs font-semibold whitespace-nowrap transition-all shadow-3xs hover:shadow-2xs cursor-pointer shrink-0 flex items-center gap-1"
+                  >
+                    <span>{sq.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
-        {/* Input Bar */}
+        {/* Modernized Input Bar */}
         <div className="p-4 border-t border-slate-200 bg-white">
           {selectedCollectionIds.length > 0 && (
             <div className="mb-2.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-900 text-xs flex items-center justify-between gap-2 shadow-2xs">
@@ -1123,7 +1196,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
               e.preventDefault();
               handleSendMessage();
             }}
-            className="flex items-center gap-2"
+            className="relative flex items-center"
           >
             <input
               type="text"
@@ -1131,20 +1204,26 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
               onChange={(e) => setInputPrompt(e.target.value)}
               placeholder={
                 lang === 'ar'
-                  ? 'اكتب سؤالك هنا أو اختر من الأسئلة المقترحة اعلاه...'
-                  : 'Type query or select a quick prompt above...'
+                  ? 'اكتب سؤالك هنا بخصوص المستندات أو الاستعلامات أو التحليلات المطلوبة...'
+                  : 'Type your question or query regarding documents and tools...'
               }
-              className="flex-1 px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 text-sm text-slate-900"
+              className="w-full pl-4 pr-28 py-3 rounded-2xl border border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50/50 focus:bg-white transition-all shadow-3xs"
             />
-            <button
-              type="submit"
-              disabled={isLoading || !inputPrompt.trim()}
-              className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-sm flex items-center gap-2 transition shadow-xs cursor-pointer"
-            >
-              <span>{lang === 'ar' ? 'إرسال' : 'Send'}</span>
-              <Send className="w-4 h-4" />
-            </button>
+            <div className="absolute left-2.5 rtl:left-auto rtl:right-2.5 flex items-center gap-1.5">
+              <button
+                type="submit"
+                disabled={isLoading || !inputPrompt.trim()}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-40 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:cursor-not-allowed"
+              >
+                <span>{lang === 'ar' ? 'إرسال' : 'Send'}</span>
+                <Send className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </form>
+          <div className="mt-1.5 px-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+            <span>{lang === 'ar' ? 'اضغط Enter للإرسال' : 'Press Enter to send'}</span>
+            <span>{lang === 'ar' ? 'يدعم OmniRAG v0.1.8 المعالجة الذكية للمحتوى' : 'OmniRAG v0.1.8 Intelligence Engine'}</span>
+          </div>
         </div>
       </div>
 
