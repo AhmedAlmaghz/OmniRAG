@@ -1,0 +1,233 @@
+import { SDLCPhase, MetricCardData, ApiEndpointSpec } from '../types';
+
+export const SDLC_PHASES: SDLCPhase[] = [
+  {
+    id: 'planning-requirements',
+    stepNumber: 1,
+    titleAr: 'التخطيط وجمع المتطلبات (Requirements & Scope)',
+    titleEn: '1. Requirements & Scope Planning',
+    descriptionAr: 'تحديد النطاق بدقة، صياغة حالات الاستخدام، وإعداد مواصفات الهندسة المعمارية قبل الشروع في كتابة الكود.',
+    descriptionEn: 'Define precise scope, functional requirements, architectural boundaries, and user stories before writing code.',
+    iconName: 'FileText',
+    checklist: [
+      { id: 'req-1', labelAr: 'تحديد الأهداف النفعية ونطاق النظام بدقة', labelEn: 'Define strict project scope and user stories', completed: true, importance: 'Critical' },
+      { id: 'req-2', labelAr: 'تحديد المعايير الأمنية ومتطلبات حماية البيانات', labelEn: 'Specify security constraints and privacy policies', completed: true, importance: 'High' },
+      { id: 'req-3', labelAr: 'اختيار تقنيات Next.js v16 + TypeScript + Tailwind CSS', labelEn: 'Adopt Next.js v16 + TypeScript + Tailwind CSS stack', completed: true, importance: 'Critical' },
+    ],
+    bestPracticesAr: [
+      'التأكد من مطابقة التطبيق للهياكل أحادية الصفحة/المتعددة الصفحات حسب الحاجة الفعلية دون تزيد.',
+      'تحديد واجهات واضحة وإعداد القوالب القياسية للأنواع (TypeScript Types).',
+      'صياغة متطلبات الأداء مثل زمن استجابة الخادم TTFB وأحجام الملفات.',
+    ],
+    bestPracticesEn: [
+      'Avoid over-engineering; build strictly what satisfies business requirements.',
+      'Define clear TypeScript interfaces for all system domain models early.',
+      'Set strict SLA goals for TTFB, LCP, and bundle sizes.',
+    ],
+  },
+  {
+    id: 'architecture-design',
+    stepNumber: 2,
+    titleAr: 'الهندسة المعمارية والتصميم (System Architecture & App Router)',
+    titleEn: '2. System Architecture & App Router Design',
+    descriptionAr: 'رسم حدود مكونات الخادم والعميل (Server/Client Boundaries)، وهيكلة مجلد app/ والـ Middleware.',
+    descriptionEn: 'Architect Next.js App Router layout hierarchy, Server/Client component boundaries, and middleware API proxies.',
+    iconName: 'Layout',
+    checklist: [
+      { id: 'arch-1', labelAr: 'الفصل الصارم بين مكونات الخادم (RSC) ومكونات العميل ("use client")', labelEn: 'Enforce RSC vs Client Component boundaries', completed: true, importance: 'Critical' },
+      { id: 'arch-2', labelAr: 'إدارة مفاتيح API في بيئة الخادم ومنع تسريبها للمتصفح', labelEn: 'Keep all secret API keys server-side', completed: true, importance: 'Critical' },
+      { id: 'arch-3', labelAr: 'هيكلة مجلدات نمطية بسيطة وسهلة الصيانة (src/app, src/components, src/lib)', labelEn: 'Maintain scalable, modular directory layout', completed: true, importance: 'High' },
+    ],
+    bestPracticesAr: [
+      'رفع جلب البيانات إلى أعلى شجرة المكونات في مكونات الخادم Server Components.',
+      'استخدام TypeScript Enums والأنواع المحددة بدلاً من any.',
+      'توفير معالجات الأخطاء error.tsx وشاشات التحميل المباشرة loading.tsx لكل مسار.',
+    ],
+    bestPracticesEn: [
+      'Fetch data high in the tree using React Server Components.',
+      'Strictly avoid "any" types; leverage strict TypeScript checks.',
+      'Provide dedicated error.tsx and loading.tsx handlers for every route segment.',
+    ],
+  },
+  {
+    id: 'development-coding',
+    stepNumber: 3,
+    titleAr: 'التطوير والتكويد عالي الجودة (TypeScript & Clean Code)',
+    titleEn: '3. Clean Code & High Quality Development',
+    descriptionAr: 'كتابة كود قاسي المتانة بدون تحذيرات TypeScript، متوافق مع معايير Tailwind CSS v4، ومحمي ضد الـ Render Loop.',
+    descriptionEn: 'Write robust, clean TypeScript code adhering to Tailwind CSS v4 and zero-re-render useEffect guidelines.',
+    iconName: 'Code',
+    checklist: [
+      { id: 'dev-1', labelAr: 'استخدام Tailwind CSS v4 للمظهر المتناسق والقابل لتغيير الثيمات', labelEn: 'Utilize Tailwind CSS v4 design tokens', completed: true, importance: 'High' },
+      { id: 'dev-2', labelAr: 'تطبيق قواعد useEffect المنيعة لتجنب التكرار والانهيار الـ Infinite Loop', labelEn: 'Follow zero re-render useEffect guidelines', completed: true, importance: 'Critical' },
+      { id: 'dev-3', labelAr: 'معالجة الاستثناءات والحالات الفرعية (Edge Cases) وإظهار التنبيهات اللائقة', labelEn: 'Graceful error handling and state feedback', completed: true, importance: 'High' },
+    ],
+    bestPracticesAr: [
+      'استخدام مكونات Lucide React للرموز والأيقونات لتوفير تحميل سريع وأبعاد موحدة.',
+      'إجراء التحييد الحركي الناعم باستعمال مكتبة motion/react.',
+      'ضمان دعم الشاشات المختلفة من الهاتف حتى الشاشات العريضة.',
+    ],
+    bestPracticesEn: [
+      'Use Lucide React for consistent vector iconography.',
+      'Apply smooth layout transitions via motion/react.',
+      'Ensure complete mobile-first responsive layout coverage.',
+    ],
+  },
+  {
+    id: 'testing-qa',
+    stepNumber: 4,
+    titleAr: 'اختبار الجودة والتأكد من الصلاحية (Testing & Verification)',
+    titleEn: '4. Testing, Linting & Verification',
+    descriptionAr: 'التأكد من خلو المشروع من أخطاء التجميع Lint & Build Compile بانتظام وتحقيق أداء خالي من العيوب.',
+    descriptionEn: 'Verify application integrity via automated linter checks and zero-error builds.',
+    iconName: 'CheckCircle2',
+    checklist: [
+      { id: 'test-1', labelAr: 'تشغيل lint_applet لاكتشاف الأخطاء الصياغية والمكتبات المفقودة', labelEn: 'Run linter verification on every milestone', completed: true, importance: 'Critical' },
+      { id: 'test-2', labelAr: 'تشغيل compile_applet للتأكد من نجاح البناء الإنتاجي Build', labelEn: 'Perform full compilation build verification', completed: true, importance: 'Critical' },
+      { id: 'test-3', labelAr: 'مراجعة خلو وحدة تحكم المتصفح Console من التحذيرات المكسورة', labelEn: 'Audit browser console for clean execution', completed: true, importance: 'Medium' },
+    ],
+    bestPracticesAr: [
+      'إصلاح أي خطأ تجميع فور حدوثه قبل التوسع في بناء الميزات.',
+      'فحص كفاءة الأزرار والروابط التفاعلية والتأكد من عدم وجود أزرار وهمية.',
+      'التحقق من إمكانية الوصول والتوافق مع قارئات الشاشة (WCAG AA Accessibility).',
+    ],
+    bestPracticesEn: [
+      'Fix build errors immediately before adding new features.',
+      'Ensure every button and form element has real event logic.',
+      'Validate color contrast and interactive elements for WCAG AA standards.',
+    ],
+  },
+  {
+    id: 'security-governance',
+    stepNumber: 5,
+    titleAr: 'الأمان والحوكمة المتقدمة (Security & OWASP)',
+    titleEn: '5. Security Governance & Secret Safety',
+    descriptionAr: 'حماية المفاتيح والأسرار البرمجية في ملفات البيئة، والوقاية من هجمات XSS و CSRF وحقن البيانات.',
+    descriptionEn: 'Protect environment variables, mitigate OWASP vulnerabilities, and enforce API route protection.',
+    iconName: 'ShieldAlert',
+    checklist: [
+      { id: 'sec-1', labelAr: 'إضافة جميع متغيرات البيئة بملف .env.example بدون كشف مفاتيح حقيقية', labelEn: 'Document environment variables in .env.example', completed: true, importance: 'Critical' },
+      { id: 'sec-2', labelAr: 'عدم إنشاء نماذج أو واجهات لإدخال مفاتيح API من المستخدم', labelEn: 'Do not generate client UI for secret keys', completed: true, importance: 'Critical' },
+      { id: 'sec-3', labelAr: 'استدعاء نماذج Gemini وتطبيق الذكاء الاصطناعي حصرياً على الخادم Server-side', labelEn: 'Proxy all GenAI API calls server-side', completed: true, importance: 'Critical' },
+    ],
+    bestPracticesAr: [
+      'استخدام التهيئة الكسولة (Lazy Initialization) لحزم SDK لتفادي الانهيار عند غياب المفاتيح.',
+      'تطبيق قواعد sanitization على المخلات البرمجية.',
+      'إرجاع رسائل أخطاء واضحة وآمنة دون كشف أجزاء من الشفرة المصدرية الخاطئة.',
+    ],
+    bestPracticesEn: [
+      'Use lazy SDK initialization to prevent server boot failures on missing keys.',
+      'Sanitize dynamic inputs to guard against XSS/injection attacks.',
+      'Provide user-friendly, secure error messages without revealing internal code traces.',
+    ],
+  },
+  {
+    id: 'deployment-ci-cd',
+    stepNumber: 6,
+    titleAr: 'النشر المستمر والاستضافة (Deployment & Cloud Run)',
+    titleEn: '6. CI/CD Pipelines & Deployment',
+    descriptionAr: 'إعداد سيناريوهات البناء والتشغيل عبر منفذ 3000 الموحد، وضمان الجاهزية التامة للإنتاج Production.',
+    descriptionEn: 'Configure clean build and start scripts bound to 0.0.0.0:3000 for server containers.',
+    iconName: 'Cloud',
+    checklist: [
+      { id: 'dep-1', labelAr: 'التثبيت الدقيق للأوامر npm run build و node dist/server.cjs في package.json', labelEn: 'Configure ESBuild server bundling in package.json', completed: true, importance: 'Critical' },
+      { id: 'dep-2', labelAr: 'ربط الخادم بالمنفذ 3000 والعنوان 0.0.0.0 لمطابقة حاويات Cloud Run', labelEn: 'Bind server host to 0.0.0.0 and port 3000', completed: true, importance: 'Critical' },
+      { id: 'dep-3', labelAr: 'تزويد ملف metadata.json بالاسم والوصف المحدث وصلاحيات الإطار', labelEn: 'Keep metadata.json synced with project state', completed: true, importance: 'High' },
+    ],
+    bestPracticesAr: [
+      'التحقق من حزم npm وتجميع الملفات في مجلد dist/ بشكل ذاتي وتكاملي.',
+      'إتاحة التفاعل اللحظي والمعاينة السلسة.',
+    ],
+    bestPracticesEn: [
+      'Bundle backend assets clean into dist/ output.',
+      'Test production bundle startup locally before container release.',
+    ],
+  },
+  {
+    id: 'monitoring-analytics',
+    stepNumber: 7,
+    titleAr: 'الرصد والتحسين المستمر (Monitoring & Telemetry)',
+    titleEn: '7. Monitoring & Performance Telemetry',
+    descriptionAr: 'مراقبة زمن الاستجابة، مقاييس الأداء الحيوية Web Vitals، وسجلات الاستدعاء للواجهات البرمجية.',
+    descriptionEn: 'Track server response metrics, Core Web Vitals (LCP, INP, CLS), and API log telemetry.',
+    iconName: 'Activity',
+    checklist: [
+      { id: 'mon-1', labelAr: 'مراقبة مقاييس Core Web Vitals وزمن التحميل للمكونات', labelEn: 'Monitor Core Web Vitals metrics', completed: true, importance: 'Medium' },
+      { id: 'mon-2', labelAr: 'تسجيل حالات الـ Route Handlers وحساب وقت التنفيذ بالمللي ثانية', labelEn: 'Log API execution latency and status codes', completed: true, importance: 'High' },
+      { id: 'mon-3', labelAr: 'توفير واجهة مراقبة تفاعلية لعرض المقاييس مباشرة للمطورين', labelEn: 'Provide interactive system metrics dashboard', completed: true, importance: 'High' },
+    ],
+    bestPracticesAr: [
+      'استغلال تحليلات التجميع والتخزين المؤقت في App Router لمضاعفة سرعة الاستجابة.',
+      'متابعة تحديث المستلزمات البرمجية لتفادي أخطاء الأمان القادمة.',
+    ],
+    bestPracticesEn: [
+      'Leverage Next.js App Router route caching to maximize response speed.',
+      'Audit dependencies regularly for security security alerts.',
+    ],
+  },
+];
+
+export const SYSTEM_METRICS: MetricCardData[] = [
+  {
+    id: 'm1',
+    titleAr: 'معدل النجاح وتجميع الكود',
+    titleEn: 'Build Compilation Status',
+    value: '100%',
+    change: '0 errors',
+    trend: 'up',
+    category: 'Build',
+  },
+  {
+    id: 'm2',
+    titleAr: 'زمن أول بايت (TTFB)',
+    titleEn: 'Time to First Byte (TTFB)',
+    value: '18 ms',
+    change: '-12% faster',
+    trend: 'up',
+    category: 'Performance',
+  },
+  {
+    id: 'm3',
+    titleAr: 'درجة أمان شفرة المصدر (OWASP)',
+    titleEn: 'Security Rating',
+    value: 'A+',
+    change: 'Zero leaks',
+    trend: 'neutral',
+    category: 'Security',
+  },
+  {
+    id: 'm4',
+    titleAr: 'تغطية الأنواع (TypeScript Strict)',
+    titleEn: 'TypeScript Type Coverage',
+    value: '99.4%',
+    change: '+2.1%',
+    trend: 'up',
+    category: 'Quality',
+  },
+];
+
+export const API_ENDPOINTS_DEMO: ApiEndpointSpec[] = [
+  {
+    method: 'GET',
+    path: '/api/health',
+    descriptionAr: 'فحص جاهزية الخادم والبيئة وصحة الاتصال.',
+    descriptionEn: 'Check server container health, runtime specs, and timestamp.',
+    responseExample: `{\n  "status": "ok",\n  "framework": "Next.js v16 App Router",\n  "port": 3000,\n  "timestamp": "${new Date().toISOString()}"\n}`,
+  },
+  {
+    method: 'POST',
+    path: '/api/sdlc-analyze',
+    descriptionAr: 'تحليل الكود الهيكلي باستخدام نموذج Gemini المعتمد على الخادم طبقاً لمعايير SDLC.',
+    descriptionEn: 'Analyze code snippets against strict SDLC governance standards via server-side Gemini API.',
+    requestBodyExample: `{\n  "code": "export default function UserCard({ user }) { return <div>{user.name}</div>; }",\n  "focus": "security-and-types"\n}`,
+    responseExample: `{\n  "score": 92,\n  "securityRating": "A+",\n  "summaryAr": "الكود جيد ومستقر، يوصى بإنشاء واجهة Interface مخصصة للمقتنيات User.",\n  "recommendations": [\n    { "type": "type-safety", "messageAr": "أضف نوع TypeScript صريح للمتغير user." }\n  ]\n}`,
+  },
+  {
+    method: 'POST',
+    path: '/api/genai',
+    descriptionAr: 'توليد مكونات Next.js v16 وتوصيات بنية النظام خادماً.',
+    descriptionEn: 'Server-side route handler invoking Gemini GenAI for architectural recommendations.',
+    requestBodyExample: `{\n  "prompt": "أنشئ مكون أزرار تفاعلي مع Tailwind v4"\n}`,
+    responseExample: `{\n  "status": "success",\n  "result": "// Next.js 16 Component\\nexport function Button({ label }) { ... }"\n}`,
+  },
+];

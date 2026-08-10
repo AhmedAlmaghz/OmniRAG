@@ -1,56 +1,28 @@
 import { GoogleGenAI } from '@google/genai';
 
-let aiClient: GoogleGenAI | null = null;
-
-function getGeminiClient(): GoogleGenAI | null {
-  if (aiClient) return aiClient;
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.warn('GEMINI_API_KEY is missing. Real embeddings cannot be generated.');
-    return null;
-  }
-  aiClient = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-  return aiClient;
-}
-
 /**
- * Generates a 3072-dimensional vector embedding for the given text
- * using the gemini-embedding-2-preview model.
+ * Generates a vector embedding for the given text
+ * using @google/genai SDK text-embedding-004 model.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const client = getGeminiClient();
-  if (!client) {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) {
     return generateFallbackVector(text);
   }
 
   try {
-    const response: any = await client.models.embedContent({
-      model: 'gemini-embedding-2',
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.embedContent({
+      model: 'text-embedding-004',
       contents: text,
     });
 
-    if (response.embedding?.values) {
-      return response.embedding.values;
+    const res = response as any;
+    if (res.embedding?.values && Array.isArray(res.embedding.values) && res.embedding.values.length > 0) {
+      return res.embedding.values;
     }
 
-    if (response.embeddings?.[0]?.values) {
-      return response.embeddings[0].values;
-    }
-    
-    // Fallback if structure is slightly different
-    const values = response.embedding?.values || response.embeddings?.[0]?.values || response.values;
-    if (values && Array.isArray(values)) {
-      return values;
-    }
-
-    throw new Error('Invalid embedding response format from Gemini API.');
+    throw new Error('Invalid embedding response format.');
   } catch (error) {
     console.error('Error calling Gemini embedding API, falling back to deterministic pseudo-vector:', error);
     return generateFallbackVector(text);
@@ -71,7 +43,8 @@ function generateFallbackVector(text: string): number[] {
     vector[index] = (vector[index] + charCode / 255.0) / 2.0;
   }
 
-  // Normalize the fallback vector to have unit length (Cosine similarity requires normalized or scaled values)
+  // Normalize the fallback vector to have unit length
   const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0)) || 1.0;
   return vector.map((v) => v / magnitude);
 }
+

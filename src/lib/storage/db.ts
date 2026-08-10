@@ -885,6 +885,15 @@ class OmniRAGDatabase {
     await setDoc(docRef, server);
   }
 
+  async deleteMcpServer(serverId: string, tenantId: string): Promise<void> {
+    await ensureSeeded();
+    const docRef = doc(firestore, 'mcpServers', serverId);
+    const snap = await getDoc(docRef);
+    if (snap.exists() && snap.data().tenantId === tenantId) {
+      await deleteDoc(docRef);
+    }
+  }
+
   // Audit Logs
   async getAuditLogs(tenantId: string): Promise<AuditLogEntry[]> {
     await ensureSeeded();

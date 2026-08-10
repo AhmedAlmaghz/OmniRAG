@@ -64,7 +64,7 @@ OmniRAG منصة Hybrid RAG ثنائية اللغة (عربية/إنجليزية
 - المواصفة: MCP 2026-07-28 (Stateless)
 
 ## Core Stack
-- Frontend: Next.js 15+ (App Router, RSC, TypeScript)
+- Frontend: Next.js 16+ (App Router, RSC, TypeScript)
 - Backend: Next.js API Routes + Edge Functions
 - DB: Neon Postgres (RLS) + Qdrant Cloud
 - Models: gemini-embedding-2 | gemini-3.5-flash-lite | gemini-3.6-flash

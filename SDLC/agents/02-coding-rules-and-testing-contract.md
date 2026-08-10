@@ -46,7 +46,7 @@ const search_chunks = async (tenant_id, query, top_k) => { /* ... */ };
 | **الاستيراد** | مسارات مطلقة `@/lib/...`، مرتبة: external → internal → types |
 | **الأخطاء** | كل عملية async تُرجع `Result<T, Error>` أو ترمي `TypedError` مع `code` و `tenantId` |
 
-### 2.2 قواعد Next.js 15 و React
+### 2.2 قواعد Next.js 16 و React
 
 - **App Router حصرياً** — لا صفحات `pages/`.
 - **Server Components افتراضياً**؛ `'use client'` فقط عند الضرورة (state، effects، browser APIs).

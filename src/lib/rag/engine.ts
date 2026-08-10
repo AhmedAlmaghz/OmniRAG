@@ -1,47 +1,37 @@
-import { GoogleGenAI } from '@google/genai';
+import { google } from './googleProvider';
+import { generateText } from 'ai';
 import { SearchQuery, SearchResult, DocumentChunk, Citation } from '../types/omnirag';
 import { db } from '../storage/db';
 import { searchPostgresLexical } from '../storage/postgres';
 import { searchQdrantSemantic } from '../storage/qdrant';
 import { generateEmbedding } from './embedding';
 
-// Initialize Gemini Client server-side with required User-Agent
-function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY || '';
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-}
-
 /**
  * Smart Router: selects the optimal model based on query complexity and mode
  */
 export function selectSmartModel(query: string, mode: string): string {
   if (mode === 'analysis' || query.length > 250 || query.includes('حلل') || query.includes('مقارنة')) {
-    return 'gemini-3.6-flash';
+    return 'gemini-2.5-pro';
   }
   if (query.length < 30) {
-    return 'gemini-3.5-flash-lite';
+    return 'gemini-2.5-flash';
   }
-  return 'gemini-3.6-flash';
+  return 'gemini-2.5-flash';
 }
 
 /**
- * HyDE (Hypothetical Document Embeddings) Generator
+ * HyDE (Hypothetical Document Embeddings) Generator using Vercel AI SDK
  */
 export async function generateHydeDocument(query: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) return query;
+
   try {
-    const ai = getGeminiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: `اكتب مستنداً افتراضياً مثالياً يبين الإجابة الشاملة على السؤال التالي بغرض استخدامه في محرك الاسترجاع المتجهي (HyDE):\n\nالسؤال: ${query}`,
+    const { text } = await generateText({
+      model: google('gemini-2.5-flash'),
+      prompt: `اكتب مستنداً افتراضياً مثالياً يبين الإجابة الشاملة على السؤال التالي بغرض استخدامه في محرك الاسترجاع المتجهي (HyDE):\n\nالسؤال: ${query}`,
     });
-    return response.text || query;
+    return text || query;
   } catch (e) {
     console.warn('HyDE generation fallback to raw query:', e);
     return query;
@@ -266,65 +256,64 @@ export async function generateRagCompletion(params: {
 النموذج المستخدم: ${modelToUse} | الوضع الحالي: ${mode}.
 
 قواعد الإسناد والاستشهاد:
-1. عند استخدام معلومة من المستندات المرفقة، أضف الرقم [1] أو [2] المظابق لرقم المصدر.
+1. عند استخدام معلومة من المستندات المرفقة، أضف الرقم [1] أو [2] المطابق لرقم المصدر.
 2. لا تبتكر مراجع وهمية غير موجودة في النص.
 3. إذا لم تجد الإجابة في المستندات، صرّح بوضوح: "بناءً على المستندات المتاحة، لا تتوفر معلومة كافية."`;
 
-  try {
-    const ai = getGeminiClient();
-    const prompt = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
+  const promptText = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 
-    const response = await ai.models.generateContent({
-      model: modelToUse,
-      contents: prompt,
-      config: {
-        systemInstruction,
+  if (apiKey) {
+    try {
+      const modelAlias = modelToUse.includes('pro') ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+      const { text, usage } = await generateText({
+        model: google(modelAlias),
+        system: systemInstruction,
+        prompt: promptText,
         temperature: 0.2,
-      },
-    });
+      });
 
-    const text = response.text || 'لم يتم استخراج نص من النموذج.';
+      const citations: Citation[] = contextChunks.map((chunk, idx) => ({
+        index: idx + 1,
+        chunkId: chunk.id,
+        documentId: chunk.documentId,
+        documentTitle: chunk.documentTitle,
+        pageNumber: chunk.pageNumber,
+        score: chunk.score || 0.85,
+        snippet: chunk.content.substring(0, 120) + '...',
+      }));
 
-    // Construct verifiable citations from chunks used
-    const citations: Citation[] = contextChunks.map((chunk, idx) => ({
-      index: idx + 1,
-      chunkId: chunk.id,
-      documentId: chunk.documentId,
-      documentTitle: chunk.documentTitle,
-      pageNumber: chunk.pageNumber,
-      score: chunk.score || 0.85,
-      snippet: chunk.content.substring(0, 120) + '...',
-    }));
-
-    return {
-      text,
-      citations,
-      modelUsed: modelToUse,
-      tokensUsed: {
-        input: Math.floor(prompt.length / 4),
-        output: Math.floor(text.length / 4),
-      },
-    };
-  } catch (err: any) {
-    console.error('Gemini API execution error:', err);
-    // Fallback response if API key is missing or errored
-    const fallbackCitations: Citation[] = contextChunks.map((chunk, idx) => ({
-      index: idx + 1,
-      chunkId: chunk.id,
-      documentId: chunk.documentId,
-      documentTitle: chunk.documentTitle,
-      pageNumber: chunk.pageNumber,
-      score: chunk.score || 0.85,
-      snippet: chunk.content.substring(0, 120) + '...',
-    }));
-
-    return {
-      text: `بناءً على المستندات المسترجعة من النظام (${contextChunks.length} قطعة):\n\n${
-        contextChunks[0]?.content || 'تم استرجاع السجلات المطلوبة بنجاح.'
-      }\n\n[إشعار المحرك: تم توليد الاستجابة المباشرة وفق سياسة الالتزام ببيانات المستأجر].`,
-      citations: fallbackCitations,
-      modelUsed: modelToUse,
-      tokensUsed: { input: 120, output: 85 },
-    };
+      return {
+        text: text || 'لم يتم استخراج نص من النموذج.',
+        citations,
+        modelUsed: modelToUse,
+        tokensUsed: {
+          input: usage?.inputTokens || Math.floor(promptText.length / 4),
+          output: usage?.outputTokens || Math.floor((text || '').length / 4),
+        },
+      };
+    } catch (err: any) {
+      console.error('AI SDK execution error, using deterministic fallback:', err);
+    }
   }
+
+  // Fallback response if API key is missing or errored
+  const fallbackCitations: Citation[] = contextChunks.map((chunk, idx) => ({
+    index: idx + 1,
+    chunkId: chunk.id,
+    documentId: chunk.documentId,
+    documentTitle: chunk.documentTitle,
+    pageNumber: chunk.pageNumber,
+    score: chunk.score || 0.85,
+    snippet: chunk.content.substring(0, 120) + '...',
+  }));
+
+  return {
+    text: `بناءً على المستندات المسترجعة من النظام (${contextChunks.length} قطعة):\n\n${
+      contextChunks[0]?.content || 'تم استرجاع السجلات المطلوبة بنجاح.'
+    }\n\n[إشعار المحرك: تم توليد الاستجابة المباشرة وفق سياسة الالتزام ببيانات المستأجر].`,
+    citations: fallbackCitations,
+    modelUsed: modelToUse,
+    tokensUsed: { input: 120, output: 85 },
+  };
 }

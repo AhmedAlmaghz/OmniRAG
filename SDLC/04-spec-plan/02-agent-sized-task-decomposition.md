@@ -33,12 +33,12 @@
 
 ### المرحلة A — البنية التحتية والمصادقة (Infrastructure & Auth)
 
-#### SPEC-A01: تهيئة مشروع Next.js 15 والبيئة متعددة البيئات
+#### SPEC-A01: تهيئة مشروع Next.js 16 والبيئة متعددة البيئات
 
 | البند | التفصيل |
 |---|---|
 | **المعرّف** | SPEC-A01 |
-| **الوصف** | إنشاء مشروع Next.js 15 بـ App Router وTypeScript صارم، وتكوين متغيرات البيئة لـ Neon وQdrant وGemini وMistral وUnstructured، مع فصل `development`/`staging`/`production` |
+| **الوصف** | إنشاء مشروع Next.js 16 بـ App Router وTypeScript صارم، وتكوين متغيرات البيئة لـ Neon وQdrant وGemini وMistral وUnstructured، مع فصل `development`/`staging`/`production` |
 | **الملفات** | `package.json`، `tsconfig.json`، `next.config.ts`، `.env.example`، `lib/env.ts` (Zod validation) |
 | **الوضع** | Conductor |
 | **معايير النجاح** | تشغيل `pnpm build` بدون أخطاء؛ تشغيل `pnpm typecheck` بـ 0 خطأ؛ رفع ملف `lib/env.ts` يفشل التطبيق عند غياب أي متغير حساس؛ توثيق كل متغير في `.env.example` |

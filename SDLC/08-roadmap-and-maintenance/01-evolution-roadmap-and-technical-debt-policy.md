@@ -28,7 +28,7 @@
 | الفئة | الوصف | مثال | مالك | أداة القياس |
 |---|---|---|---|
 | **Code Debt** | كود قديم، أنماط منتهية، تكرار | استخدام `any` في TypeScript | فريق المنصة | ESLint rules + SonarQube |
-| **Dependency Debt** | حزم قديمة، ثغرات CVE | Next.js < 15.3، `@modelcontextprotocol/sdk` < 2.0 | فريق الأمان | `npm audit` + Dependabot |
+| **Dependency Debt** | حزم قديمة، ثغرات CVE | Next.js < 16.3، `@modelcontextprotocol/sdk` < 2.0 | فريق الأمان | `npm audit` + Dependabot |
 | **Architecture Debt** | قرارات معمارية أصبحت عائقاً | RLS غير مُفعّل على جدول جديد | فريق البنية | مراجعة معمارية فصلية |
 | **AI-Generated Debt** | كود مُولَّد بالذكاء الاصطناعي لم يُراجَع | أدوات MCP ذات مدخلات غير صارمة | Tech Lead | PR Review checklist |
 | **Knowledge Debt** | وثائق منتهية أو مفقودة | System Prompt قديم في سجل الأدوات | فريق التوثيق | روابط مكسورة أسبوعياً |
@@ -85,7 +85,7 @@ flowchart LR
 | المكوّن | من | إلى | الموعد المستهدف | المخاطرة | خطة التراجع |
 |---|---|---|---|---|---|
 | `@modelcontextprotocol/sdk` | 1.x | 2.0 (مواصفة 2026-07-28) | T+45 يوم | متوسطة — تغيير stateless | الإبقاء على فرع 1.x لمدة 30 يوماً بالتوازي |
-| Next.js | 15.0 | 15.3+ | T+60 يوم | منخفضة | Vercel Preview rollback فوري |
+| Next.js | 16.0 | 16.3+ | T+60 يوم | منخفضة | Vercel Preview rollback فوري |
 | `gemini-embedding-2` | — | إصدار `embedding-3` عند توفره | عند الإعلان الرسمي | انقطاع أبعاد المتجهات | تشغيل `re-embed migration script` دُفعياً + إيقاف تدريجي |
 | PostgreSQL | 16 | 17 | T+120 يوم | منخفضة — Neon يدير الترقية | Snapshot احتياطي قبل الترقية |
 

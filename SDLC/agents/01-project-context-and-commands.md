@@ -21,7 +21,7 @@
 
 | التقنية | الإصدار | التبرير |
 |---|---|---|
-| **Next.js** | 15+ (App Router) | Server Components + Server Actions + Edge Runtime يتيح لنا تنفيذ منطق RAG قرب المستخدم |
+| **Next.js** | 16+ (App Router) | Server Components + Server Actions + Edge Runtime يتيح لنا تنفيذ منطق RAG قرب المستخدم |
 | **React** | 19+ | يُمكّن من Actions و`use()` للأحداث غير المتزامنة ودفق SSE |
 | **TypeScript** | 5.x (strict) | يضمن نوعية صارمة لحدود API وعقود أدوات MCP |
 | **Tailwind CSS** | 3.4+ | تكامل سريع مع دعم RTL عبر `dir="rtl"` |
@@ -77,7 +77,7 @@
 
 ```
 omnirag/
-├── app/                            # Next.js 15 App Router
+├── app/                            # Next.js 16 App Router
 │   ├── (auth)/                     # مجموعة مسارات المصادقة
 │   │   ├── login/page.tsx
 │   │   ├── register/page.tsx

@@ -45,7 +45,7 @@ flowchart LR
 |---|---|---|
 | `feat/<scope>-<short-desc>` | ميزة جديدة | `feat/mcp-add-slack-server` |
 | `fix/<scope>-<short-desc>` | إصلاح خطأ | `fix/rag-arabic-normalization-bug` |
-| `chore/<scope>-<short-desc>` | صيانة لا تأثير وظيفي | `chore/deps-bump-next-15` |
+| `chore/<scope>-<short-desc>` | صيانة لا تأثير وظيفي | `chore/deps-bump-next-16` |
 | `refactor/<scope>-<short-desc>` | إعادة هيكلة بلا تغيير سلوكي | `refactor/rag-extract-fusion-service` |
 | `docs/<scope>-<short-desc>` | وثائق فقط | `docs/agents-md-workflow-section` |
 | `security/<scope>-<short-desc>` | معالجة ثغرة | `security/rls-policy-audit` |

@@ -46,7 +46,7 @@
 | المكوّن | التقنية |
 |---|---|
 | **الاستضافة** | Vercel (Edge Functions + Serverless) |
-| **الإطار** | Next.js 15+ (App Router) مع React Server Components |
+| **الإطار** | Next.js 16+ (App Router) مع React Server Components |
 | **اللغة** | TypeScript |
 | **المصادقة** | NextAuth.js / Clerk مع Row-Level Security (RLS) |
 | **إدارة المهام الخلفية** | Inngest / Trigger.dev للمهام غير المتزامنة |
@@ -2047,7 +2047,7 @@ CREATE INDEX idx_mcp_server_active
 │                     🌐 OmniRAG — Full System Architecture               │
 │                                                                        │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │              طبقة العرض (Next.js 15 + App Router)                │  │
+│  │              طبقة العرض (Next.js 16 + App Router)                │  │
 │  │  Dashboard | Chat | Sources | MCP-Hub | Knowledge | Analytics   │  │
 │  └──────────────────────────┬───────────────────────────────────────┘  │
 │                              │                                         │

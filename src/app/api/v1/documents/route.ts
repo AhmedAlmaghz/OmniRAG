@@ -6,6 +6,14 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
+  const documentId = req.nextUrl.searchParams.get('documentId');
+
+  if (documentId) {
+    const allChunks = await db.getChunks(tenantId);
+    const docChunks = allChunks.filter((c) => c.documentId === documentId);
+    return NextResponse.json({ chunks: docChunks });
+  }
+
   const docs = await db.getDocuments(tenantId);
   return NextResponse.json({ documents: docs });
 }
@@ -14,7 +22,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const tenantId = body.tenantId || 'tenant-acme-01';
-    const { title, content, language = 'ar', collectionIds = [] } = body;
+    const { title, content, language = 'ar', collectionIds = [], chunkingConfig } = body;
 
     if (!title || !content) {
       return NextResponse.json({ error: 'العنوان والمحتوى مطلوبان' }, { status: 400 });
@@ -31,15 +39,30 @@ export async function POST(req: NextRequest) {
       status: 'indexed',
       chunkCount: 0,
       createdAt: new Date().toISOString(),
-      metadata: { source: 'User Upload' },
+      metadata: { source: 'User Upload', chunkingConfig },
       collectionIds,
     };
 
-    // Auto-chunking logic (500 chars per chunk)
-    const chunkSize = 400;
+    // Advanced dynamic chunking logic
+    const strategy = chunkingConfig?.strategy || 'semantic';
+    const targetSize = Math.max(128, chunkingConfig?.size || 512);
+    const overlapPercent = Math.min(50, Math.max(0, chunkingConfig?.overlap || 20));
+    const charSize = Math.floor(targetSize * 2.5); // ~2.5 chars per token for AR/EN
+    const overlapChars = Math.floor(charSize * (overlapPercent / 100));
+    const step = Math.max(50, charSize - overlapChars);
+
     const chunkTextList: string[] = [];
-    for (let i = 0; i < content.length; i += chunkSize) {
-      chunkTextList.push(content.substring(i, i + chunkSize));
+
+    if (strategy === 'markdown') {
+      const sections = content.split(/(?=\n#+ )/);
+      sections.forEach((s: string) => {
+        if (s.trim()) chunkTextList.push(s.trim());
+      });
+    } else {
+      for (let i = 0; i < content.length; i += step) {
+        const snippet = content.substring(i, i + charSize).trim();
+        if (snippet) chunkTextList.push(snippet);
+      }
     }
 
     newDoc.chunkCount = chunkTextList.length;
@@ -56,12 +79,12 @@ export async function POST(req: NextRequest) {
         chunkIndex: index,
         pageNumber: 1,
         language,
-        metadata: { position: index },
+        metadata: { position: index, strategy, tokenCount: Math.round(text.length / 2.8) },
       };
       await db.addChunk(chunk);
     }
 
-    return NextResponse.json({ success: true, document: newDoc }, { status: 201 });
+    return NextResponse.json({ success: true, document: newDoc, chunkCount: chunkTextList.length }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

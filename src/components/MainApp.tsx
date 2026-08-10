@@ -9,6 +9,7 @@ import RetrievalPlayground from '@/components/RetrievalPlayground';
 import SecurityCenter from '@/components/SecurityCenter';
 import AnalyticsView from '@/components/AnalyticsView';
 import AuthScreen from '@/components/AuthScreen';
+import LandingPage from '@/components/LandingPage';
 import { auth, logOutUser } from '@/lib/auth/firebaseAuth';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -20,14 +21,15 @@ import {
   ShieldCheck,
   BarChart3,
   Layers,
+  Home,
 } from 'lucide-react';
 
-type TabType = 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics';
+type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics';
 
 export default function MainApp() {
   const [tenantId, setTenantId] = useState('tenant-acme-01');
   const [lang, setLang] = useState<'ar' | 'en'>('ar');
-  const [activeTab, setActiveTab] = useState<TabType>('chat');
+  const [activeTab, setActiveTab] = useState<TabType>('landing');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
@@ -68,7 +70,7 @@ export default function MainApp() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab') as TabType;
-      if (tabParam && ['chat', 'knowledge', 'mcp', 'search', 'security', 'analytics'].includes(tabParam)) {
+      if (tabParam && ['landing', 'chat', 'knowledge', 'mcp', 'search', 'security', 'analytics'].includes(tabParam)) {
         setActiveTab(tabParam);
       }
     }
@@ -88,6 +90,12 @@ export default function MainApp() {
   };
 
   const navTabs = [
+    {
+      id: 'landing',
+      label: lang === 'ar' ? 'الصفحة الرئيسية' : 'Overview Landing',
+      icon: Home,
+      badge: 'Remotion 4',
+    },
     {
       id: 'chat',
       label: lang === 'ar' ? 'استوديو المحادثة المعززة' : 'Agentic Chat Studio',
@@ -151,6 +159,17 @@ export default function MainApp() {
     );
   }
 
+  if (activeTab === 'landing') {
+    return (
+      <LandingPage
+        onEnterApp={() => handleTabChange('chat')}
+        lang={lang}
+        setLang={setLang}
+        onNavigateTab={(tab) => handleTabChange(tab as TabType)}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       {/* Top Main Navigation Header */}
@@ -199,7 +218,7 @@ export default function MainApp() {
       </nav>
 
       {/* Workspace Active Tab View Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'chat' && <ChatStudio tenantId={tenantId} lang={lang} onNavigateTab={handleTabChange} />}
         {activeTab === 'knowledge' && <KnowledgeBase tenantId={tenantId} lang={lang} />}
         {activeTab === 'mcp' && <McpGateway tenantId={tenantId} lang={lang} />}
