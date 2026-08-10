@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node dev-server.js",
-    "build": "next build",
+    "build": "NODE_ENV=production next build",
     "start": "node server.ts",
     "clean": "rm -rf .next dist",
     "lint": "tsc --noEmit"
