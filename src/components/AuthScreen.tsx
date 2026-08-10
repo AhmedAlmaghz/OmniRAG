@@ -9,9 +9,10 @@ interface AuthScreenProps {
   onAuthSuccess: (tenantId: string, userEmail: string) => void;
   lang: 'ar' | 'en';
   onLangChange: (lang: 'ar' | 'en') => void;
+  onBackToLanding?: () => void;
 }
 
-export default function AuthScreen({ onAuthSuccess, lang, onLangChange }: AuthScreenProps) {
+export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackToLanding }: AuthScreenProps) {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -229,6 +230,16 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange }: AuthSc
       <div className="flex-1 flex items-center justify-center p-6 md:p-12 lg:p-16 relative">
         <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-xl relative z-10">
           
+          {onBackToLanding && (
+            <button
+              type="button"
+              onClick={onBackToLanding}
+              className="mb-6 inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-extrabold transition cursor-pointer select-none"
+            >
+              {lang === 'ar' ? 'العودة للصفحة الرئيسية ←' : '← Back to Landing Page'}
+            </button>
+          )}
+
           {/* Tabs header */}
           <div className="flex border-b border-slate-800 mb-6">
             <button

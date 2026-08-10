@@ -60,6 +60,7 @@ export default function MainApp() {
       setIsAuthenticated(false);
       setUserEmail(null);
       setTenantId('tenant-acme-01');
+      setActiveTab('landing');
     } catch (e) {
       console.error('Logout error:', e);
     }
@@ -145,6 +146,19 @@ export default function MainApp() {
     );
   }
 
+  // 1. Prioritize displaying the landing page if activeTab is 'landing' (even for unauthenticated users)
+  if (activeTab === 'landing') {
+    return (
+      <LandingPage
+        onEnterApp={() => handleTabChange('chat')}
+        lang={lang}
+        setLang={setLang}
+        onNavigateTab={(tab) => handleTabChange(tab as TabType)}
+      />
+    );
+  }
+
+  // 2. If trying to access any other tab, require authentication
   if (!isAuthenticated) {
     return (
       <AuthScreen
@@ -155,17 +169,7 @@ export default function MainApp() {
         }}
         lang={lang}
         onLangChange={setLang}
-      />
-    );
-  }
-
-  if (activeTab === 'landing') {
-    return (
-      <LandingPage
-        onEnterApp={() => handleTabChange('chat')}
-        lang={lang}
-        setLang={setLang}
-        onNavigateTab={(tab) => handleTabChange(tab as TabType)}
+        onBackToLanding={() => handleTabChange('landing')}
       />
     );
   }
