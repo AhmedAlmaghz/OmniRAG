@@ -4,6 +4,11 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '50mb',
+    },
+  },
   allowedDevOrigins: [
     'ais-dev-67hlqsp5cnmy3xifm7muz4-208615452127.europe-west2.run.app',
     'ais-pre-67hlqsp5cnmy3xifm7muz4-208615452127.europe-west2.run.app',

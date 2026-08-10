@@ -293,8 +293,32 @@ export function DocumentIngestionStudio({
               throw new Error(lang === 'ar' ? 'لم يتم استخراج أي نص من الملف.' : 'No text could be extracted.');
             }
           } else {
-            const err = await res.json();
-            throw new Error(err.error || 'Failed to parse document');
+            let errorMsg = 'Failed to parse document';
+            try {
+              const contentType = res.headers.get('content-type');
+              if (contentType && contentType.includes('application/json')) {
+                const err = await res.json();
+                errorMsg = err.error || errorMsg;
+              } else {
+                const textErr = await res.text();
+                if (res.status === 413 || textErr.includes('Payload Too Large') || textErr.includes('Request Entity Too Large')) {
+                  errorMsg = lang === 'ar'
+                    ? 'حجم الملف كبير جداً للاستخراج المباشر. يرجى محاولة تقسيم المستند أو استخدام ملف أصغر.'
+                    : 'File is too large for parsing. Please try splitting the document or uploading a smaller file.';
+                } else {
+                  errorMsg = textErr || `Server returned status code ${res.status}`;
+                }
+              }
+            } catch (e) {
+              if (res.status === 413) {
+                errorMsg = lang === 'ar'
+                  ? 'حجم الملف كبير جداً للاستخراج المباشر. يرجى محاولة تقسيم المستند أو استخدام ملف أصغر.'
+                  : 'File is too large for parsing. Please try splitting the document or uploading a smaller file.';
+              } else {
+                errorMsg = `Server error ${res.status}`;
+              }
+            }
+            throw new Error(errorMsg);
           }
         } catch (error: any) {
           console.error('Error parsing file:', error);
