@@ -116,6 +116,7 @@ export interface MCPServerConfig {
   status: 'healthy' | 'degraded' | 'down';
   latencyMs: number;
   lastChecked: string;
+  headers?: Record<string, string>;
 }
 
 export interface MCPToolDefinition {

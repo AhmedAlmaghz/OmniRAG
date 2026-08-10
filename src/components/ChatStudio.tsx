@@ -29,8 +29,15 @@ import {
   ChevronUp,
   Eye,
   FileJson,
+  History,
+  Plus,
+  Pencil,
+  Database,
+  Check,
+  FolderKanban,
+  Clock,
 } from 'lucide-react';
-import { Message, ChatMode, Citation, MCPToolCall, MCPServerConfig } from '@/lib/types/omnirag';
+import { Message, ChatMode, Citation, MCPToolCall, MCPServerConfig, Conversation, Collection } from '@/lib/types/omnirag';
 
 interface ChatStudioProps {
   tenantId: string;
@@ -39,6 +46,21 @@ interface ChatStudioProps {
 }
 
 export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudioProps) {
+  // Durable Firestore Conversation & Messages States
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string>('conv-init');
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState<boolean>(false);
+  const [isLoadingConversations, setIsLoadingConversations] = useState<boolean>(true);
+  const [isLoadingMessages, setIsLoadingMessages] = useState<boolean>(false);
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState<string>('');
+
+  // Knowledge Collections & Sources Filtering States
+  const [availableCollections, setAvailableCollections] = useState<Collection[]>([]);
+  const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([]);
+  const [showSourcesModal, setShowSourcesModal] = useState<boolean>(false);
+  const [isLoadingCollections, setIsLoadingCollections] = useState<boolean>(false);
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'msg-welcome',
@@ -49,7 +71,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
         lang === 'ar'
           ? 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.'
           : 'Welcome to OmniRAG Agentic Chat Studio. Ask queries regarding contracts, security specs, or multi-tenant policies.',
-      createdAt: '2026-08-08T00:00:00.000Z',
+      createdAt: new Date().toISOString(),
       modelUsed: 'gemini-3.6-flash',
     },
   ]);
@@ -70,6 +92,202 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
   const [sessionToolCalls, setSessionToolCalls] = useState<MCPToolCall[]>([]);
   const [expandedToolCallId, setExpandedToolCallId] = useState<string | null>(null);
   const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
+
+  // Load conversations from Firestore
+  const fetchConversations = async (autoSelectFirst = true) => {
+    setIsLoadingConversations(true);
+    try {
+      const res = await fetch(`/api/v1/conversations?tenantId=${tenantId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.conversations && data.conversations.length > 0) {
+          setConversations(data.conversations);
+          if (autoSelectFirst && !activeConversationId) {
+            const firstId = data.conversations[0].id;
+            setActiveConversationId(firstId);
+            fetchMessagesForConv(firstId);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching conversations:', err);
+    } finally {
+      setIsLoadingConversations(false);
+    }
+  };
+
+  // Load available collections for current tenant
+  const fetchCollections = async () => {
+    setIsLoadingCollections(true);
+    try {
+      const res = await fetch(`/api/v1/collections?tenantId=${tenantId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.collections) {
+          setAvailableCollections(data.collections);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching collections:', err);
+    } finally {
+      setIsLoadingCollections(false);
+    }
+  };
+
+  // Load messages for a selected conversation
+  const fetchMessagesForConv = async (convId: string) => {
+    setIsLoadingMessages(true);
+    try {
+      const res = await fetch(`/api/v1/conversations?tenantId=${tenantId}&conversationId=${convId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.messages) {
+          setMessages(data.messages);
+        }
+        if (data.conversation) {
+          setSelectedMode(data.conversation.mode || 'hybrid');
+          setSelectedCollectionIds(data.conversation.collectionIds || []);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching messages for conversation:', err);
+    } finally {
+      setIsLoadingMessages(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchConversations(true);
+    fetchCollections();
+  }, [tenantId]);
+
+  // Toggle collection active state for current conversation
+  const handleToggleCollection = (colId: string) => {
+    setSelectedCollectionIds((prev) => {
+      let updated: string[];
+      if (prev.includes(colId)) {
+        updated = prev.filter((id) => id !== colId);
+      } else {
+        updated = [...prev, colId];
+      }
+
+      // Save updated collectionIds to current conversation in Firestore
+      if (activeConversationId) {
+        const activeConv = conversations.find((c) => c.id === activeConversationId);
+        if (activeConv) {
+          const updatedConv = { ...activeConv, collectionIds: updated };
+          fetch('/api/v1/conversations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'create',
+              tenantId,
+              id: activeConv.id,
+              title: activeConv.title,
+              mode: activeConv.mode,
+              model: activeConv.model,
+              collectionIds: updated,
+            }),
+          }).catch((err) => console.error("Error saving updated collectionIds to conversation:", err));
+        }
+      }
+
+      return updated;
+    });
+  };
+
+  const handleSelectAllCollections = () => {
+    const allIds = availableCollections.map((c) => c.id);
+    setSelectedCollectionIds(allIds);
+  };
+
+  const handleClearAllCollections = () => {
+    setSelectedCollectionIds([]);
+  };
+
+  // Create a new chat session in Firestore
+  const handleCreateNewConversation = async () => {
+    try {
+      const res = await fetch('/api/v1/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create',
+          tenantId,
+          title: lang === 'ar' ? 'محادثة جديدة' : 'New Conversation',
+          mode: selectedMode,
+          welcomeText: lang === 'ar' ? 'مرحباً بك في الجلسة الجديدة. كيف يمكنني مساعدتك اليوم؟' : 'Welcome to the new session. How can I help you today?',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.conversation) {
+          setActiveConversationId(data.conversation.id);
+          setConversations(data.conversations || []);
+          fetchMessagesForConv(data.conversation.id);
+        }
+      }
+    } catch (err) {
+      console.error('Error creating conversation:', err);
+    }
+  };
+
+  // Delete a chat session from Firestore
+  const handleDeleteConversation = async (convId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(lang === 'ar' ? 'هل أنت تأكد من حذف هذه المحادثة بالكامل من قاعدة البيانات؟' : 'Are you sure you want to delete this chat session?')) return;
+    try {
+      const res = await fetch('/api/v1/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete',
+          tenantId,
+          conversationId: convId,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const updatedList = data.conversations || [];
+        setConversations(updatedList);
+        if (convId === activeConversationId) {
+          if (updatedList.length > 0) {
+            const nextId = updatedList[0].id;
+            setActiveConversationId(nextId);
+            fetchMessagesForConv(nextId);
+          } else {
+            handleCreateNewConversation();
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error deleting conversation:', err);
+    }
+  };
+
+  // Rename a chat session in Firestore
+  const handleRenameConversation = async (convId: string) => {
+    if (!editingTitle.trim()) return;
+    try {
+      const res = await fetch('/api/v1/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'rename',
+          tenantId,
+          conversationId: convId,
+          title: editingTitle.trim(),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setConversations(data.conversations || []);
+        setEditingConvId(null);
+      }
+    } catch (err) {
+      console.error('Error renaming conversation:', err);
+    }
+  };
 
   const modeDescriptions = {
     private: lang === 'ar' ? 'وضع خاص: حظر البحث المباشر في الويب وقصر النطاق على المستندات المحلية فقط مع عزل أدوات MCP الخارجية' : 'Private: Strict local documents only with external MCP tool containment',
@@ -168,11 +386,11 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
 
     setSecurityNotice(null);
 
-    // Create User Message
+    // Create User Message with active conversation ID
     const userMsg: Message = {
       id: `msg-${Date.now()}`,
       tenantId,
-      conversationId: 'conv-init',
+      conversationId: activeConversationId,
       role: 'user',
       content: approvedToolCall 
         ? `${lang === 'ar' ? '✓ موافقة وتفويض تشغيل أداة الـ MCP:' : '✓ Approved and Authorized MCP Tool:'} ${approvedToolCall.scopedToolName}`
@@ -183,6 +401,17 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
     setMessages((prev) => [...prev, userMsg]);
     if (!promptToSend) setInputPrompt('');
     setIsLoading(true);
+
+    // Persist User Message to Firestore
+    fetch('/api/v1/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'save_message',
+        tenantId,
+        message: userMsg,
+      }),
+    }).catch((err) => console.error("Firestore user message save error:", err));
 
     try {
       const res = await fetch('/api/v1/chat/completions', {
@@ -195,6 +424,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
           tenantId,
           prompt: textPrompt,
           mode: selectedMode,
+          collectionIds: selectedCollectionIds,
           approvedToolCall,
         }),
       });
@@ -209,13 +439,24 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
         const blockedMsg: Message = {
           id: `msg-blocked-${Date.now()}`,
           tenantId,
-          conversationId: 'conv-init',
+          conversationId: activeConversationId,
           role: 'assistant',
           content: `🛑 [درع أمن OmniRAG]: ${blockedReason}`,
           createdAt: new Date().toISOString(),
           modelUsed: 'HookHarness Defense Engine',
         };
         setMessages((prev) => [...prev, blockedMsg]);
+
+        fetch('/api/v1/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'save_message',
+            tenantId,
+            message: blockedMsg,
+          }),
+        }).catch((err) => console.error("Firestore blocked message save error:", err));
+
         setIsLoading(false);
         return;
       }
@@ -246,7 +487,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
       const assistantMsg: Message = {
         id: `msg-${Date.now() + 1}`,
         tenantId,
-        conversationId: 'conv-init',
+        conversationId: activeConversationId,
         role: 'assistant',
         content: data.text,
         citations: data.citations,
@@ -256,6 +497,19 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+
+      // Persist Assistant Message to Firestore
+      fetch('/api/v1/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save_message',
+          tenantId,
+          message: assistantMsg,
+        }),
+      }).then(() => {
+        fetchConversations(false);
+      }).catch((err) => console.error("Firestore assistant message save error:", err));
 
       // If citations exist, auto-select Citations tab
       if (data.citations && data.citations.length > 0) {
@@ -350,14 +604,55 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
 
           {/* Quick Demo Controls & Chat Session Tools */}
           <div className="flex items-center gap-2">
+            {/* Sources & Collections Filter Button */}
             <button
               type="button"
-              onClick={handleClearChat}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-              title="مسح المحادثة وإعادة ضبط الاستوديو"
+              onClick={() => setShowSourcesModal(!showSourcesModal)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                selectedCollectionIds.length > 0
+                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+              }`}
+              title="تخصيص وتحديد مصادر المعرفة المسموح بالاستعلام منها في هذه الجلسة"
             >
-              <Trash2 className="w-3.5 h-3.5 text-slate-500" />
-              <span className="hidden sm:inline">{lang === 'ar' ? 'مسح' : 'Clear'}</span>
+              <FolderKanban className="w-3.5 h-3.5" />
+              <span>{lang === 'ar' ? 'المصادر المحددة' : 'Active Sources'}</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                selectedCollectionIds.length > 0
+                  ? 'bg-amber-100 text-amber-900'
+                  : 'bg-slate-100 text-slate-600'
+              }`}>
+                {selectedCollectionIds.length === 0
+                  ? (lang === 'ar' ? 'الكل' : 'All')
+                  : `${selectedCollectionIds.length}`}
+              </span>
+            </button>
+
+            {/* Conversations History Drawer Toggle */}
+            <button
+              type="button"
+              onClick={() => setShowHistoryDrawer(!showHistoryDrawer)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                showHistoryDrawer
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                  : 'bg-white hover:bg-slate-100 text-indigo-700 border-indigo-200'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>{lang === 'ar' ? 'سجل المحادثات' : 'History'}</span>
+              <span className="bg-indigo-100 text-indigo-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                {conversations.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCreateNewConversation}
+              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-xs"
+              title="بدء جلسة محادثة جديدة"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{lang === 'ar' ? 'جلسة جديدة' : 'New Chat'}</span>
             </button>
 
             <button
@@ -377,7 +672,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
               title="اختبار حظر هجمات الحقن حتمياً"
             >
               <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
-              <span>{lang === 'ar' ? 'اختبار الحقن' : 'Test Injection'}</span>
+              <span className="hidden xl:inline">{lang === 'ar' ? 'اختبار الحقن' : 'Test Injection'}</span>
             </button>
 
             <button
@@ -387,10 +682,222 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
               title="محاكاة موافقة أدوات MCP"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>{lang === 'ar' ? 'محاكاة MCP' : 'Simulate MCP'}</span>
+              <span className="hidden xl:inline">{lang === 'ar' ? 'محاكاة MCP' : 'Simulate MCP'}</span>
             </button>
           </div>
         </div>
+
+        {/* Chat History Panel (Firestore Persistent Storage) */}
+        {showHistoryDrawer && (
+          <div className="p-4 bg-indigo-950/95 text-white border-b border-indigo-800 animate-fadeIn">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-400 animate-pulse" />
+                <h4 className="text-xs font-bold text-slate-100">
+                  {lang === 'ar' ? 'سجل المحادثات المحفوظة دائمياً في Firestore:' : 'Persistent Firestore Conversations Archive:'}
+                </h4>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono">
+                  {lang === 'ar' ? 'حفظ تلقائي مفعّل' : 'Auto-Save Active'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleCreateNewConversation}
+                className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer shadow-xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{lang === 'ar' ? 'إضافة محادثة جديدة' : 'New Conversation'}</span>
+              </button>
+            </div>
+
+            {isLoadingConversations ? (
+              <div className="py-4 text-center text-xs text-indigo-300 flex items-center justify-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                <span>{lang === 'ar' ? 'جاري تحميل السجل من Firestore...' : 'Loading history from Firestore...'}</span>
+              </div>
+            ) : conversations.length === 0 ? (
+              <p className="text-xs text-indigo-300 py-2">
+                {lang === 'ar' ? 'لا توجد محادثات سابقة. يمكنك إنشاء محادثة جديدة.' : 'No saved conversations. Start a new chat.'}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                {conversations.map((conv) => {
+                  const isActive = conv.id === activeConversationId;
+                  const isEditing = editingConvId === conv.id;
+                  return (
+                    <div
+                      key={conv.id}
+                      onClick={() => {
+                        if (conv.id !== activeConversationId) {
+                          setActiveConversationId(conv.id);
+                          fetchMessagesForConv(conv.id);
+                        }
+                      }}
+                      className={`p-2.5 rounded-xl border transition text-xs cursor-pointer flex flex-col justify-between gap-1.5 ${
+                        isActive
+                          ? 'bg-indigo-800/90 border-emerald-400 text-white shadow-md ring-1 ring-emerald-400/50'
+                          : 'bg-indigo-900/60 border-indigo-800/80 hover:bg-indigo-800/50 text-indigo-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        {isEditing ? (
+                          <div className="flex items-center gap-1 w-full" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              value={editingTitle}
+                              onChange={(e) => setEditingTitle(e.target.value)}
+                              className="bg-indigo-950 border border-indigo-600 rounded px-2 py-0.5 text-xs text-white w-full"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleRenameConversation(conv.id)}
+                              className="p-1 bg-emerald-600 hover:bg-emerald-500 rounded text-white"
+                            >
+                              <Check className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="font-semibold truncate flex-1 flex items-center gap-1.5">
+                            <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-emerald-400' : 'text-indigo-400'}`} />
+                            <span className="truncate">{conv.title}</span>
+                          </span>
+                        )}
+
+                        {!isEditing && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingConvId(conv.id);
+                                setEditingTitle(conv.title);
+                              }}
+                              className="p-1 hover:bg-indigo-700 rounded text-indigo-300 hover:text-white transition"
+                              title="تعديل العنوان"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteConversation(conv.id, e)}
+                              className="p-1 hover:bg-rose-900/80 rounded text-rose-300 hover:text-rose-100 transition"
+                              title="حذف المحادثة"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-indigo-300 font-mono">
+                        <span className="bg-indigo-950/80 px-1.5 py-0.2 rounded border border-indigo-800">
+                          {conv.mode}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-2.5 h-2.5" />
+                          {new Date(conv.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Active Knowledge Sources & Collections Selection Panel */}
+        {showSourcesModal && (
+          <div className="p-4 bg-slate-900 text-white border-b border-slate-800 animate-fadeIn">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                <FolderKanban className="w-4 h-4 text-amber-400" />
+                <h4 className="text-xs font-bold text-slate-100">
+                  {lang === 'ar' ? 'تحديد وتحديث مصادر ومجموعات المعرفة النشطة للمحادثة:' : 'Select & Update Active Knowledge Collections for Chat:'}
+                </h4>
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono">
+                  {selectedCollectionIds.length === 0
+                    ? (lang === 'ar' ? 'البحث شامل لكافة المجموعات' : 'Querying All Collections')
+                    : (lang === 'ar' ? `تم تضييق النطاق لـ ${selectedCollectionIds.length} مجموعات` : `Filtered to ${selectedCollectionIds.length} collections`)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAllCollections}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition cursor-pointer"
+                >
+                  {lang === 'ar' ? 'تحديد الكل' : 'Select All'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearAllCollections}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition cursor-pointer"
+                >
+                  {lang === 'ar' ? 'استعلام كافة المصادر' : 'Clear (All Sources)'}
+                </button>
+                {onNavigateTab && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateTab('knowledge')}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span>{lang === 'ar' ? 'إدارة المصادر والمكتبة' : 'Manage Knowledge'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {isLoadingCollections ? (
+              <div className="py-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                <span>{lang === 'ar' ? 'جاري تحميل المجموعات المتاحة...' : 'Loading collections...'}</span>
+              </div>
+            ) : availableCollections.length === 0 ? (
+              <p className="text-xs text-slate-400 py-2">
+                {lang === 'ar' ? 'لا توجد مجموعات معرفية معرفة حالياً.' : 'No collections configured.'}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
+                {availableCollections.map((col) => {
+                  const isChecked = selectedCollectionIds.includes(col.id);
+                  return (
+                    <div
+                      key={col.id}
+                      onClick={() => handleToggleCollection(col.id)}
+                      className={`p-3 rounded-xl border transition text-xs cursor-pointer flex items-start gap-2.5 ${
+                        isChecked
+                          ? 'bg-amber-950/80 border-amber-500 text-amber-100 shadow-sm ring-1 ring-amber-500/40'
+                          : 'bg-slate-800/80 border-slate-700/80 hover:bg-slate-800 text-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}} // handled by parent onClick
+                        className="mt-0.5 rounded border-slate-600 text-amber-500 focus:ring-amber-500 shrink-0 cursor-pointer"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <span className="font-bold truncate text-slate-100">{col.name}</span>
+                          <span className="text-[10px] bg-slate-900 border border-slate-700 text-slate-300 px-1.5 py-0.2 rounded font-mono">
+                            {col.documentCount || 0} {lang === 'ar' ? 'مستندات' : 'docs'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 line-clamp-2 leading-tight">
+                          {col.description || (lang === 'ar' ? 'مجموعة بيانات ومعارف مستوردة' : 'Imported knowledge base collection')}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Live MCP Connected Gateways Bar */}
         <div className="px-4 py-2 bg-indigo-900 text-white text-xs flex flex-wrap items-center justify-between gap-2 shadow-inner">
@@ -581,6 +1088,36 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
 
         {/* Input Bar */}
         <div className="p-4 border-t border-slate-200 bg-white">
+          {selectedCollectionIds.length > 0 && (
+            <div className="mb-2.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-900 text-xs flex items-center justify-between gap-2 shadow-2xs">
+              <span className="flex items-center gap-1.5">
+                <FolderKanban className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="font-medium">
+                  {lang === 'ar'
+                    ? `محيط الاستعلام مقيد بـ ${selectedCollectionIds.length} من أصل ${availableCollections.length} مجموعة معارف`
+                    : `Query scoped to ${selectedCollectionIds.length} of ${availableCollections.length} collections`}
+                </span>
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowSourcesModal(true)}
+                  className="font-bold underline text-amber-800 hover:text-amber-950 transition cursor-pointer"
+                >
+                  {lang === 'ar' ? 'تعديل المصادر' : 'Edit Sources'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearAllCollections}
+                  className="p-0.5 rounded hover:bg-amber-200/60 text-amber-700 hover:text-amber-950 transition cursor-pointer"
+                  title="إلغاء التصفية واستعلام كافة المصادر"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           <form
             onSubmit={(e) => {
               e.preventDefault();

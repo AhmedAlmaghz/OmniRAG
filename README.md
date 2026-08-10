@@ -1,20 +1,86 @@
+# 🚀 منصة OmniRAG (الإصدار v0.1.8)
+
+**OmniRAG** هي منصة متكاملة ومتقدمة للجيل الجديد من أنظمة **الاسترجاع المعزز بالتوليد (RAG)** الموثوقة والمخصصة للمؤسسات متعددة المستأجرين (Multi-Tenant Enterprise RAG & MCP Agentic Engine).
+
+---
+
+## 🌟 أبرز الميزات والقدرات الرئيسية
+
+### 1. 💬 استوديو المحادثة المعززة وحفظ الجلسات (Durable Firestore Chat Persistence)
+- **حفظ المحادثات دائمياً:** يتم حفظ كافّة الجلسات والرسائل تلقائياً في قاعدة بيانات **Firebase Firestore** بصورة معزولة لكل مستأجر (`tenantId`).
+- **إدارة الجلسات السابقة:** إمكانية التبديل بين جلسات المحادثة، تعديل عناوينها، أو حذفها بمرونة.
+- **توليد عناوين ذكية:** تحديث عنوان المحادثة تلقائياً بناءً على سياق الاستفسار الأول للمستخدم.
+
+### 2. 📚 تحديد وتحديث مصادر المعرفة المخصصة (Knowledge Collections & Sources Scoping)
+- **فلترة نطاق الاستعلام:** إمكانية تخصيص وتحديد مجموعات ومصادر معرفية معينة للبحث فيها أثناء جلسة المحادثة، أو اختيار الاستعلام الشامل لكافة المصادر المتاحة للمستأجر.
+- **ربط المصادر بالجلسة:** حفظ التفضيلات المحددة للمصادر ضمن كائن الجلسة في Firestore.
+
+### 3. 🔍 محرك استرجاع هجين فائق الدقة (Hybrid RRF Retrieval)
+- **دمج متقدم:** يدمج بين البحث المتجهي الكثيف (Dense Vector Embeddings) والبحث المعجمي (BM25 Lexical) باستخدام خوارزمية **Reciprocal Rank Fusion (RRF)**.
+- **دعم الاستشهاد بالمرجع (Citations):** استخراج دقيق للمصادر والصفحات المرجعية واستعراضها بجانب الإجابات المستوردة من نماذج Gemini.
+
+### 4. 🛡️ درع الأمن والحماية والتحقق من الحقن (Security Guardrails & Injection Shield)
+- **منع هجمات الحقن:** فحص واستكشاف محاولات Prompt Injection واختراق السياق حتمياً قبل إرسال الطلب للنموذج.
+- **مركز أمن المستأجرين:** مراقبة وتحليل سجلات الوصول والأحداث في الوقت الفعلي.
+
+### 5. 🔌 بوابات بروتوكول سياق النموذج (MCP Gateways)
+- **تكامل أدوات MCP:** الاتصال بسيرفرات MCP الخارجية والداخلية لاستدعاء الوظائف (Function Calling) مع آلية موافقة المستخدم وتوثيق تنفيذ الأدوات.
+
+### 6. 📄 استوديو معالجة واستيراد المستندات (Document Ingestion Studio)
+- **دعم صيغ متعددة:** معالجة مستندات PDF, DOCX, TXT, JSON, CSV.
+- **تجزئة ذكية (Chunking):** تقطيع المستندات وتوليد التضمينات المتجهية وإسنادها للمجموعات المعرفية للمستأجر.
+
+---
+
+## 🛠️ التقنيات المستخدمة (Tech Stack)
+
+- **الإطار البرمجي:** Next.js 15+ (App Router) & React 19
+- **لغة البرمجة:** TypeScript
+- **التنسيق والواجهات:** Tailwind CSS v4 & Lucide Icons
+- **قاعدة البيانات والتخزين الدائم:** Firebase Firestore & Local Storage Sync
+- **الذكاء الاصطناعي والتضمين:** Google Gemini SDK (`@google/genai`) - نموذج `gemini-3.6-flash`
+
+---
+
+## ⚙️ التشغيل المحلي (Run Locally)
+
+### المتطلبات الأساسية
+- **Node.js** (النسخة 18 أو أحدث)
+- **npm** أو **bun**
+
+### خطوات التشغيل
+1. **تثبيت الحزم والاعتمادات:**
+   ```bash
+   npm install
+   ```
+
+2. **إعداد متغيرات البيئة:**
+   أنشئ ملف `.env.local` واضبط مفتاح Gemini API الخاص بك:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key_here
+   ```
+
+3. **تشغيل خادم التطوير:**
+   ```bash
+   npm run dev
+   ```
+   افتح [http://localhost:3000](http://localhost:3000) في المتصفح لاستعراض المنصة.
+
+---
+
+## 🧪 الفحص والبناء (Lint & Build)
+
+- **فحص الأنواع والأخطاء:**
+  ```bash
+  npm run lint
+  ```
+- **بناء التطبيق للإنتاج:**
+  ```bash
+  npm run build
+  ```
+
+---
+
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+  <sub>تم تطوير المنصة بأعلى معايير جودة البرمجيات هندسياً وفق أحدث تقنيات RAG وتكامل Firestore وMCP.</sub>
 </div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/2a5c20aa-f922-4c12-8cd6-0d2db3beb1f4
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`

@@ -967,6 +967,127 @@ class OmniRAGDatabase {
     await ensureSeeded();
     await setDoc(doc(firestore, 'toolCalls', tc.id), tc);
   }
+
+  // Conversations & Messages (Durable Firestore Persistence)
+  async getConversations(tenantId: string): Promise<Conversation[]> {
+    await ensureSeeded();
+    const q = query(collection(firestore, 'conversations'), where('tenantId', '==', tenantId));
+    const snapshot = await getDocs(q);
+    const convs = snapshot.docs.map((d) => d.data() as Conversation);
+
+    if (convs.length > 0) {
+      return convs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    }
+
+    // Default seed conversation if none exists for tenant
+    const defaultConv: Conversation = {
+      id: `conv-init-${tenantId}`,
+      tenantId,
+      title: 'جلسة استفسارات السياسات والأمن',
+      mode: 'hybrid',
+      model: 'gemini-3.6-flash',
+      collectionIds: [],
+      enabledMcpServers: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await setDoc(doc(firestore, 'conversations', defaultConv.id), defaultConv);
+      const welcomeMsg: Message = {
+        id: `msg-welcome-${defaultConv.id}`,
+        tenantId,
+        conversationId: defaultConv.id,
+        role: 'assistant',
+        content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
+        createdAt: new Date().toISOString(),
+        modelUsed: 'gemini-3.6-flash',
+      };
+      await setDoc(doc(firestore, 'messages', welcomeMsg.id), welcomeMsg);
+    } catch (e) {
+      console.warn('Auto-seed default conversation error:', e);
+    }
+
+    return [defaultConv];
+  }
+
+  async getConversationById(id: string, tenantId: string): Promise<Conversation | null> {
+    await ensureSeeded();
+    const snap = await getDoc(doc(firestore, 'conversations', id));
+    if (!snap.exists()) return null;
+    const conv = snap.data() as Conversation;
+    return conv.tenantId === tenantId ? conv : null;
+  }
+
+  async saveConversation(conv: Conversation): Promise<void> {
+    await ensureSeeded();
+    await setDoc(doc(firestore, 'conversations', conv.id), conv, { merge: true });
+  }
+
+  async deleteConversation(id: string, tenantId: string): Promise<void> {
+    await ensureSeeded();
+    const convRef = doc(firestore, 'conversations', id);
+    const snap = await getDoc(convRef);
+    if (snap.exists() && snap.data().tenantId === tenantId) {
+      await deleteDoc(convRef);
+
+      // Clean up associated messages
+      const msgsRef = collection(firestore, 'messages');
+      const q = query(msgsRef, where('conversationId', '==', id), where('tenantId', '==', tenantId));
+      const msgSnap = await getDocs(q);
+      for (const mDoc of msgSnap.docs) {
+        await deleteDoc(mDoc.ref);
+      }
+    }
+  }
+
+  async getMessages(conversationId: string, tenantId: string): Promise<Message[]> {
+    await ensureSeeded();
+    const q = query(
+      collection(firestore, 'messages'),
+      where('conversationId', '==', conversationId),
+      where('tenantId', '==', tenantId)
+    );
+    const snapshot = await getDocs(q);
+    const msgs = snapshot.docs.map((d) => d.data() as Message);
+    if (msgs.length === 0 && conversationId.startsWith('conv-init')) {
+      const welcomeMsg: Message = {
+        id: `msg-welcome-${conversationId}`,
+        tenantId,
+        conversationId,
+        role: 'assistant',
+        content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
+        createdAt: new Date().toISOString(),
+        modelUsed: 'gemini-3.6-flash',
+      };
+      await setDoc(doc(firestore, 'messages', welcomeMsg.id), welcomeMsg);
+      return [welcomeMsg];
+    }
+    return msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
+  async addMessage(msg: Message): Promise<void> {
+    await ensureSeeded();
+    await setDoc(doc(firestore, 'messages', msg.id), msg);
+
+    // Touch parent conversation updatedAt and set title if needed
+    try {
+      const convRef = doc(firestore, 'conversations', msg.conversationId);
+      const convSnap = await getDoc(convRef);
+      if (convSnap.exists()) {
+        const conv = convSnap.data() as Conversation;
+        const updates: Partial<Conversation> = {
+          updatedAt: new Date().toISOString(),
+        };
+        if (msg.role === 'user' && (conv.title.startsWith('محادثة جديدة') || conv.title.startsWith('New Conversation') || conv.title === 'جلسة استفسارات السياسات والأمن')) {
+          updates.title = msg.content.length > 35 ? msg.content.substring(0, 35) + '...' : msg.content;
+        }
+        await setDoc(convRef, updates, { merge: true });
+      }
+    } catch (e) {
+      console.warn('Failed to touch conversation timestamp:', e);
+    }
+  }
 }
 
 export const db = new OmniRAGDatabase();

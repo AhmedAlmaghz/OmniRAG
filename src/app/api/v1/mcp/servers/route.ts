@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
         protocolVersion: serverData.protocolVersion || '2026-07-28',
         enabledTools: serverData.enabledTools || defaultEnabled,
         requireConfirmationTools: serverData.requireConfirmationTools || defaultRequired,
+        headers: serverData.headers || {},
         status: 'healthy',
         latencyMs: Math.floor(Math.random() * 25) + 15,
         lastChecked: new Date().toISOString(),
@@ -76,6 +77,51 @@ export async function POST(req: NextRequest) {
       }, { status: 201 });
     }
 
+    // Action 1.5: Edit/Update Server Configuration
+    if (body.action === 'edit' && body.server) {
+      const serverData = body.server;
+      const servers = await db.getMcpServers(tenantId);
+      const existing = servers.find(s => s.id === serverData.id);
+
+      if (!existing) {
+        return NextResponse.json({ error: 'خادم MCP غير موجود للتعديل' }, { status: 404 });
+      }
+
+      const updatedServer: MCPServerConfig = {
+        ...existing,
+        name: serverData.name ?? existing.name,
+        endpointUrl: serverData.endpointUrl ?? existing.endpointUrl,
+        description: serverData.description ?? existing.description,
+        sandboxTier: serverData.sandboxTier ?? existing.sandboxTier,
+        protocolVersion: serverData.protocolVersion ?? existing.protocolVersion,
+        enabledTools: serverData.enabledTools ?? existing.enabledTools,
+        requireConfirmationTools: serverData.requireConfirmationTools ?? existing.requireConfirmationTools,
+        headers: serverData.headers ?? existing.headers ?? {},
+        lastChecked: new Date().toISOString(),
+      };
+
+      await db.addMcpServer(updatedServer);
+
+      // Audit Log for editing
+      await db.addAuditLog({
+        id: `audit-${Date.now()}`,
+        tenantId,
+        actorId: 'mcp_gateway_admin',
+        action: 'MCP_SERVER_UPDATED',
+        resourceType: 'mcp_server',
+        resourceId: updatedServer.id,
+        status: 'success',
+        details: `تم تحديث بيانات وترويسات أمان خادم MCP (${updatedServer.name}) بنجاح.`,
+        timestamp: new Date().toISOString(),
+      });
+
+      return NextResponse.json({
+        success: true,
+        server: updatedServer,
+        servers: await db.getMcpServers(tenantId)
+      });
+    }
+
     // Action 2: Ping/Test Connection
     if (body.action === 'ping' && body.serverId) {
       const { serverId } = body;
@@ -94,10 +140,15 @@ export async function POST(req: NextRequest) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 2000);
 
+        const requestHeaders: Record<string, string> = {
+          'Accept': 'application/json',
+          ...(server.headers || {}),
+        };
+
         const response = await fetch(server.endpointUrl, {
           method: 'GET',
           signal: controller.signal,
-          headers: { 'Accept': 'application/json' }
+          headers: requestHeaders,
         });
         clearTimeout(timeoutId);
 
