@@ -1,8 +1,9 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   const sourceTypes = [
     {
       id: 'url',
@@ -171,4 +172,4 @@ export async function GET(req: NextRequest) {
   ];
 
   return NextResponse.json({ sourceTypes });
-}
+});

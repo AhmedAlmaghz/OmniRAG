@@ -1,24 +1,25 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { Collection } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
-    const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
     const collections = await db.getCollections(tenantId);
     return NextResponse.json({ collections });
   } catch (err: any) {
     console.error('API Error in collections GET:', err);
     return NextResponse.json({ collections: [], error: err.message || String(err) }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
-    const tenantId = body.tenantId || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
     const { name, description } = body;
 
     const col: Collection = {
@@ -35,4 +36,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
-}
+});

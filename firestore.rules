@@ -6,77 +6,79 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isDemoTenant(tenantId) {
+      return tenantId == 'tenant-acme-01';
+    }
+
     function isTenantOwner(tenantId) {
       return isSignedIn() && (
-        request.auth.uid == tenantId ||
-        request.auth.uid == tenantId.replace('tenant-', '') ||
-        (request.auth.token != null && request.auth.token.tenantId == tenantId)
+        tenantId == 'tenant-' + request.auth.uid ||
+        isDemoTenant(tenantId)
       );
     }
 
-    function isResourceTenantMember() {
-      return isSignedIn() && (
-        resource == null ||
-        resource.data.tenantId == null ||
-        request.auth.uid == resource.data.tenantId.replace('tenant-', '') ||
-        request.auth.uid == resource.data.tenantId ||
-        resource.data.tenantId == 'tenant-acme-01'
-      );
-    }
-
-    // Default deny for all unmatched paths
+    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Tenants Collection
+    // Tenants
     match /tenants/{tenantId} {
-      allow read: if isSignedIn();
-      allow write: if isTenantOwner(tenantId) || tenantId == 'tenant-acme-01';
+      allow read: if isTenantOwner(tenantId);
+      allow write: if isTenantOwner(tenantId);
     }
 
     // Collections
     match /collections/{collectionId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
 
     // Documents
     match /documents/{documentId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
 
     // Chunks
     match /chunks/{chunkId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
 
     // Conversations
     match /conversations/{conversationId} {
-      allow read, write: if isSignedIn();
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
+    }
+
+    // Messages
+    match /messages/{messageId} {
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
 
     // Sources
     match /sources/{sourceId} {
-      allow read, write: if isSignedIn();
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
 
     // Sync Logs
-    match /sync_logs/{logId} {
-      allow read, write: if isSignedIn();
+    match /syncLogs/{logId} {
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
 
     // MCP Servers
-    match /mcp_servers/{serverId} {
-      allow read, write: if isSignedIn();
+    match /mcpServers/{serverId} {
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
 
     // Audit Logs
-    match /audit_logs/{logId} {
-      allow read, create: if isSignedIn();
+    match /auditLogs/{logId} {
+      allow read: if isSignedIn() && isTenantOwner(resource.data.tenantId);
+      allow create: if isSignedIn() && isTenantOwner(request.resource.data.tenantId);
       allow update, delete: if false;
+    }
+    
+    // Tool Calls
+    match /toolCalls/{toolCallId} {
+      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
     }
   }
 }
+

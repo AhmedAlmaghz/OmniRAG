@@ -1,10 +1,11 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { Conversation, Message } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const { searchParams } = new URL(req.url);
     const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
@@ -22,12 +23,12 @@ export async function GET(req: NextRequest) {
     console.error("GET /api/v1/conversations error:", err);
     return NextResponse.json({ error: err.message || 'Failed to fetch conversations' }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
-    const tenantId = body.tenantId || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
     const action = body.action || 'create';
 
     if (action === 'create') {
@@ -88,4 +89,4 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/v1/conversations error:", err);
     return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 });
   }
-}
+});

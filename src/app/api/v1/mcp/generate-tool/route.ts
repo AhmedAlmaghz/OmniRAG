@@ -1,3 +1,4 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
 import { db } from '@/lib/storage/db';
@@ -7,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
     const { action = 'generate', prompt, serverId, tenantId = 'tenant-acme-01', toolSchema } = body;
@@ -143,4 +144,4 @@ export async function POST(req: NextRequest) {
     console.error('Error in MCP generate-tool API:', error);
     return NextResponse.json({ error: error.message || 'فشل توليد الأداة' }, { status: 500 });
   }
-}
+});

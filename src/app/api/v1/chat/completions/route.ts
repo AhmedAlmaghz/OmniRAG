@@ -1,3 +1,4 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch, generateRagCompletion } from '@/lib/rag/engine';
@@ -6,7 +7,7 @@ import { checkRateLimit } from '@/lib/security/rateLimiter';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   // Rate Limit check
   const rateLimit = checkRateLimit(req, 30, 60000);
   if (!rateLimit.success && rateLimit.response) {
@@ -92,4 +93,4 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

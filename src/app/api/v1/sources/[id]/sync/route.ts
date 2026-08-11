@@ -1,19 +1,10 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
-  let tenantId = 'tenant-acme-01';
-
-  try {
-    const body = await req.json().catch(() => ({}));
-    if (body.tenantId) tenantId = body.tenantId;
-  } catch (e) {
-    // Ignore JSON parse if empty body
-  }
+  const tenantId = authCtx.tenantId;
 
   const source = await db.getSourceById(id, tenantId);
   if (!source) {
@@ -27,4 +18,4 @@ export async function POST(
     result,
     source: await db.getSourceById(id, tenantId),
   });
-}
+});

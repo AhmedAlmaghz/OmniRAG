@@ -35,7 +35,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
       } else {
         // Quick Guest signup using random credentials
         const demoEmail = `guest-${Math.floor(Math.random() * 10000)}@omnirag.io`;
-        const demoPass = 'Password123!';
+        const demoPass = Math.random().toString(36).slice(-10) + 'A1!'; // Generate random strong password
         const demoWorkspace = 'مساحة العمل التجريبية (Guest Space)';
         const { tenantId } = await signUpUser(demoEmail, demoPass, demoWorkspace);
         onAuthSuccess(tenantId, demoEmail);

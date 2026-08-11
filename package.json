@@ -1,12 +1,12 @@
 {
   "name": "OmniRAG",
   "private": true,
-  "version": "0.1.9",
+  "version": "0.2.0",
   "author": "Ahmed Almaghz",
   "type": "module",
   "scripts": {
     "dev": "node dev-server.js",
-    "build": "NODE_ENV=production next build && vite build && mkdir -p build dist/.next && cp -r .next/* build/ 2>/dev/null || true && cp -r .next/* dist/.next/ 2>/dev/null || true",
+    "build": "NODE_ENV=production next build",
     "start": "node server.ts",
     "clean": "rm -rf .next dist",
     "test": "vitest run",
@@ -21,6 +21,7 @@
     "clsx": "^2.1.1",
     "dotenv": "^16.4.7",
     "firebase": "^10.14.1",
+    "firebase-admin": "^14.2.0",
     "katex": "^0.18.4",
     "lucide-react": "^0.468.0",
     "motion": "^11.15.0",

@@ -1,13 +1,10 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
-  const { searchParams } = new URL(req.url);
-  const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
+  const tenantId = authCtx.tenantId;
 
   const source = await db.getSourceById(id, tenantId);
   if (!source) {
@@ -22,15 +19,12 @@ export async function GET(
     logs,
     documents,
   });
-}
+});
 
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const PUT = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
   const body = await req.json();
-  const tenantId = body.tenantId || 'tenant-acme-01';
+  const tenantId = authCtx.tenantId;
 
   const updated = await db.updateSource(id, body, tenantId);
   if (!updated) {
@@ -38,17 +32,13 @@ export async function PUT(
   }
 
   return NextResponse.json({ message: 'Source config updated', source: updated });
-}
+});
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const DELETE = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
-  const { searchParams } = new URL(req.url);
-  const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
+  const tenantId = authCtx.tenantId;
 
   await db.deleteSource(id, tenantId, true);
 
   return NextResponse.json({ message: 'Source deleted and documents purged', id });
-}
+});

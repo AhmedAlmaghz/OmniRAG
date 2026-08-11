@@ -1,9 +1,10 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_AI_MODELS, AIModelConfig } from '@/lib/config/aiModels';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     // Optionally inspect cookie or header if user provided client model config header
     const customHeader = req.headers.get('x-ai-model-config');
@@ -27,9 +28,9 @@ export async function GET(req: NextRequest) {
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'فشل جلب إعدادات النماذج' }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
     const updatedConfig: AIModelConfig = {
@@ -59,4 +60,4 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'فشل حفظ إعدادات النماذج' }, { status: 500 });
   }
-}
+});

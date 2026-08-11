@@ -1,3 +1,4 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { verifyApiAuth } from '@/lib/auth/apiAuth';
@@ -35,7 +36,7 @@ const ALLOWED_MIME_TYPES = new Set([
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   // Rate limiting
   const rateLimit = checkRateLimit(req, 20, 60000);
   if (!rateLimit.success && rateLimit.response) {
@@ -133,4 +134,4 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

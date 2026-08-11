@@ -1,3 +1,4 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { google } from '@/lib/rag/googleProvider';
 import { streamText } from 'ai';
@@ -6,10 +7,10 @@ import { performHybridSearch } from '@/lib/rag/engine';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx) => {
   try {
     const body = await req.json();
-    const tenantId = body.tenantId || req.headers.get('x-tenant-id') || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
     const { prompt, mode = 'hybrid', collectionIds, model: requestedModel } = body;
 
     // Resolve model name from request or custom header
@@ -61,4 +62,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Streaming execution failed' }, { status: 500 });
   }
-}
+});

@@ -1,10 +1,11 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { SourceConnector } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   let tenantId = 'tenant-acme-01';
   try {
     const { searchParams } = new URL(req.url);
@@ -43,9 +44,9 @@ export async function GET(req: NextRequest) {
       error: error.message || String(error),
     }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
     const { tenantId = 'tenant-acme-01', name, type, config = {}, syncSchedule = 'manual', collectionIds = [] } = body;
@@ -81,9 +82,9 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Failed to create source connector' }, { status: 500 });
   }
-}
+});
 
-export async function PUT(req: NextRequest) {
+export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
     const { id, tenantId = 'tenant-acme-01', ...updates } = body;
@@ -101,9 +102,9 @@ export async function PUT(req: NextRequest) {
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Failed to update source' }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withAuthAndRateLimit(async (req, authCtx, props) => {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
   const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
@@ -116,4 +117,4 @@ export async function DELETE(req: NextRequest) {
   await db.deleteSource(id, tenantId, purgeDocs);
 
   return NextResponse.json({ message: 'Source connector removed and associated data purged', id });
-}
+});

@@ -7,11 +7,13 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     serverActions: {
-      bodySizeLimit: '50mb',
+      bodySizeLimit: '10mb',
     },
   },
   allowedDevOrigins: [
-    '*.run.app',
+    'ais-dev-ypmwpx3fedypwckng2sfii-280445036461.europe-west3.run.app',
+    'ais-pre-ypmwpx3fedypwckng2sfii-280445036461.europe-west3.run.app',
+    'localhost:3000',
   ],
 };
 export default nextConfig;

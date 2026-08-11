@@ -1,12 +1,13 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { Document, DocumentChunk } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
-    const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
     const documentId = req.nextUrl.searchParams.get('documentId');
 
     if (documentId) {
@@ -21,12 +22,12 @@ export async function GET(req: NextRequest) {
     console.error('API Error in documents GET:', error);
     return NextResponse.json({ documents: [], chunks: [], error: error.message || String(error) }, { status: 500 });
   }
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
-    const tenantId = body.tenantId || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
     const { title, content, language = 'ar', collectionIds = [], chunkingConfig } = body;
 
     if (!title || !content) {
@@ -93,14 +94,14 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withAuthAndRateLimit(async (req, authCtx, props) => {
   const docId = req.nextUrl.searchParams.get('id');
-  const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
+  const tenantId = authCtx.tenantId;
 
   if (!docId) return NextResponse.json({ error: 'Missing document id' }, { status: 400 });
 
   await db.deleteDocument(docId, tenantId);
   return NextResponse.json({ success: true });
-}
+});

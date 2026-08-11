@@ -4,3 +4,7 @@ coverage/
 *.log
 .env*
 !.env.example
+*.pem
+*.key
+*.p12
+terminal_logs/

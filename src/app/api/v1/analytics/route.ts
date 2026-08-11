@@ -1,10 +1,11 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { verifyApiAuth } from '@/lib/auth/apiAuth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   const auth = await verifyApiAuth(req);
   if (!auth.authenticated && auth.response) {
     return auth.response;
@@ -53,4 +54,4 @@ export async function GET(req: NextRequest) {
   };
 
   return NextResponse.json({ stats, auditLogs });
-}
+});

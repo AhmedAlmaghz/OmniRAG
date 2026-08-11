@@ -1,3 +1,4 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch } from '@/lib/rag/engine';
@@ -5,7 +6,7 @@ import { SearchQuery } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body: SearchQuery = await req.json();
     const tenantId = body.tenantId || req.headers.get('x-tenant-id') || 'tenant-acme-01';
@@ -33,4 +34,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 });
   }
-}
+});

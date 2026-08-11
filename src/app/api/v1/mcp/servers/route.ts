@@ -1,19 +1,20 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { MCPServerConfig } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: NextRequest) {
-  const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
+export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
+  const tenantId = authCtx.tenantId;
   const servers = await db.getMcpServers(tenantId);
   return NextResponse.json({ servers });
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
-    const tenantId = body.tenantId || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
 
     // Action 1: Add/Register Server
     if ((body.action === 'add' && body.server) || (body.endpointUrl && body.name && !body.action)) {
@@ -274,4 +275,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
-}
+});

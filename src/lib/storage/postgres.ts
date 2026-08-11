@@ -17,7 +17,7 @@ export function getPostgresPool(): any {
     pool = new Pool({
       connectionString,
       ssl: {
-        rejectUnauthorized: false, // Required for secure Neon connections
+        rejectUnauthorized: true, // Secure TLS enforcement
       },
       max: 10,
       idleTimeoutMillis: 30000,
@@ -167,7 +167,7 @@ export async function insertPostgresChunk(chunk: {
   const client = await p.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SET LOCAL app.current_tenant = $1', [chunk.tenantId]);
+    await client.query("SELECT set_config('app.current_tenant', $1, true)", [chunk.tenantId]);
     await client.query(
       `INSERT INTO chunks (id, tenant_id, document_id, content, chunk_index, page_number, language, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -193,7 +193,7 @@ export async function deletePostgresDocument(documentId: string, tenantId: strin
   const client = await p.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+    await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     await client.query('DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2', [documentId, tenantId]);
     await client.query('DELETE FROM documents WHERE id = $1 AND tenant_id = $2', [documentId, tenantId]);
     await client.query('COMMIT');
@@ -225,7 +225,7 @@ export async function searchPostgresLexical(
   const client = await p.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+    await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
 
     // We clean query text from special TSQuery characters to prevent syntax errors
     const cleanQuery = queryText.replace(/['"&|!()*:<>\s]+/g, ' ').trim();

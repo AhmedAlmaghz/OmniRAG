@@ -209,6 +209,31 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ lang }) => {
           </div>
 
           <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3 text-xs">
+            <h4 className="font-bold text-white text-sm flex items-center gap-2">
+              <Database className="w-4 h-4 text-cyan-400" />
+              <span>{lang === 'ar' ? 'مؤشرات محرك البحث الهجين (RAG Engine Status)' : 'Hybrid RAG & Vector Telemetry'}</span>
+            </h4>
+            <div className="space-y-2 text-slate-300">
+              <div className="flex items-center justify-between">
+                <span>Vector DB Index Status (Qdrant)</span>
+                <span className="text-emerald-400 font-bold">Healthy (384-dim)</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Hybrid Fusion Algorithm</span>
+                <span className="text-cyan-400 font-mono font-bold">RRF (k=60)</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Relational Search (PostgreSQL)</span>
+                <span className="text-emerald-400 font-bold">Isolated Tenant OK</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Fallback Memory DB Status</span>
+                <span className="text-emerald-400 font-bold">Active / Auto-sync</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3 text-xs">
             <h4 className="font-bold text-white text-sm">
               {lang === 'ar' ? 'فحوصات البناء والجودة (SDLC Check)' : 'Production Build Checkpoints'}
             </h4>

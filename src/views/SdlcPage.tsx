@@ -65,7 +65,7 @@ import { useState } from 'react';
 
 export default function UserCard({ userData }: { userData: any }) {
   const [title, setTitle] = useState(userData.title);
-  const secretApiKey = "AIzaSyD-FakeSecretKey-ForTesting";
+  // Example of bad practice: const secretApiKey = "AIzaSyD-FakeSecretKey-ForTesting";
 
   return (
     <div className="p-4 border">

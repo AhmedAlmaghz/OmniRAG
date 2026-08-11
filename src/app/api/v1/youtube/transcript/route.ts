@@ -1,3 +1,4 @@
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 // @ts-ignore
 import { getSubtitles } from 'youtube-captions-scraper';
@@ -90,7 +91,7 @@ async function fetchAndParseXmlCaptions(baseUrl: string): Promise<string | null>
   }
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const { url, lang = 'ar' } = await req.json();
 
@@ -258,4 +259,4 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
