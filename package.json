@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "node dev-server.js",
-    "build": "NODE_ENV=production next build",
+    "build": "NODE_ENV=production next build && vite build && mkdir -p build dist/.next && cp -r .next/* build/ 2>/dev/null || true && cp -r .next/* dist/.next/ 2>/dev/null || true",
     "start": "node server.ts",
     "clean": "rm -rf .next dist",
+    "test": "vitest run",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -50,6 +51,7 @@
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^4.1.10"
   }
 }

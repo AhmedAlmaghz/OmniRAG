@@ -109,7 +109,7 @@ export default function MainApp() {
     {
       id: 'models',
       label: lang === 'ar' ? 'إعدادات نماذج AI' : 'AI Models Registry',
-      icon: Cpu, Settings,
+      icon: Cpu,
       badge: 'إدارة مركزية',
     },
     {
@@ -258,7 +258,7 @@ export default function MainApp() {
             >
               ENG. AHMED ALMAGHZ
             </a>{' '}
-            - 2026 - v0.1.8
+            - 2026 - v0.1.9
           </span>
           <span>OmniRAG Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
         </div>

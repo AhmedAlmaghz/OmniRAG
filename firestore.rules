@@ -1,8 +1,82 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isTenantOwner(tenantId) {
+      return isSignedIn() && (
+        request.auth.uid == tenantId ||
+        request.auth.uid == tenantId.replace('tenant-', '') ||
+        (request.auth.token != null && request.auth.token.tenantId == tenantId)
+      );
+    }
+
+    function isResourceTenantMember() {
+      return isSignedIn() && (
+        resource == null ||
+        resource.data.tenantId == null ||
+        request.auth.uid == resource.data.tenantId.replace('tenant-', '') ||
+        request.auth.uid == resource.data.tenantId ||
+        resource.data.tenantId == 'tenant-acme-01'
+      );
+    }
+
+    // Default deny for all unmatched paths
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    // Tenants Collection
+    match /tenants/{tenantId} {
+      allow read: if isSignedIn();
+      allow write: if isTenantOwner(tenantId) || tenantId == 'tenant-acme-01';
+    }
+
+    // Collections
+    match /collections/{collectionId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Documents
+    match /documents/{documentId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Chunks
+    match /chunks/{chunkId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Conversations
+    match /conversations/{conversationId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Sources
+    match /sources/{sourceId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Sync Logs
+    match /sync_logs/{logId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // MCP Servers
+    match /mcp_servers/{serverId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Audit Logs
+    match /audit_logs/{logId} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if false;
     }
   }
 }

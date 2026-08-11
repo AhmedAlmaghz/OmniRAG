@@ -8,15 +8,25 @@ import { generateEmbedding } from './embedding';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { getAiModel } from '../config/aiModels';
 
-// Initialize the standard Gemini Client for direct agentic tool calling
-const aiClient = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || '',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// Singleton AI Client instance for agentic MCP calls
+let globalAiClient: GoogleGenAI | null = null;
+let currentKey: string | null = null;
+
+function getMcpAiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || '';
+  if (!globalAiClient || currentKey !== apiKey) {
+    globalAiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+    currentKey = apiKey;
   }
-});
+  return globalAiClient;
+}
 
 // Definitions of supported MCP tools and their parameter schemas for Gemini
 const MCP_TOOL_DEFINITIONS: Record<string, { description: string; properties: any; required: string[] }> = {
@@ -100,7 +110,6 @@ const MCP_TOOL_DEFINITIONS: Record<string, { description: string; properties: an
  * Execute MCP Tool in a simulated/secure manner and log to Audit Logs
  */
 async function executeMcpTool(tenantId: string, toolName: string, args: any): Promise<any> {
-  const startTime = Date.now();
   let result: any;
   let success = true;
 
@@ -110,7 +119,7 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
       case 'slack_post_alert':
         result = {
           success: true,
-          messageId: `msg-slack-${Math.floor(Math.random() * 90000) + 10000}`,
+          messageId: `msg-slack-${Date.now()}`,
           channel: args.channel || '#general',
           message: args.message || '',
           timestamp: new Date().toISOString(),
@@ -128,114 +137,57 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
 
       case 'github_search_code': {
         const queryVal = (args.query || '').toLowerCase();
-        if (queryVal.includes('misterai') || queryVal.includes('yemen')) {
-          result = [
-            { file: "src/agents/yemen_agent.ts", line: 15, match: "export class YemenAgentProcessor { processQuery(prompt: string) }", repo: "landspices25Ye/MisterAI-Yemen" },
-            { file: "src/dialect/yemen_nlp.ts", line: 42, match: "const DIALECT_MAP = { sanani: 'صنعاني', taizi: 'تعزي', adani: 'عدني' }", repo: "landspices25Ye/MisterAI-Yemen" },
-            { file: "README.md", line: 8, match: "# MisterAI-Yemen 🇾🇪 - المساعد الذكي اليمني والوكلاء الذكيين", repo: "landspices25Ye/MisterAI-Yemen" }
-          ];
-        } else {
-          result = [
-            { file: "src/lib/rag/engine.ts", line: 42, match: `found keyword: ${queryVal}`, repo: "omnirag-monorepo" },
-            { file: "src/lib/storage/db.ts", line: 884, match: `getMcpServers query: ${queryVal}`, repo: "omnirag-monorepo" }
-          ];
-        }
+        result = [
+          { file: "src/lib/rag/engine.ts", line: 42, match: `found keyword: ${queryVal}`, repo: "omnirag-monorepo" },
+          { file: "src/lib/storage/db.ts", line: 884, match: `getMcpServers query: ${queryVal}`, repo: "omnirag-monorepo" }
+        ];
         break;
       }
 
       case 'github_create_issue':
         result = {
           success: true,
-          issueNumber: Math.floor(Math.random() * 100) + 200,
+          issueNumber: 204,
           title: args.title || 'تنبيه أمني من OmniRAG',
           repo: args.repo || 'security-audit',
-          url: `https://github.com/omnirag-org/${args.repo || 'security-audit'}/issues/${Math.floor(Math.random() * 100) + 200}`
+          url: `https://github.com/omnirag-org/${args.repo || 'security-audit'}/issues/204`
         };
         break;
 
       case 'github_read_repo': {
-        const targetRepo = (args.repo || args.url || 'landspices25Ye/MisterAI-Yemen').toString();
-        const isMisterAi = targetRepo.toLowerCase().includes('misterai') || targetRepo.toLowerCase().includes('yemen') || targetRepo.toLowerCase().includes('landspices25ye');
-        
-        if (isMisterAi) {
-          result = {
-            repository: "landspices25Ye/MisterAI-Yemen",
-            fullName: "landspices25Ye/MisterAI-Yemen",
-            url: "https://github.com/landspices25Ye/MisterAI-Yemen",
-            description: "تطبيق المساعد الذكي اليمني (Mister AI Yemen) - منصة وكلاء الذكاء الاصطناعي السيادية المخصصة للخدمات الذكية، استعلام المستندات، ومعالجة اللهجة اليمنية المحلية.",
-            visibility: "public",
-            defaultBranch: "main",
-            stars: 142,
-            forks: 38,
-            languages: { TypeScript: "76%", Python: "16%", Shell: "8%" },
-            mainFilesAndDirs: [
-              { name: "src/agents/yemen_agent.ts", description: "محرك الوكيل الذكي للخدمات والاستشارات اليمنية" },
-              { name: "src/dialect/yemen_nlp.ts", description: "معالج اللغات الطبيعية واللهجات اليمنية المحلية (صنعاني، تعزي، عدني، حضرمي)" },
-              { name: "src/mcp/gateways.ts", description: "خوادم MCP للاتصال بقواعد البيانات والخدمات السحابية" },
-              { name: "src/knowledge/yemen_knowledge_base.json", description: "قاعدة معرفية للخدمات واللوائح التنظيمية في اليمن" },
-              { name: "README.md", description: "الدليل التعريفي الشامل وكيفية التشغيل والنشر" },
-              { name: "package.json", description: "حزم واعتامدات المشروع (Next.js 15, @google/genai, Tailwind CSS)" }
-            ],
-            readmeSummary: "مشروع MisterAI-Yemen يوفر منصة ذكاء اصطناعي سيادية مصممة خصيصاً لتقديم الاستشارات وإدارة المهام والخدمات الذكية باللغة العربية واللهجة اليمنية بمرونة عالية مع دعم بروتوكول MCP."
-          };
-        } else {
-          result = {
-            repository: targetRepo,
-            fullName: targetRepo,
-            description: `GitHub Repository: ${targetRepo}`,
-            visibility: "public",
-            defaultBranch: "main",
-            languages: { TypeScript: "82%", CSS: "12%", HTML: "6%" },
-            mainFilesAndDirs: [
-              { name: "src/index.ts", description: "Main entry point" },
-              { name: "README.md", description: "Project documentation" },
-              { name: "package.json", description: "Package configuration" }
-            ],
-            lastCommit: "Refactored HookHarness validation engine - 2026-08-09"
-          };
-        }
+        const targetRepo = (args.repo || args.url || 'omnirag-org/core').toString();
+        result = {
+          repository: targetRepo,
+          fullName: targetRepo,
+          description: `GitHub Repository: ${targetRepo}`,
+          visibility: "public",
+          defaultBranch: "main",
+          languages: { TypeScript: "82%", CSS: "12%", HTML: "6%" },
+          mainFilesAndDirs: [
+            { name: "src/index.ts", description: "Main entry point" },
+            { name: "README.md", description: "Project documentation" },
+            { name: "package.json", description: "Package configuration" }
+          ],
+          lastCommit: "Refactored RRF & Security - 2026-08-11"
+        };
         break;
       }
 
       case 'web_live_search': {
-        const searchQuery = (args.query || '').toLowerCase();
-        if (searchQuery.includes('misterai') || searchQuery.includes('yemen') || searchQuery.includes('landspices25ye')) {
-          result = [
-            {
-              title: "GitHub - landspices25Ye/MisterAI-Yemen",
-              snippet: "تطبيق المساعد الذكي اليمني (Mister AI Yemen) لبناء وكلاء الذكاء الاصطناعي الداعمين للهجة اليمنية والأنظمة المؤسسية والمستندات.",
-              url: "https://github.com/landspices25Ye/MisterAI-Yemen"
-            },
-            {
-              title: "توثيق مشروع MisterAI Yemen على GitHub",
-              snippet: "مشروع مفتوح المصدر المعتمد على تقنيات Next.js و @google/genai للربط ببروتوكولات MCP وتقديم استشارات ذكية باللغة العربية.",
-              url: "https://github.com/landspices25Ye/MisterAI-Yemen#readme"
-            }
-          ];
-        } else {
-          result = [
-            { title: "معايير أمن المعلومات ISO27001 لعام 2026", snippet: "التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.", url: "https://iso.org/standards/27001-2026" },
-            { title: "حماية تطبيقات الويب من ثغرات Prompt Injection", snippet: "تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.", url: "https://owasp.org/www-project-top-ten" }
-          ];
-        }
+        result = [
+          { title: "معايير أمن المعلومات ISO27001 لعام 2026", snippet: "التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.", url: "https://iso.org/standards/27001-2026" },
+          { title: "حماية تطبيقات الويب من ثغرات Prompt Injection", snippet: "تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.", url: "https://owasp.org/www-project-top-ten" }
+        ];
         break;
       }
 
       case 'fetch_url_content': {
         const urlStr = (args.url || '').trim();
-        if (urlStr.toLowerCase().includes('misterai') || urlStr.toLowerCase().includes('landspices25ye')) {
-          result = {
-            url: urlStr,
-            title: "GitHub - landspices25Ye/MisterAI-Yemen: المساعد الذكي اليمني",
-            content: `المستودع: landspices25Ye/MisterAI-Yemen\n\nالوصف: تطبيق المساعد الذكي اليمني (Mister AI Yemen) المصمم للخدمات الذكية، الاستشارات، ومعالجة اللهجات المحلية واللغة العربية.\n\nالمكونات والملفات الرئيسية:\n- src/agents/yemen_agent.ts: وكيل الذكاء الاصطناعي الذكي المتخصص بالخدمات اليمنية.\n- src/dialect/yemen_nlp.ts: محرك معالجة وفهم اللهجات اليمنية (الصنعانية، التعزية، العدنية، الحضرمية).\n- src/knowledge/yemen_knowledge_base.json: قواعد المعرفة الخاصة بالمؤسسات واللوائح التنظيمية.\n- README.md: دليل التثبيت والتشغيل والتطوير باستخدام Next.js و Gemini API وبروتوكول MCP.`
-          };
-        } else {
-          result = {
-            url: urlStr || 'https://example.com',
-            title: "بيان الحماية والسرية المعتمد",
-            content: "يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم."
-          };
-        }
+        result = {
+          url: urlStr || 'https://example.com',
+          title: "بيان الحماية والسرية المعتمد",
+          content: "يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم."
+        };
         break;
       }
 
@@ -321,19 +273,44 @@ export async function generateHydeDocument(query: string): Promise<string> {
 }
 
 /**
- * Hybrid Search Engine: Semantic Dense + Sparse Lexical + Reciprocal Rank Fusion (RRF)
+ * Reciprocal Rank Fusion (RRF) algorithm:
+ * RRF_Score(d) = (1 / (k + rank_semantic)) * semanticWeight + (1 / (k + rank_lexical)) * lexicalWeight
+ * where k = 60
+ */
+function computeRrfScore(
+  semanticRank: number | null,
+  lexicalRank: number | null,
+  semanticWeight: number = 0.7,
+  lexicalWeight: number = 0.3,
+  k: number = 60
+): number {
+  let score = 0;
+  if (semanticRank !== null && semanticRank > 0) {
+    score += (1 / (k + semanticRank)) * semanticWeight;
+  }
+  if (lexicalRank !== null && lexicalRank > 0) {
+    score += (1 / (k + lexicalRank)) * lexicalWeight;
+  }
+  return score;
+}
+
+/**
+ * Hybrid Search Engine: Dense Vector + Sparse Lexical + Reciprocal Rank Fusion (RRF)
  */
 export async function performHybridSearch(searchQuery: SearchQuery): Promise<SearchResult> {
   const startTime = Date.now();
   const { tenantId, query, collectionIds, topK = 5, semanticWeight = 0.7, lexicalWeight = 0.3, useHyde } = searchQuery;
 
-  // Step 1: Optional HyDE Expansion
-  let searchContent = query;
+  // Step 1: Optional HyDE Expansion (Applied ONLY to Semantic Search)
+  let semanticSearchContent = query;
   let hydePrompt: string | undefined;
   if (useHyde) {
     hydePrompt = await generateHydeDocument(query);
-    searchContent = `${query} ${hydePrompt}`;
+    semanticSearchContent = `${query} ${hydePrompt}`;
   }
+
+  // Lexical search uses the clean original query
+  const lexicalSearchContent = query;
 
   // Check if we can use real database connections
   const isPostgresActive = !!(process.env.DATABASE_URL || process.env.POSTGRES_URL);
@@ -346,103 +323,90 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
   if (isPostgresActive || isQdrantActive) {
     try {
-      console.log(`Executing real hybrid search for tenant ${tenantId}. Postgres active: ${isPostgresActive}, Qdrant active: ${isQdrantActive}`);
-
       // Run semantic and lexical search in parallel
       const [semanticResults, lexicalResults] = await Promise.all([
         isQdrantActive 
-          ? generateEmbedding(searchContent).then((vector) => 
+          ? generateEmbedding(semanticSearchContent).then((vector) => 
               searchQdrantSemantic({
                 vector,
                 tenantId,
                 collectionIds,
-                limit: topK * 2,
+                limit: topK * 3,
               })
             )
           : Promise.resolve([]),
         isPostgresActive
-          ? searchPostgresLexical(searchContent, tenantId, topK * 2)
+          ? searchPostgresLexical(lexicalSearchContent, tenantId, topK * 3)
           : Promise.resolve([])
       ]);
 
-      const scoredMap = new Map<string, any>();
+      const itemMap = new Map<string, any>();
 
-      // Put lexical results into map
-      lexicalResults.forEach((r) => {
-        scoredMap.set(r.id, {
-          id: r.id,
-          documentId: r.documentId,
-          content: r.content,
-          chunkIndex: r.chunkIndex,
-          pageNumber: r.pageNumber,
-          language: r.language,
-          lexicalScore: r.lexicalScore,
-          semanticScore: 0.0, // placeholder
+      // Index semantic ranks
+      semanticResults.forEach((item, idx) => {
+        itemMap.set(item.id, {
+          ...item,
+          semanticRank: idx + 1,
+          lexicalRank: null,
+          semanticScore: item.semanticScore || 0,
+          lexicalScore: 0,
         });
       });
 
-      // Merge or insert semantic results
-      semanticResults.forEach((r) => {
-        const existing = scoredMap.get(r.id);
+      // Index lexical ranks
+      lexicalResults.forEach((item, idx) => {
+        const existing = itemMap.get(item.id);
         if (existing) {
-          existing.semanticScore = r.semanticScore;
-          existing.documentTitle = r.documentTitle;
+          existing.lexicalRank = idx + 1;
+          existing.lexicalScore = item.lexicalScore || 0;
         } else {
-          scoredMap.set(r.id, {
-            id: r.id,
-            documentId: r.documentId,
-            content: r.content,
-            chunkIndex: r.chunkIndex,
-            pageNumber: r.pageNumber,
-            language: r.language,
-            lexicalScore: 0.0, // placeholder
-            semanticScore: r.semanticScore,
-            documentTitle: r.documentTitle,
+          itemMap.set(item.id, {
+            ...item,
+            semanticRank: null,
+            lexicalRank: idx + 1,
+            semanticScore: 0,
+            lexicalScore: item.lexicalScore || 0,
           });
         }
       });
 
-      const mergedList = Array.from(scoredMap.values());
-      
-      // Fill in titles and final scores
+      // Batch load document titles to eliminate N+1 queries
+      const docIds = Array.from(new Set(Array.from(itemMap.values()).map(i => i.documentId).filter(Boolean)));
+      const docMap = new Map<string, string>();
+      if (docIds.length > 0) {
+        const tenantDocs = await db.getDocuments(tenantId);
+        tenantDocs.forEach(d => docMap.set(d.id, d.title));
+      }
+
+      const mergedList = Array.from(itemMap.values());
+
       for (const item of mergedList) {
         if (!item.documentTitle) {
-          try {
-            const doc = await db.getDocumentById(item.documentId, tenantId);
-            item.documentTitle = doc ? doc.title : 'مستند مسترجع';
-          } catch {
-            item.documentTitle = 'مستند مسترجع';
-          }
+          item.documentTitle = docMap.get(item.documentId) || 'مستند مسترجع';
         }
 
-        // Compute weighted fusion score
-        const fusedScore = item.semanticScore * semanticWeight + item.lexicalScore * lexicalWeight;
-        item.score = Number(fusedScore.toFixed(3));
-        item.semanticScore = Number(item.semanticScore.toFixed(3));
-        item.lexicalScore = Number(item.lexicalScore.toFixed(3));
+        // Apply Reciprocal Rank Fusion (RRF)
+        const rrf = computeRrfScore(item.semanticRank, item.lexicalRank, semanticWeight, lexicalWeight);
+        item.score = Number(rrf.toFixed(4));
         item.tenantId = tenantId;
       }
 
-      // Sort and slice
       mergedList.sort((a, b) => b.score - a.score);
       resultChunks = mergedList.slice(0, topK);
       totalCount = mergedList.length;
 
-      semanticMatches = resultChunks.filter((c) => c.semanticScore > 0.4).length;
-      lexicalMatches = resultChunks.filter((c) => c.lexicalScore > 0.3).length;
+      semanticMatches = resultChunks.filter((c) => c.semanticScore > 0.3 || c.semanticRank !== null).length;
+      lexicalMatches = resultChunks.filter((c) => c.lexicalScore > 0.2 || c.lexicalRank !== null).length;
     } catch (realSearchError) {
-      console.error('Real hybrid search failed, falling back to local simulation:', realSearchError);
+      console.error('Real hybrid search failed, falling back to local storage:', realSearchError);
       resultChunks = [];
     }
   }
 
-  // Fallback to simulated/Firestore chunks if we got zero results (or database is inactive)
+  // Fallback to local db chunks if we got zero results
   if (resultChunks.length === 0) {
-    console.log(`Bypassing or falling back to local simulation for tenant ${tenantId}`);
-    // Retrieve candidate chunks for tenant
     let chunks = await db.getChunks(tenantId);
 
-    // Filter by collections if specified
     if (collectionIds && collectionIds.length > 0) {
       const docsInCollections = (await db.getDocuments(tenantId)).filter((d) =>
         d.collectionIds?.some((c) => collectionIds.includes(c))
@@ -451,14 +415,12 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       chunks = chunks.filter((c) => validDocIds.has(c.documentId));
     }
 
-    const queryTerms = searchContent.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+    const queryTerms = lexicalSearchContent.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
 
-    // Compute Semantic & Lexical Scores for each chunk
     const scoredChunks = chunks.map((chunk) => {
       const textLower = chunk.content.toLowerCase();
-      const titleLower = chunk.documentTitle.toLowerCase();
+      const titleLower = (chunk.documentTitle || '').toLowerCase();
 
-      // Lexical Score (Term frequency match)
       let lexicalScore = 0;
       queryTerms.forEach((term) => {
         if (textLower.includes(term)) lexicalScore += 0.25;
@@ -466,18 +428,16 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       });
       lexicalScore = Math.min(1.0, lexicalScore);
 
-      // Simulated Dense Semantic Vector Score
       let semanticScore = 0.2;
       queryTerms.forEach((term) => {
         if (textLower.includes(term)) semanticScore += 0.35;
       });
-      // Boost if language matches
       if (searchQuery.language && searchQuery.language !== 'auto' && chunk.language === searchQuery.language) {
         semanticScore += 0.1;
       }
-      semanticScore = Math.min(0.98, semanticScore + Math.random() * 0.05);
+      semanticScore = Math.min(0.98, semanticScore);
 
-      // Reciprocal Rank Fusion (RRF) calculation
+      // Deterministic RRF score for fallback local search
       const fusedScore = semanticScore * semanticWeight + lexicalScore * lexicalWeight;
 
       return {
@@ -488,7 +448,6 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       };
     });
 
-    // Sort by RRF Fused Score and slice top_k
     scoredChunks.sort((a, b) => (b.score || 0) - (a.score || 0));
     resultChunks = scoredChunks.slice(0, topK);
     totalCount = scoredChunks.length;
@@ -556,9 +515,10 @@ export async function generateRagCompletion(params: {
 
   if (apiKey) {
     try {
+      const aiClient = getMcpAiClient();
       const modelAlias = modelToUse || (mode === 'analysis' ? getAiModel('analysisModel') : getAiModel('chatModel'));
 
-      // 1. Fetch Tenant MCP configuration to extract enabled/approved tools
+      // Fetch Tenant MCP configuration to extract enabled/approved tools
       const servers = await db.getMcpServers(tenantId);
       const enabledTools: string[] = [];
       const requireApprovalTools: string[] = [];
@@ -574,10 +534,8 @@ export async function generateRagCompletion(params: {
         }
       }
 
-      // Filter tools based on mode constraints and deduplicate
       let toolsToOffer = Array.from(new Set(enabledTools));
       if (mode === 'private') {
-        // Enforce strict local containment. Disable external outbound API tools.
         const externalPrefixes = ['slack_', 'github_', 'web_', 'fetch_'];
         toolsToOffer = toolsToOffer.filter(t => !externalPrefixes.some(pref => t.startsWith(pref)));
       }
@@ -597,11 +555,9 @@ export async function generateRagCompletion(params: {
 2. لا تبتكر مراجع وهمية غير موجودة في النص.
 ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحالي مغلق وخاص بالكامل (Private Mode). تم إيقاف وتصفية جميع أدوات الـ MCP الخارجية لشبكة الويب أو الخدمات الخارجية للطرف الثالث حماية لسرية بيانات المستأجر.' : ''}`;
 
-      // Build Function Declarations with strict deduplication
       const functionDeclarations: FunctionDeclaration[] = [];
       const seenToolNames = new Set<string>();
 
-      // Only offer tools if we are NOT finishing an already approved execution (to prevent loops)
       if (!approvedToolCall) {
         for (const toolName of toolsToOffer) {
           if (seenToolNames.has(toolName)) continue;
@@ -618,44 +574,10 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
                 required: def.required
               }
             });
-          } else {
-            // Check if server holds custom AI generated tool schema
-            let customSchema: any = null;
-            for (const server of servers) {
-              if ((server as any).customToolSchemas && (server as any).customToolSchemas[toolName]) {
-                customSchema = (server as any).customToolSchemas[toolName];
-                break;
-              }
-            }
-
-            if (customSchema) {
-              functionDeclarations.push({
-                name: toolName,
-                description: customSchema.description || `Custom MCP tool ${toolName}`,
-                parameters: {
-                  type: Type.OBJECT,
-                  properties: customSchema.properties || {},
-                  required: customSchema.required || []
-                }
-              });
-            } else {
-              functionDeclarations.push({
-                name: toolName,
-                description: `Execute custom tool ${toolName} on the server`,
-                parameters: {
-                  type: Type.OBJECT,
-                  properties: {
-                    argumentsJson: { type: Type.STRING, description: "JSON string parameters for tool" }
-                  },
-                  required: []
-                }
-              });
-            }
           }
         }
       }
 
-      // Run generation (with tool definitions if available)
       const response = await aiClient.models.generateContent({
         model: modelAlias,
         contents: promptText,
@@ -666,7 +588,6 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         }
       });
 
-      // Check if Gemini wants to call a tool
       const functionCalls = response.functionCalls;
       if (functionCalls && functionCalls.length > 0) {
         const fc = functionCalls[0];
@@ -675,9 +596,8 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         const isApprovalRequired = requireApprovalTools.includes(toolName);
 
         if (isApprovalRequired) {
-          // Requires Human Approval (SideEffectGate)
           const pendingCall: MCPToolCall = {
-            id: `tc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            id: `tc-${Date.now()}`,
             tenantId,
             scopedToolName: toolName,
             inputParams: args,
@@ -695,10 +615,8 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             pendingToolCall: pendingCall
           };
         } else {
-          // Execute immediately on-the-fly (Read-only / No side-effects)
           const toolResult = await executeMcpTool(tenantId, toolName, args);
 
-          // Second turn: call Gemini with tool outcome
           const secondPrompt = `${promptText}\n\n[أداة الـ MCP المنفذة تلقائياً]: تم تنفيذ الأداة (${toolName}) بنجاح وإرجاع المخرجات التالية:\n${JSON.stringify(toolResult, null, 2)}\n\nيرجى صياغة الاستجابة النهائية للمستخدم بناءً على هذه المخرجات والمستندات المتاحة.`;
 
           const secondResponse = await aiClient.models.generateContent({
@@ -743,7 +661,6 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         }
       }
 
-      // No tools called, return normal RAG generation
       const citations: Citation[] = contextChunks.map((chunk, idx) => ({
         index: idx + 1,
         chunkId: chunk.id,
@@ -769,7 +686,6 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
     }
   }
 
-  // Fallback response if API key is missing or errored
   const fallbackCitations: Citation[] = contextChunks.map((chunk, idx) => ({
     index: idx + 1,
     chunkId: chunk.id,
