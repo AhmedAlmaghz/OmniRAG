@@ -25,6 +25,7 @@ import {
   BarChart2,
   ListPlus,
   Clock,
+  Youtube,
 } from 'lucide-react';
 
 interface IngestionProgressStep {
@@ -96,6 +97,7 @@ interface DocumentIngestionStudioProps {
   collections: Collection[];
   lang: 'ar' | 'en';
   onIngestionCompleted: () => void;
+  initialTab?: 'upload' | 'youtube' | 'text' | 'sample';
 }
 
 const SAMPLE_DOCS = [
@@ -195,14 +197,86 @@ export function DocumentIngestionStudio({
   collections,
   lang,
   onIngestionCompleted,
+  initialTab = 'upload',
 }: DocumentIngestionStudioProps) {
-  const [inputTab, setInputTab] = useState<'upload' | 'text' | 'sample'>('upload');
+  const [inputTab, setInputTab] = useState<'upload' | 'youtube' | 'text' | 'sample'>(initialTab);
+
+  useEffect(() => {
+    if (initialTab) {
+      setInputTab(initialTab);
+    }
+  }, [initialTab]);
   
   // Document State
   const [docTitle, setDocTitle] = useState('');
   const [docContent, setDocContent] = useState('');
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [fileSizeStr, setFileSizeStr] = useState<string>('');
+
+  // YouTube Extraction State
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [isExtractingYoutube, setIsExtractingYoutube] = useState(false);
+  const [youtubeVideoMeta, setYoutubeVideoMeta] = useState<{
+    title: string;
+    channel: string;
+    duration: string;
+    thumbnail: string;
+    wordCount: number;
+  } | null>(null);
+
+  // Extract YouTube Transcript Handler
+  const handleExtractYoutubeTranscript = async () => {
+    if (!youtubeUrl.trim()) {
+      setStatusMessage({
+        type: 'error',
+        text: lang === 'ar' ? 'يرجى أدخال رابط فيديو يوتيوب أولاً' : 'Please enter a valid YouTube Video URL',
+      });
+      return;
+    }
+
+    setIsExtractingYoutube(true);
+    setStatusMessage(null);
+
+    try {
+      const res = await fetch('/api/v1/youtube/transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: youtubeUrl.trim(), lang }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.transcript) {
+        setDocTitle(data.title || `تفريغ فيديو: ${data.videoId}`);
+        setDocContent(data.transcript);
+        setSelectedFileName(`youtube-${data.videoId}.txt`);
+        setFileSizeStr(`${(data.transcript.length / 1024).toFixed(1)} KB`);
+        setYoutubeVideoMeta({
+          title: data.title,
+          channel: data.channel,
+          duration: data.duration,
+          thumbnail: data.thumbnail,
+          wordCount: data.wordCount || 0,
+        });
+
+        setStatusMessage({
+          type: 'success',
+          text: lang === 'ar'
+            ? `تم استخراج تفريغ الفيديو بنجاح (${data.wordCount} كلمة)! يمكنك الآن مراجعة النص وتقسيمه لمقاطع.`
+            : `YouTube transcript extracted successfully (${data.wordCount} words)! Ready for chunking and vector indexing.`,
+        });
+      } else {
+        throw new Error(data.error || 'فشل استخراج تفريغ الفيديو');
+      }
+    } catch (err: any) {
+      console.error('YouTube transcript error:', err);
+      setStatusMessage({
+        type: 'error',
+        text: lang === 'ar' ? `خطأ أثناء استخراج تفريغ الفيديو: ${err.message}` : `Extraction failed: ${err.message}`,
+      });
+    } finally {
+      setIsExtractingYoutube(false);
+    }
+  };
 
   // Chunking & AI Parsing Controls
   const [parsingEngine, setParsingEngine] = useState<'mistral_ocr' | 'unstructured_mcp' | 'native_ast' | 'pdf_layout'>('mistral_ocr');
@@ -557,7 +631,7 @@ export function DocumentIngestionStudio({
         </div>
 
         {/* Input Method Selector Tabs */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl">
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl flex-wrap">
           <button
             type="button"
             onClick={() => setInputTab('upload')}
@@ -567,6 +641,17 @@ export function DocumentIngestionStudio({
           >
             <Upload className="w-3.5 h-3.5" />
             <span>{lang === 'ar' ? 'رفع ملف' : 'Upload File'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setInputTab('youtube')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              inputTab === 'youtube' ? 'bg-white text-rose-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Youtube className="w-3.5 h-3.5 text-rose-600" />
+            <span>{lang === 'ar' ? 'فيديو يوتيوب' : 'YouTube Video'}</span>
           </button>
 
           <button
@@ -657,6 +742,80 @@ export function DocumentIngestionStudio({
               </div>
             </div>
           )
+        )}
+
+        {/* TAB 2: YOUTUBE VIDEO TRANSCRIPT EXTRACTOR */}
+        {inputTab === 'youtube' && (
+          <div className="p-6 bg-slate-50/80 rounded-3xl border border-rose-100/80 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center">
+                <Youtube className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  {lang === 'ar' ? 'استخراج تفريغ فيديو يوتيوب (YouTube Video Transcript)' : 'YouTube Video Transcript Extractor'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {lang === 'ar'
+                    ? 'أدخل رابط أي فيديو يوتيوب لاستخراج النص كاملاً مع الطوابع الزمنية وتحويله لمتجهات دلالية'
+                    : 'Paste any YouTube video link to extract transcripts, timestamps, and index vector chunks'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                placeholder={
+                  lang === 'ar'
+                    ? 'ضع رابط فيديو يوتيوب هنا، مثلاً: https://www.youtube.com/watch?v=...'
+                    : 'Paste YouTube video URL e.g. https://www.youtube.com/watch?v=...'
+                }
+                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:border-rose-500 text-xs bg-white text-slate-900"
+              />
+              <button
+                type="button"
+                onClick={handleExtractYoutubeTranscript}
+                disabled={isExtractingYoutube || !youtubeUrl.trim()}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-xs shrink-0"
+              >
+                {isExtractingYoutube ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>{lang === 'ar' ? 'جاري استخراج التفريغ...' : 'Extracting Transcript...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-rose-200" />
+                    <span>{lang === 'ar' ? 'استخراج وحفظ التفريغ' : 'Extract Transcript'}</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Video Preview Card if extracted */}
+            {youtubeVideoMeta && (
+              <div className="p-3 bg-white rounded-2xl border border-slate-200 flex items-center gap-3.5 shadow-3xs">
+                <img
+                  src={youtubeVideoMeta.thumbnail}
+                  alt={youtubeVideoMeta.title}
+                  className="w-24 h-16 object-cover rounded-xl border border-slate-100 shrink-0"
+                />
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 inline-block mb-1">
+                    {youtubeVideoMeta.channel}
+                  </span>
+                  <h4 className="text-xs font-extrabold text-slate-900 truncate">{youtubeVideoMeta.title}</h4>
+                  <div className="flex items-center gap-3 text-[11px] text-slate-500 mt-1 font-mono">
+                    <span>⏱ {youtubeVideoMeta.duration}</span>
+                    <span>📝 {youtubeVideoMeta.wordCount} كلمة</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* TAB 3: SAMPLE PRESET DOCUMENTS */}

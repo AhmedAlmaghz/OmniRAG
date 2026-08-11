@@ -5,17 +5,22 @@ import { Document, DocumentChunk } from '@/lib/types/omnirag';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
-  const documentId = req.nextUrl.searchParams.get('documentId');
+  try {
+    const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
+    const documentId = req.nextUrl.searchParams.get('documentId');
 
-  if (documentId) {
-    const allChunks = await db.getChunks(tenantId);
-    const docChunks = allChunks.filter((c) => c.documentId === documentId);
-    return NextResponse.json({ chunks: docChunks });
+    if (documentId) {
+      const allChunks = await db.getChunks(tenantId);
+      const docChunks = allChunks.filter((c) => c.documentId === documentId);
+      return NextResponse.json({ chunks: docChunks });
+    }
+
+    const docs = await db.getDocuments(tenantId);
+    return NextResponse.json({ documents: docs });
+  } catch (error: any) {
+    console.error('API Error in documents GET:', error);
+    return NextResponse.json({ documents: [], chunks: [], error: error.message || String(error) }, { status: 500 });
   }
-
-  const docs = await db.getDocuments(tenantId);
-  return NextResponse.json({ documents: docs });
 }
 
 export async function POST(req: NextRequest) {

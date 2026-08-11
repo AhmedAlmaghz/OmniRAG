@@ -74,6 +74,37 @@ export async function ensurePostgresTables() {
         console.warn('FTS index creation skipped or not supported:', e);
       }
 
+      // Enable Row Level Security (RLS)
+      await client.query(`ALTER TABLE documents ENABLE ROW LEVEL SECURITY;`);
+      await client.query(`ALTER TABLE chunks ENABLE ROW LEVEL SECURITY;`);
+
+      // Create RLS Policies for multi-tenant isolation
+      await client.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_policies WHERE tablename = 'documents' AND policyname = 'tenant_isolation_documents'
+          ) THEN
+            CREATE POLICY tenant_isolation_documents ON documents 
+            FOR ALL 
+            USING (tenant_id = current_setting('app.current_tenant', true));
+          END IF;
+        END $$;
+      `);
+
+      await client.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_policies WHERE tablename = 'chunks' AND policyname = 'tenant_isolation_chunks'
+          ) THEN
+            CREATE POLICY tenant_isolation_chunks ON chunks 
+            FOR ALL 
+            USING (tenant_id = current_setting('app.current_tenant', true));
+          END IF;
+        END $$;
+      `);
+
       initialized = true;
       console.log('PostgreSQL OmniRAG tables verified/created successfully.');
     } finally {
@@ -98,8 +129,11 @@ export async function insertPostgresDocument(doc: {
   const p = getPostgresPool();
   if (!p) return;
 
+  const client = await p.connect();
   try {
-    await p.query(
+    await client.query('BEGIN');
+    await client.query('SET LOCAL app.current_tenant = $1', [doc.tenantId]);
+    await client.query(
       `INSERT INTO documents (id, tenant_id, title, content, language, status, created_at, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (id) DO UPDATE 
@@ -107,8 +141,12 @@ export async function insertPostgresDocument(doc: {
            status = EXCLUDED.status, metadata = EXCLUDED.metadata;`,
       [doc.id, doc.tenantId, doc.title, doc.content, doc.language, doc.status, doc.createdAt, JSON.stringify(doc.metadata || {})]
     );
+    await client.query('COMMIT');
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Failed to insert document into Postgres:', error);
+  } finally {
+    client.release();
   }
 }
 
@@ -126,8 +164,11 @@ export async function insertPostgresChunk(chunk: {
   const p = getPostgresPool();
   if (!p) return;
 
+  const client = await p.connect();
   try {
-    await p.query(
+    await client.query('BEGIN');
+    await client.query('SET LOCAL app.current_tenant = $1', [chunk.tenantId]);
+    await client.query(
       `INSERT INTO chunks (id, tenant_id, document_id, content, chunk_index, page_number, language, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (id) DO UPDATE 
@@ -135,8 +176,12 @@ export async function insertPostgresChunk(chunk: {
            page_number = EXCLUDED.page_number, language = EXCLUDED.language, metadata = EXCLUDED.metadata;`,
       [chunk.id, chunk.tenantId, chunk.documentId, chunk.content, chunk.chunkIndex, chunk.pageNumber, chunk.language, JSON.stringify(chunk.metadata || {})]
     );
+    await client.query('COMMIT');
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Failed to insert chunk into Postgres:', error);
+  } finally {
+    client.release();
   }
 }
 
@@ -145,11 +190,18 @@ export async function deletePostgresDocument(documentId: string, tenantId: strin
   const p = getPostgresPool();
   if (!p) return;
 
+  const client = await p.connect();
   try {
-    await p.query('DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2', [documentId, tenantId]);
-    await p.query('DELETE FROM documents WHERE id = $1 AND tenant_id = $2', [documentId, tenantId]);
+    await client.query('BEGIN');
+    await client.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+    await client.query('DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2', [documentId, tenantId]);
+    await client.query('DELETE FROM documents WHERE id = $1 AND tenant_id = $2', [documentId, tenantId]);
+    await client.query('COMMIT');
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Failed to delete document from Postgres:', error);
+  } finally {
+    client.release();
   }
 }
 
@@ -170,7 +222,11 @@ export async function searchPostgresLexical(
   const p = getPostgresPool();
   if (!p) return [];
 
+  const client = await p.connect();
   try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+
     // We clean query text from special TSQuery characters to prevent syntax errors
     const cleanQuery = queryText.replace(/['"&|!()*:<>\s]+/g, ' ').trim();
     if (!cleanQuery) return [];
@@ -185,27 +241,29 @@ export async function searchPostgresLexical(
       const isArabic = /[\u0600-\u06FF]/.test(cleanQuery);
       const dict = isArabic ? 'arabic' : 'english';
 
-      result = await p.query(
+      result = await client.query(
         `SELECT id, document_id, content, chunk_index, page_number, language,
                 ts_rank(to_tsvector($1, content), to_tsquery($1, $2)) as rank
          FROM chunks
-         WHERE tenant_id = $3 AND to_tsvector($1, content) @@ to_tsquery($1, $2)
+         WHERE to_tsvector($1, content) @@ to_tsquery($1, $2)
          ORDER BY rank DESC
-         LIMIT $4`,
-        [dict, ftsQuery, tenantId, limitVal]
+         LIMIT $3`,
+        [dict, ftsQuery, limitVal]
       );
     } catch (ftsError) {
       console.warn('FTS query failed, falling back to ILIKE text search:', ftsError);
       // Fallback query: ILIKE or standard rank using substring occurrences
-      result = await p.query(
+      result = await client.query(
         `SELECT id, document_id, content, chunk_index, page_number, language,
                 1.0 as rank
          FROM chunks
-         WHERE tenant_id = $1 AND (content ILIKE $2 OR content ILIKE $3)
-         LIMIT $4`,
-        [tenantId, `%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, limitVal]
+         WHERE (content ILIKE $1 OR content ILIKE $2)
+         LIMIT $3`,
+        [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, limitVal]
       );
     }
+
+    await client.query('COMMIT');
 
     return result.rows.map((row: any) => ({
       id: row.id,
@@ -217,7 +275,10 @@ export async function searchPostgresLexical(
       lexicalScore: row.rank || 0.5,
     }));
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('PostgreSQL lexical search failed:', error);
     return [];
+  } finally {
+    client.release();
   }
 }

@@ -49,13 +49,18 @@ export async function signUpUser(email: string, password: string, workspaceName:
     },
   };
 
-  await setDoc(doc(firestore, 'tenants', tenantId), newTenant);
-
-  // 3. Seed Initial Demo Data for this new Tenant
   try {
-    await seedNewTenant(tenantId, newTenant.name);
-  } catch (error) {
-    console.error('Failed to seed new tenant, continuing anyway:', error);
+    await setDoc(doc(firestore, 'tenants', tenantId), newTenant);
+
+    // 3. Seed Initial Demo Data for this new Tenant
+    try {
+      await seedNewTenant(tenantId, newTenant.name);
+    } catch (error) {
+      console.error('Failed to seed new tenant, continuing anyway:', error);
+    }
+  } catch (err) {
+    console.log('Firestore tenant set/seed failed during signUpUser, continuing with in-memory fallback. (Quota or permissions issue)');
+    import('../storage/db').then(({ db }) => db.enableMemoryFallback());
   }
 
   return { user, tenantId };
@@ -74,27 +79,32 @@ export async function signInUser(email: string, password: string): Promise<{ use
   const tenantId = `tenant-${user.uid}`;
 
   // Verify tenant document exists, if not create it
-  const tenantDocRef = doc(firestore, 'tenants', tenantId);
-  const tenantSnap = await getDoc(tenantDocRef);
-  
-  if (!tenantSnap.exists()) {
-    const newTenant: Tenant = {
-      id: tenantId,
-      name: `مساحة عمل ${email}`,
-      plan: 'enterprise',
-      createdAt: new Date().toISOString(),
-      settings: {
-        chunkSize: 500,
-        chunkOverlap: 50,
-        hybridWeights: { semantic: 0.7, lexical: 0.3 },
-        defaultModel: 'gemini-3.6-flash',
-        dataRetentionDays: 90,
-        enablePiiRedaction: true,
-        enablePromptSanitizer: true,
-      },
-    };
-    await setDoc(tenantDocRef, newTenant);
-    await seedNewTenant(tenantId, newTenant.name);
+  try {
+    const tenantDocRef = doc(firestore, 'tenants', tenantId);
+    const tenantSnap = await getDoc(tenantDocRef);
+    
+    if (!tenantSnap.exists()) {
+      const newTenant: Tenant = {
+        id: tenantId,
+        name: `مساحة عمل ${email}`,
+        plan: 'enterprise',
+        createdAt: new Date().toISOString(),
+        settings: {
+          chunkSize: 500,
+          chunkOverlap: 50,
+          hybridWeights: { semantic: 0.7, lexical: 0.3 },
+          defaultModel: 'gemini-3.6-flash',
+          dataRetentionDays: 90,
+          enablePiiRedaction: true,
+          enablePromptSanitizer: true,
+        },
+      };
+      await setDoc(tenantDocRef, newTenant);
+      await seedNewTenant(tenantId, newTenant.name);
+    }
+  } catch (err) {
+    console.log('Firestore tenant verification failed during signInUser, continuing with in-memory fallback. (Quota or permissions issue)');
+    import('../storage/db').then(({ db }) => db.enableMemoryFallback());
   }
 
   return { user, tenantId };
@@ -114,31 +124,36 @@ export async function signInWithGoogle(): Promise<{ user: User; tenantId: string
   const tenantId = `tenant-${user.uid}`;
 
   // Verify tenant document exists, if not create it
-  const tenantDocRef = doc(firestore, 'tenants', tenantId);
-  const tenantSnap = await getDoc(tenantDocRef);
-  
-  if (!tenantSnap.exists()) {
-    const newTenant: Tenant = {
-      id: tenantId,
-      name: user.displayName || `مساحة عمل ${user.email || 'جوجل'}`,
-      plan: 'enterprise',
-      createdAt: new Date().toISOString(),
-      settings: {
-        chunkSize: 500,
-        chunkOverlap: 50,
-        hybridWeights: { semantic: 0.7, lexical: 0.3 },
-        defaultModel: 'gemini-3.6-flash',
-        dataRetentionDays: 90,
-        enablePiiRedaction: true,
-        enablePromptSanitizer: true,
-      },
-    };
-    await setDoc(tenantDocRef, newTenant);
-    try {
-      await seedNewTenant(tenantId, newTenant.name);
-    } catch (error) {
-      console.error('Failed to seed new Google tenant:', error);
+  try {
+    const tenantDocRef = doc(firestore, 'tenants', tenantId);
+    const tenantSnap = await getDoc(tenantDocRef);
+    
+    if (!tenantSnap.exists()) {
+      const newTenant: Tenant = {
+        id: tenantId,
+        name: user.displayName || `مساحة عمل ${user.email || 'جوجل'}`,
+        plan: 'enterprise',
+        createdAt: new Date().toISOString(),
+        settings: {
+          chunkSize: 500,
+          chunkOverlap: 50,
+          hybridWeights: { semantic: 0.7, lexical: 0.3 },
+          defaultModel: 'gemini-3.6-flash',
+          dataRetentionDays: 90,
+          enablePiiRedaction: true,
+          enablePromptSanitizer: true,
+        },
+      };
+      await setDoc(tenantDocRef, newTenant);
+      try {
+        await seedNewTenant(tenantId, newTenant.name);
+      } catch (error) {
+        console.error('Failed to seed new Google tenant:', error);
+      }
     }
+  } catch (err) {
+    console.log('Firestore tenant verification failed during signInWithGoogle, continuing with in-memory fallback. (Quota or permissions issue)');
+    import('../storage/db').then(({ db }) => db.enableMemoryFallback());
   }
 
   return { user, tenantId };

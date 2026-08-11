@@ -5,9 +5,14 @@ import { Collection } from '@/lib/types/omnirag';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
-  const collections = await db.getCollections(tenantId);
-  return NextResponse.json({ collections });
+  try {
+    const tenantId = req.nextUrl.searchParams.get('tenantId') || 'tenant-acme-01';
+    const collections = await db.getCollections(tenantId);
+    return NextResponse.json({ collections });
+  } catch (err: any) {
+    console.error('API Error in collections GET:', err);
+    return NextResponse.json({ collections: [], error: err.message || String(err) }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {

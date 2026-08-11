@@ -308,12 +308,17 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
             </div>
           </div>
 
-          {/* Remotion Hero Video / Animation */}
-          <div className="mt-8 mb-12 max-w-5xl mx-auto">
-            <RemotionHeroPlayer lang={lang} />
           </div>
 
-          {/* Key Metrics Grid */}
+          {/* Remotion Hero Video / Animation - Full Width */}
+          <div className="mt-12 mb-16 w-full">
+            <div className="w-full">
+              <RemotionHeroPlayer lang={lang} />
+            </div>
+          </div>
+
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            {/* Key Metrics Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto mt-12">
             {t.metrics.map((m, idx) => (
               <div

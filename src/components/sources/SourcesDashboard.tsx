@@ -37,6 +37,8 @@ import {
   Settings,
   ArrowRight,
   ArrowUpRight,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 
 interface SourcesDashboardProps {
@@ -52,7 +54,7 @@ interface KeysStatus {
 }
 
 export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: SourcesDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'connectors' | 'collections' | 'add' | 'upload' | 'documents' | 'mcp' | 'keys'>('connectors');
+  const [activeTab, setActiveTab] = useState<'connectors' | 'collections' | 'add' | 'upload' | 'documents' | 'mcp' | 'keys' | 'youtube'>('connectors');
   const [sources, setSources] = useState<SourceConnector[]>([]);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [mcpResources, setMcpResources] = useState<McpResourceItem[]>([]);
@@ -63,6 +65,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const [isLoadingChunks, setIsLoadingChunks] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [docViewMode, setDocViewMode] = useState<'list' | 'grid'>('list');
   
   // Real-time API keys verification status
   const [keysStatus, setKeysStatus] = useState<KeysStatus | null>(null);
@@ -92,10 +95,34 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
         fetch('/api/v1/sources/api-keys-status'),
       ]);
 
-      const sourcesData = await sourcesRes.json();
-      const colsData = await colsRes.json();
-      const docsData = await docsRes.json();
-      const keysData = await keysRes.json();
+      let sourcesData: any = {};
+      let colsData: any = {};
+      let docsData: any = {};
+      let keysData: any = null;
+
+      try {
+        if (sourcesRes.ok) sourcesData = await sourcesRes.json();
+      } catch (e) {
+        console.warn('Failed to parse sources JSON:', e);
+      }
+
+      try {
+        if (colsRes.ok) colsData = await colsRes.json();
+      } catch (e) {
+        console.warn('Failed to parse collections JSON:', e);
+      }
+
+      try {
+        if (docsRes.ok) docsData = await docsRes.json();
+      } catch (e) {
+        console.warn('Failed to parse documents JSON:', e);
+      }
+
+      try {
+        if (keysRes.ok) keysData = await keysRes.json();
+      } catch (e) {
+        console.warn('Failed to parse api-keys-status JSON:', e);
+      }
 
       if (sourcesData.sources) setSources(sourcesData.sources);
       if (sourcesData.syncLogs) setSyncLogs(sourcesData.syncLogs);
@@ -256,6 +283,160 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     }
   };
 
+  // Improved Status Badges for Ingested Documents
+  const getDocStatusBadge = (status: 'pending' | 'processing' | 'indexed' | 'failed' | string) => {
+    switch (status) {
+      case 'indexed':
+      case 'success':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 shadow-3xs uppercase tracking-wide">
+            <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+            {isRtl ? 'مفهرس' : 'Indexed'}
+          </span>
+        );
+      case 'processing':
+      case 'indexing':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/60 shadow-3xs uppercase tracking-wide">
+            <span className="w-1 h-1 rounded-full bg-indigo-500 animate-pulse" />
+            {isRtl ? 'فهرسة...' : 'Indexing...'}
+          </span>
+        );
+      case 'pending':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-amber-50 text-amber-700 border border-amber-200/60 shadow-3xs uppercase tracking-wide">
+            <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" />
+            {isRtl ? 'معلق' : 'Pending'}
+          </span>
+        );
+      case 'failed':
+      case 'error':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-rose-50 text-rose-700 border border-rose-200/60 shadow-3xs uppercase tracking-wide">
+            <span className="w-1 h-1 rounded-full bg-rose-500" />
+            {isRtl ? 'فشل' : 'Failed'}
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-slate-50 text-slate-700 border border-slate-200/60 shadow-3xs uppercase tracking-wide">
+            {status || 'INDEXED'}
+          </span>
+        );
+    }
+  };
+
+  // Document management list/grid skeleton loader
+  const DocumentSkeleton = () => (
+    <div className={docViewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-1" : "space-y-3 max-h-[500px] overflow-y-auto pr-1"}>
+      {[1, 2, 3, 4].map((i) => (
+        <div key={i} className="bg-slate-50/50 rounded-2xl p-4 border border-slate-150 animate-pulse space-y-3 shadow-3xs">
+          <div className="flex items-center justify-between">
+            <div className="w-8 h-8 bg-slate-200 rounded-xl" />
+            <div className="w-16 h-4 bg-slate-200 rounded-full" />
+          </div>
+          <div className="space-y-1.5">
+            <div className="h-3.5 bg-slate-200 rounded w-5/6" />
+            <div className="h-2.5 bg-slate-200 rounded w-1/2" />
+          </div>
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <div className="w-14 h-2.5 bg-slate-200 rounded" />
+            <div className="w-14 h-2.5 bg-slate-200 rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Document Chunk list skeleton loader
+  const ChunkSkeleton = () => (
+    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+      {[1, 2].map((i) => (
+        <div key={i} className="p-4 rounded-xl bg-slate-900 border border-slate-800 animate-pulse space-y-3 shadow-3xs">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <div className="w-20 h-3.5 bg-slate-800 rounded" />
+            <div className="w-24 h-2.5 bg-slate-800 rounded" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-3 bg-slate-800 rounded w-full" />
+            <div className="h-3 bg-slate-800 rounded w-11/12" />
+            <div className="h-3 bg-slate-800 rounded w-5/6" />
+          </div>
+          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+            <div className="w-24 h-2 bg-slate-800 rounded" />
+            <div className="w-16 h-2 bg-slate-800 rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Automated Connectors Grid loading skeleton loader
+  const ConnectorsSkeleton = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="bg-white rounded-2xl p-5 border border-slate-200 animate-pulse space-y-4 shadow-3xs flex flex-col justify-between">
+          <div className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-100 animate-pulse shrink-0 border border-slate-200" />
+                <div className="space-y-2">
+                  <div className="h-3.5 bg-slate-200 rounded w-24" />
+                  <div className="h-2.5 bg-slate-200 rounded w-12" />
+                </div>
+              </div>
+              <div className="w-14 h-4 bg-slate-200 rounded-full" />
+            </div>
+
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="w-20 h-2 bg-slate-200 rounded" />
+                <div className="w-10 h-2.5 bg-slate-200 rounded" />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="w-16 h-2 bg-slate-200 rounded" />
+                <div className="w-12 h-2 bg-slate-200 rounded" />
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+            <div className="w-20 h-7 bg-slate-200 rounded-lg" />
+            <div className="flex gap-1.5">
+              <div className="w-7 h-7 bg-slate-200 rounded-lg" />
+              <div className="w-7 h-7 bg-slate-200 rounded-lg" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Isolated Knowledge Collections loading skeleton loader
+  const CollectionsSkeleton = () => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="bg-white rounded-2xl p-5 border border-slate-200 animate-pulse space-y-3 flex flex-col justify-between">
+          <div className="space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="w-10 h-10 rounded-xl bg-slate-100 animate-pulse shrink-0 border border-slate-200" />
+              <div className="w-14 h-5 bg-slate-200 rounded-full" />
+            </div>
+            <div className="h-4 bg-slate-200 rounded w-2/3" />
+            <div className="space-y-1.5 pt-1">
+              <div className="h-3 bg-slate-200 rounded w-full" />
+              <div className="h-3 bg-slate-200 rounded w-5/6" />
+            </div>
+          </div>
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+            <div className="w-16 h-3 bg-slate-200 rounded" />
+            <div className="w-24 h-4 bg-slate-200 rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   const totalDocsCount = sources.reduce((acc, curr) => acc + (curr.documentCount || 0), 0);
   const healthyCount = sources.filter((s) => s.status === 'healthy').length;
 
@@ -285,14 +466,17 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={fetchSourcesData}
-            className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-3xs"
-            title={isRtl ? 'تحديث البيانات' : 'Refresh System'}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isLoading ? 'animate-spin text-indigo-600' : ''}`} />
-            <span>{isRtl ? 'تحديث ومزامنة' : 'Sync Status'}</span>
-          </button>
+          <div className="relative group">
+            <button
+              onClick={fetchSourcesData}
+              className="p-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition flex items-center justify-center cursor-pointer shadow-3xs"
+            >
+              <RefreshCw className={`w-4 h-4 text-slate-500 ${isLoading ? 'animate-spin text-indigo-600' : ''}`} />
+            </button>
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 hidden group-hover:block px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-lg whitespace-nowrap z-50">
+              {isRtl ? 'تحديث ومزامنة' : 'Sync Status'}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -406,6 +590,23 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
               </div>
               <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded font-bold uppercase">
                 {isRtl ? 'حي' : 'Live'}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('youtube')}
+              className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
+                activeTab === 'youtube'
+                  ? 'bg-indigo-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Youtube className="w-4 h-4 text-rose-500" />
+                <span>{isRtl ? 'مفرغ يوتيوب (yt-caption)' : 'YouTube Transcriber'}</span>
+              </div>
+              <span className="text-[9px] bg-rose-100 text-rose-800 px-1.5 py-0.2 rounded font-bold uppercase">
+                {isRtl ? 'ذكي' : 'AI'}
               </span>
             </button>
 
@@ -569,7 +770,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                 </div>
               </div>
 
-              {filteredSources.length === 0 ? (
+              {isLoading ? (
+                <ConnectorsSkeleton />
+              ) : filteredSources.length === 0 ? (
                 <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 space-y-3 shadow-3xs">
                   <Database className="w-12 h-12 text-slate-300 mx-auto" />
                   <h3 className="text-sm font-bold text-slate-700">
@@ -712,37 +915,50 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {collections.map((col) => {
-                  const docsInCol = documents.filter((d) => d.collectionIds && d.collectionIds.includes(col.id)).length;
-                  return (
-                    <div
-                      key={col.id}
-                      className="bg-white rounded-2xl p-5 border border-slate-200 hover:border-indigo-300 shadow-3xs transition space-y-3 flex flex-col justify-between"
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0 border border-violet-100">
-                            <Folder className="w-5 h-5" />
+              {isLoading ? (
+                <CollectionsSkeleton />
+              ) : collections.length === 0 ? (
+                <div className="bg-white rounded-3xl p-12 text-center border border-slate-200/80 space-y-3 shadow-3xs">
+                  <Folder className="w-12 h-12 text-slate-300 mx-auto" />
+                  <h3 className="text-sm font-bold text-slate-700">
+                    {isRtl ? 'لا توجد مجموعات معرفية حالياً' : 'No collections available'}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {isRtl ? 'أنشئ أول مجموعة معرفية لتنظيم سياق المستندات' : 'Create your first knowledge collection to group your RAG documents.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {collections.map((col) => {
+                    const docsInCol = documents.filter((d) => d.collectionIds && d.collectionIds.includes(col.id)).length;
+                    return (
+                      <div
+                        key={col.id}
+                        className="bg-white rounded-2xl p-5 border border-slate-200 hover:border-indigo-300 shadow-3xs transition space-y-3 flex flex-col justify-between"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0 border border-violet-100">
+                              <Folder className="w-5 h-5" />
+                            </div>
+                            <span className="text-xs font-bold font-mono bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                              {docsInCol || col.documentCount || 0} {isRtl ? 'مستند' : 'docs'}
+                            </span>
                           </div>
-                          <span className="text-xs font-bold font-mono bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-0.5 rounded-full">
-                            {docsInCol || col.documentCount || 0} {isRtl ? 'مستند' : 'docs'}
-                          </span>
+
+                          <h4 className="text-xs font-extrabold text-slate-900 pt-1 leading-tight">{col.name}</h4>
+                          <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">{col.description}</p>
                         </div>
 
-                        <h4 className="text-xs font-extrabold text-slate-900 pt-1 leading-tight">{col.name}</h4>
-                        <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">{col.description}</p>
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                        <span className="text-slate-400 font-mono">ID: {col.id}</span>
-                        <button
-                          onClick={() => {
-                            setDocCollectionFilter(col.id);
-                            setActiveTab('documents');
-                          }}
-                          className="text-indigo-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-                        >
+                        <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                          <span className="text-slate-400 font-mono">ID: {col.id}</span>
+                          <button
+                            onClick={() => {
+                              setDocCollectionFilter(col.id);
+                              setActiveTab('documents');
+                            }}
+                            className="text-indigo-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                          >
                           <span>{isRtl ? 'استعراض المستندات' : 'View Documents'}</span>
                           <ArrowUpRight className="w-3.5 h-3.5" />
                         </button>
@@ -751,6 +967,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
@@ -760,6 +977,20 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
               tenantId={tenantId}
               collections={collections}
               lang={lang}
+              onIngestionCompleted={() => {
+                fetchSourcesData();
+                setActiveTab('documents');
+              }}
+            />
+          )}
+
+          {/* TAB 3.5: DEDICATED YOUTUBE CAPTION TRANSCRIBER (yt-caption) */}
+          {activeTab === 'youtube' && (
+            <DocumentIngestionStudio
+              tenantId={tenantId}
+              collections={collections}
+              lang={lang}
+              initialTab="youtube"
               onIngestionCompleted={() => {
                 fetchSourcesData();
                 setActiveTab('documents');
@@ -911,19 +1142,50 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
           {/* TAB 5: VECTOR DATABASE INSPECTOR */}
           {activeTab === 'documents' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Left col: documents list (lg:col-span-5) */}
+              {/* Left col: documents list & grid options (lg:col-span-5) */}
               <div className="lg:col-span-5 bg-white rounded-2xl p-4 border border-slate-200/80 shadow-3xs space-y-4">
                 <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                  <h3 className="text-xs font-extrabold text-slate-900">
-                    {isRtl ? 'قائمة مستندات المستأجر' : 'Tenant Ingested Documents'} ({filteredDocuments.length})
-                  </h3>
-                  <button
-                    onClick={fetchSourcesData}
-                    className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-lg transition cursor-pointer"
-                    title={isRtl ? 'تحديث القائمة' : 'Sync list'}
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="space-y-0.5">
+                    <h3 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>{isRtl ? 'قائمة مستندات المستأجر' : 'Tenant Ingested Documents'}</span>
+                    </h3>
+                    <p className="text-[10px] text-slate-400">
+                      {isRtl ? `${filteredDocuments.length} مستند نشط` : `${filteredDocuments.length} active documents`}
+                    </p>
+                  </div>
+                  
+                  <div className="flex items-center gap-1.5">
+                    {/* View Mode Toggle */}
+                    <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                      <button
+                        onClick={() => setDocViewMode('list')}
+                        className={`p-1 rounded-md transition cursor-pointer ${
+                          docViewMode === 'list' ? 'bg-white text-indigo-600 shadow-3xs' : 'text-slate-400 hover:text-slate-700'
+                        }`}
+                        title={isRtl ? 'عرض القائمة' : 'List view'}
+                      >
+                        <List className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setDocViewMode('grid')}
+                        className={`p-1 rounded-md transition cursor-pointer ${
+                          docViewMode === 'grid' ? 'bg-white text-indigo-600 shadow-3xs' : 'text-slate-400 hover:text-slate-700'
+                        }`}
+                        title={isRtl ? 'عرض بطاقات شبكية' : 'Grid view'}
+                      >
+                        <LayoutGrid className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={fetchSourcesData}
+                      className="p-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-lg transition cursor-pointer"
+                      title={isRtl ? 'تحديث القائمة' : 'Sync list'}
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -944,7 +1206,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                       onChange={(e) => setDocCollectionFilter(e.target.value)}
                       className="w-full px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 font-medium focus:outline-none focus:border-indigo-500 cursor-pointer"
                     >
-                      <option value="all">{isRtl ? 'كافة المجموعات' : 'All Collections'}</option>
+                      <option value="all">{isRtl ? 'كافة المجموعات المعرفية' : 'All Collections'}</option>
                       {collections.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
@@ -954,30 +1216,116 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                   )}
                 </div>
 
-                <div className="divide-y divide-slate-100 border border-slate-150 rounded-xl overflow-hidden max-h-[500px] overflow-y-auto">
-                  {filteredDocuments.map((doc) => (
-                    <div
-                      key={doc.id}
-                      onClick={() => setSelectedDoc(doc)}
-                      className={`p-3.5 flex items-center justify-between cursor-pointer transition ${
-                        selectedDoc?.id === doc.id ? 'bg-indigo-50/80 border-r-4 border-indigo-600' : 'hover:bg-slate-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-xl bg-indigo-150 text-indigo-600 flex items-center justify-center shrink-0 border border-indigo-200">
-                          <FileText className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-xs font-bold text-slate-900 truncate leading-tight">{doc.title}</h4>
-                          <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500 font-sans">
-                            <span className="font-mono text-indigo-600 font-bold">{doc.chunkCount} {isRtl ? 'مقطع' : 'chunks'}</span>
-                            <span className="uppercase font-mono bg-slate-100 px-1 rounded text-slate-600 border border-slate-150">{doc.language}</span>
+                {isLoading ? (
+                  <DocumentSkeleton />
+                ) : filteredDocuments.length === 0 ? (
+                  <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+                    <Search className="w-8 h-8 text-slate-300 mx-auto" />
+                    <p>{isRtl ? 'لم يتم العثور على أي مستندات متطابقة.' : 'No matching documents found.'}</p>
+                  </div>
+                ) : docViewMode === 'list' ? (
+                  /* ENHANCED CARD-BASED LIST VIEW */
+                  <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+                    {filteredDocuments.map((doc) => {
+                      const isSelected = selectedDoc?.id === doc.id;
+                      const srcType = doc.metadata?.connectorType || doc.sourceType;
+                      return (
+                        <div
+                          key={doc.id}
+                          onClick={() => setSelectedDoc(doc)}
+                          className={`group p-3 rounded-xl border cursor-pointer transition-all duration-200 flex items-start justify-between gap-3 ${
+                            isSelected
+                              ? 'bg-indigo-50/70 border-indigo-200 shadow-3xs'
+                              : 'bg-white border-slate-150 hover:bg-slate-50/60 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white border-indigo-700 shadow-3xs'
+                                : 'bg-slate-100 text-slate-600 border-slate-200 group-hover:bg-indigo-50 group-hover:text-indigo-600 group-hover:border-indigo-200'
+                            } transition`}>
+                              {srcType === 'youtube' ? <Youtube className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-rose-600'}`} /> :
+                               srcType === 'url' ? <Globe className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-blue-600'}`} /> :
+                               srcType === 'github' ? <Github className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-slate-800'}`} /> :
+                               srcType === 'database' ? <Database className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-amber-600'}`} /> :
+                               srcType === 'gdrive' ? <FolderPlus className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-emerald-600'}`} /> :
+                               <FileText className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-indigo-600'}`} />}
+                            </div>
+                            <div className="min-w-0 space-y-0.5">
+                              <h4 className="text-xs font-bold text-slate-900 leading-tight group-hover:text-indigo-950 transition break-all">
+                                {doc.title}
+                              </h4>
+                              <div className="flex items-center gap-2 text-[10px] text-slate-500 font-sans font-medium">
+                                <span className="font-mono text-indigo-600 font-bold bg-indigo-50 px-1 py-0.2 rounded border border-indigo-100 shrink-0">
+                                  {doc.chunkCount} {isRtl ? 'مقطع' : 'chunks'}
+                                </span>
+                                <span className="uppercase font-mono bg-slate-100 px-1 rounded text-slate-600 border border-slate-200 text-[9px] shrink-0 font-bold">
+                                  {doc.language}
+                                </span>
+                                <span className="text-slate-400 font-mono text-[9px] truncate">
+                                  {new Date(doc.createdAt).toLocaleDateString()}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="shrink-0 pt-0.5">
+                            {getDocStatusBadge(doc.status)}
                           </div>
                         </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* PREMIUM CARD-BASED GRID VIEW */
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 max-h-[500px] overflow-y-auto pr-1">
+                    {filteredDocuments.map((doc) => {
+                      const isSelected = selectedDoc?.id === doc.id;
+                      const srcType = doc.metadata?.connectorType || doc.sourceType;
+                      return (
+                        <div
+                          key={doc.id}
+                          onClick={() => setSelectedDoc(doc)}
+                          className={`group p-4 rounded-xl border cursor-pointer transition-all duration-200 flex flex-col justify-between space-y-3 ${
+                            isSelected
+                              ? 'bg-indigo-50/70 border-indigo-200 shadow-2xs ring-1 ring-indigo-100'
+                              : 'bg-white border-slate-150 hover:bg-slate-50 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className={`w-7 h-7 rounded-lg flex items-center justify-center border ${
+                                isSelected ? 'bg-indigo-600 text-white border-indigo-700 shadow-3xs' : 'bg-slate-50 border-slate-200'
+                              }`}>
+                                {srcType === 'youtube' ? <Youtube className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-rose-600'}`} /> :
+                                 srcType === 'url' ? <Globe className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-blue-600'}`} /> :
+                                 srcType === 'github' ? <Github className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-800'}`} /> :
+                                 srcType === 'database' ? <Database className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-amber-600'}`} /> :
+                                 srcType === 'gdrive' ? <FolderPlus className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-emerald-600'}`} /> :
+                                 <FileText className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-indigo-600'}`} />}
+                              </div>
+                              {getDocStatusBadge(doc.status)}
+                            </div>
+
+                            <h4 className="text-xs font-bold text-slate-900 leading-tight line-clamp-2 pt-0.5 break-all">
+                              {doc.title}
+                            </h4>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                            <span className="font-bold text-indigo-600 bg-indigo-50 px-1 py-0.2 rounded">
+                              {doc.chunkCount} {isRtl ? 'مقطع' : 'chunks'}
+                            </span>
+                            <span className="text-[9px] text-slate-400">
+                              {new Date(doc.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Right col: Selected document chunk inspector (lg:col-span-7) */}
@@ -988,12 +1336,10 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                     <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-mono font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
-                            {selectedDoc.status || 'INDEXED'}
-                          </span>
+                          {getDocStatusBadge(selectedDoc.status)}
                           <span className="text-[10px] font-mono text-slate-400">ID: {selectedDoc.id}</span>
                         </div>
-                        <h3 className="text-xs font-extrabold text-slate-900 leading-tight">{selectedDoc.title}</h3>
+                        <h3 className="text-xs font-extrabold text-slate-900 leading-tight break-all">{selectedDoc.title}</h3>
                         <p className="text-[10px] text-slate-500 font-mono">
                           {new Date(selectedDoc.createdAt).toLocaleString(isRtl ? 'ar-SA' : 'en-US')} | RLS Isolated
                         </p>
@@ -1001,7 +1347,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
                       <button
                         onClick={() => handleDeleteDocument(selectedDoc.id)}
-                        className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition cursor-pointer flex items-center gap-1 text-[11px] font-bold shrink-0 border border-rose-200"
+                        className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition cursor-pointer flex items-center gap-1 text-[11px] font-bold shrink-0 border border-rose-200 shadow-3xs hover:shadow-2xs"
                         title={isRtl ? 'حذف المستند من نظام Qdrant' : 'Delete Document'}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -1034,45 +1380,85 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                           {isLoadingChunks && <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />}
                         </div>
 
-                        <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                          {selectedDocChunks.map((chunk, idx) => (
-                            <div
-                              key={chunk.id}
-                              className="p-3.5 rounded-xl bg-slate-900 text-slate-100 border border-slate-800 space-y-2 text-xs font-mono"
-                            >
-                              <div className="flex items-center justify-between text-[10px] border-b border-slate-800 pb-1.5">
+                        {isLoadingChunks ? (
+                          <ChunkSkeleton />
+                        ) : ((selectedDoc.status as string) === 'processing' || (selectedDoc.status as string) === 'indexing' || selectedDoc.status === 'pending') ? (
+                          <div className="space-y-3">
+                            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3 shadow-3xs">
+                              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                                 <div className="flex items-center gap-2">
-                                  <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-bold text-[9px]">
-                                    Chunk #{idx + 1}
+                                  <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping" />
+                                  <span className="text-[10px] text-indigo-400 font-bold font-sans">
+                                    {isRtl ? 'جاري تقسيم ومعالجة النصوص دلالياً...' : 'Slicing & processing text...'}
                                   </span>
-                                  <span className="text-slate-400 text-[9px]">ID: {chunk.id}</span>
                                 </div>
-                                <button
-                                  onClick={() => handleCopyChunk(chunk.id, chunk.content)}
-                                  className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition cursor-pointer flex items-center gap-1 text-[9px]"
-                                >
-                                  {copiedChunkId === chunk.id ? (
-                                    <>
-                                      <Check className="w-3 h-3 text-emerald-400" />
-                                      <span className="text-emerald-400 font-bold">{isRtl ? 'تم النسخ' : 'Copied'}</span>
-                                    </>
-                                  ) : (
-                                    <Copy className="w-3 h-3" />
-                                  )}
-                                </button>
+                                <div className="w-16 h-2 bg-slate-800 rounded animate-pulse" />
                               </div>
-
-                              <p className="text-[11px] text-slate-200 font-sans leading-relaxed whitespace-pre-line">
-                                {chunk.content}
-                              </p>
-
-                              <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-800/80">
-                                <span>Embedding: Text-embedding-004 (768d)</span>
-                                <span className="text-emerald-400 font-bold">HNSW Indexed ✓</span>
+                              <div className="space-y-2 animate-pulse">
+                                <div className="h-3 bg-slate-850 rounded w-full animate-pulse" />
+                                <div className="h-3 bg-slate-850 rounded w-11/12 animate-pulse" />
                               </div>
                             </div>
-                          ))}
-                        </div>
+                            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3 shadow-3xs opacity-60">
+                              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-2 h-2 rounded-full bg-slate-600 animate-pulse" />
+                                  <span className="text-[10px] text-slate-500 font-bold font-sans">
+                                    {isRtl ? 'بانتظار نموذج ترميز المتجهات...' : 'Waiting for Embedding model...'}
+                                  </span>
+                                </div>
+                                <div className="w-16 h-2 bg-slate-800 rounded" />
+                              </div>
+                              <div className="space-y-2 opacity-50">
+                                <div className="h-3 bg-slate-850 rounded w-5/6" />
+                              </div>
+                            </div>
+                          </div>
+                        ) : selectedDocChunks.length === 0 ? (
+                          <div className="py-8 text-center text-slate-400 text-xs">
+                            {isRtl ? 'لم يتم العثور على أي مقاطع دلالية متوفرة.' : 'No chunks available for this document.'}
+                          </div>
+                        ) : (
+                          <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                            {selectedDocChunks.map((chunk, idx) => (
+                              <div
+                                key={chunk.id}
+                                className="p-3.5 rounded-xl bg-slate-900 text-slate-100 border border-slate-800 space-y-2 text-xs font-mono"
+                              >
+                                <div className="flex items-center justify-between text-[10px] border-b border-slate-800 pb-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-bold text-[9px]">
+                                      Chunk #{idx + 1}
+                                    </span>
+                                    <span className="text-slate-400 text-[9px]">ID: {chunk.id}</span>
+                                  </div>
+                                  <button
+                                    onClick={() => handleCopyChunk(chunk.id, chunk.content)}
+                                    className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition cursor-pointer flex items-center gap-1 text-[9px]"
+                                  >
+                                    {copiedChunkId === chunk.id ? (
+                                      <>
+                                        <Check className="w-3 h-3 text-emerald-400" />
+                                        <span className="text-emerald-400 font-bold">{isRtl ? 'تم النسخ' : 'Copied'}</span>
+                                      </>
+                                    ) : (
+                                      <Copy className="w-3 h-3" />
+                                    )}
+                                  </button>
+                                </div>
+
+                                <p className="text-[11px] text-slate-200 font-sans leading-relaxed whitespace-pre-line">
+                                  {chunk.content}
+                                </p>
+
+                                <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-800/80">
+                                  <span>Embedding: Text-embedding-004 (768d)</span>
+                                  <span className="text-emerald-400 font-bold">HNSW Indexed ✓</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

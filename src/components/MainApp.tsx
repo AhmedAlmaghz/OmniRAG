@@ -8,6 +8,7 @@ import McpGateway from '@/components/McpGateway';
 import RetrievalPlayground from '@/components/RetrievalPlayground';
 import SecurityCenter from '@/components/SecurityCenter';
 import AnalyticsView from '@/components/AnalyticsView';
+import SettingsView from '@/components/SettingsView';
 import ModelSettingsView from '@/components/ModelSettingsView';
 import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
@@ -23,10 +24,10 @@ import {
   BarChart3,
   Layers,
   Home,
-  Cpu,
+  Cpu, Settings,
 } from 'lucide-react';
 
-type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models';
+type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models' | 'settings';
 
 export default function MainApp() {
   const [tenantId, setTenantId] = useState('tenant-acme-01');
@@ -108,7 +109,7 @@ export default function MainApp() {
     {
       id: 'models',
       label: lang === 'ar' ? 'إعدادات نماذج AI' : 'AI Models Registry',
-      icon: Cpu,
+      icon: Cpu, Settings,
       badge: 'إدارة مركزية',
     },
     {
@@ -140,6 +141,12 @@ export default function MainApp() {
       label: lang === 'ar' ? 'التحليلات وسجلات التدقيق' : 'Analytics & Audit',
       icon: BarChart3,
       badge: 'P95 & Audit',
+    },
+    {
+      id: 'settings',
+      label: lang === 'ar' ? 'الإعدادات والملف الشخصي' : 'Settings & Profile',
+      icon: Settings,
+      badge: 'User Prefs',
     },
   ];
 
@@ -198,31 +205,28 @@ export default function MainApp() {
       {/* Main Workspace Navigation Bar */}
       <nav className="bg-white border-b border-slate-200 sticky top-16 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex gap-2 sm:gap-3 overflow-x-auto py-2.5 no-scrollbar items-center">
+          <div className="flex justify-center gap-2 sm:gap-3 flex-wrap py-2.5 items-center">
             {navTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => handleTabChange(tab.id as TabType)}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 select-none ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-xs font-bold ring-2 ring-indigo-300'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-slate-50/80 border border-slate-200/60'
-                  }`}
-                >
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-indigo-600'}`} />
-                  <span>{tab.label}</span>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                      isActive ? 'bg-indigo-700/80 text-white' : 'bg-slate-200/70 text-slate-600'
+                <div key={tab.id} className="relative group">
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange(tab.id as TabType)}
+                    className={`flex items-center justify-center w-10 h-10 rounded-xl transition cursor-pointer shrink-0 select-none ${
+                      isActive
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20 ring-2 ring-indigo-300'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-slate-50 border border-slate-200'
                     }`}
                   >
-                    {tab.badge}
-                  </span>
-                </button>
+                    <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-indigo-600'}`} />
+                  </button>
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 hidden group-hover:flex flex-col items-center px-3 py-1.5 bg-slate-800 text-white text-[11px] rounded shadow-lg border border-slate-700 whitespace-nowrap z-[999]">
+                    <span className="font-semibold">{tab.label}</span>
+                    <span className="text-[9px] text-slate-300 font-mono mt-0.5">{tab.badge}</span>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -238,6 +242,7 @@ export default function MainApp() {
         {activeTab === 'search' && <RetrievalPlayground tenantId={tenantId} lang={lang} />}
         {activeTab === 'security' && <SecurityCenter tenantId={tenantId} lang={lang} />}
         {activeTab === 'analytics' && <AnalyticsView tenantId={tenantId} lang={lang} />}
+        {activeTab === 'settings' && <SettingsView tenantId={tenantId} lang={lang} userEmail={userEmail} onLogOut={handleLogOut} />}
       </main>
 
       {/* Footer */}

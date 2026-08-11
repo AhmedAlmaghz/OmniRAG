@@ -23,7 +23,7 @@ export const RagAnimation: React.FC<{ lang?: 'ar' | 'en' }> = ({ lang = 'ar' }) 
   const currentText = (lang === 'ar' ? sampleAnswerAr : sampleAnswerEn).slice(0, textOutputProgress);
 
   return (
-    <div className="w-full h-full bg-slate-950 text-white font-sans p-6 flex flex-col justify-between relative overflow-hidden rounded-2xl border border-slate-800 shadow-2xl">
+    <div className="w-full h-full bg-slate-950 text-white font-sans p-8 md:p-12 flex flex-col justify-between relative overflow-hidden">
       {/* Background Animated Grid & Radial Glow */}
       <div 
         className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:3rem_3rem] opacity-20"

@@ -5,31 +5,44 @@ import { SourceConnector } from '@/lib/types/omnirag';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
-  const typeFilter = searchParams.get('type');
-  const statusFilter = searchParams.get('status');
+  let tenantId = 'tenant-acme-01';
+  try {
+    const { searchParams } = new URL(req.url);
+    tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
+    const typeFilter = searchParams.get('type');
+    const statusFilter = searchParams.get('status');
 
-  let sources = await db.getSources(tenantId);
+    let sources = await db.getSources(tenantId);
 
-  if (typeFilter) {
-    sources = sources.filter((s) => s.type === typeFilter);
+    if (typeFilter) {
+      sources = sources.filter((s) => s.type === typeFilter);
+    }
+
+    if (statusFilter) {
+      sources = sources.filter((s) => s.status === statusFilter);
+    }
+
+    const syncLogs = await db.getSyncLogs(tenantId);
+    const mcpResources = await db.getMcpResources(tenantId);
+
+    return NextResponse.json({
+      tenantId,
+      totalSources: sources.length,
+      sources,
+      syncLogs,
+      mcpResources,
+    });
+  } catch (error: any) {
+    console.error('API Error in sources GET:', error);
+    return NextResponse.json({
+      tenantId,
+      totalSources: 0,
+      sources: [],
+      syncLogs: [],
+      mcpResources: [],
+      error: error.message || String(error),
+    }, { status: 500 });
   }
-
-  if (statusFilter) {
-    sources = sources.filter((s) => s.status === statusFilter);
-  }
-
-  const syncLogs = await db.getSyncLogs(tenantId);
-  const mcpResources = await db.getMcpResources(tenantId);
-
-  return NextResponse.json({
-    tenantId,
-    totalSources: sources.length,
-    sources,
-    syncLogs,
-    mcpResources,
-  });
 }
 
 export async function POST(req: NextRequest) {

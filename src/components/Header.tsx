@@ -9,7 +9,7 @@ interface HeaderProps {
   onTenantChange: (id: string) => void;
   lang: 'ar' | 'en';
   onLangChange: (lang: 'ar' | 'en') => void;
-  onNavigateTab: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models') => void;
+  onNavigateTab: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models' | 'settings') => void;
   userEmail?: string | null;
   onLogOut?: () => void;
 }
@@ -44,39 +44,6 @@ export default function Header({ currentTenantId, onTenantChange, lang, onLangCh
 
         {/* Status Indicators & Tenant Selector */}
         <div className="flex items-center gap-3">
-          {/* Active Guardrail Badge - Clickable to Security */}
-          <button
-            type="button"
-            onClick={() => onNavigateTab('security')}
-            className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/60 hover:bg-emerald-900/60 text-emerald-300 text-xs transition cursor-pointer"
-            title={lang === 'ar' ? 'الانتقال إلى مركز الأمن' : 'Go to Security Center'}
-          >
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>{lang === 'ar' ? 'درع HookHarness: نشط' : 'HookHarness: Active'}</span>
-          </button>
-
-          {/* AI Models Settings Badge - Clickable to Models Settings */}
-          <button
-            type="button"
-            onClick={() => onNavigateTab('models')}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900/90 border border-indigo-700/60 text-indigo-300 text-xs font-mono transition cursor-pointer"
-            title={lang === 'ar' ? 'الانتقال إلى إعدادات النماذج' : 'Go to AI Models Registry'}
-          >
-            <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-            <span>{lang === 'ar' ? 'نماذج AI' : 'AI Models'}</span>
-          </button>
-
-          {/* Database System Badge - Clickable to Knowledge Base */}
-          <button
-            type="button"
-            onClick={() => onNavigateTab('knowledge')}
-            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-mono transition cursor-pointer"
-            title={lang === 'ar' ? 'الانتقال إلى مستودع المعرفة' : 'Go to Knowledge Base'}
-          >
-            <Database className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Qdrant + Neon RLS</span>
-          </button>
-
           {/* Tenant Selector */}
           <div className="flex items-center gap-2 bg-slate-800/90 p-1 rounded-xl border border-slate-700">
             <span className="text-xs text-slate-400 px-2 font-medium hidden sm:inline">

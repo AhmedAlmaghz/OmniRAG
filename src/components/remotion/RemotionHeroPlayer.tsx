@@ -24,7 +24,7 @@ export const RemotionHeroPlayer: React.FC<RemotionHeroPlayerProps> = ({ lang = '
   }
 
   return (
-    <div className="w-full rounded-2xl overflow-hidden border border-slate-800/80 shadow-2xl bg-slate-950 p-2 md:p-3 relative group">
+    <div className="w-full relative group">
       <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-700/60 shadow-lg">
         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
         <span className="text-[11px] font-mono font-medium text-slate-300">
@@ -32,7 +32,7 @@ export const RemotionHeroPlayer: React.FC<RemotionHeroPlayerProps> = ({ lang = '
         </span>
       </div>
 
-      <div className="w-full h-[340px] sm:h-[380px] md:h-[420px] relative rounded-xl overflow-hidden">
+      <div className="w-full aspect-video relative overflow-hidden">
         <Player
           component={RagAnimation}
           inputProps={{ lang }}
@@ -46,8 +46,7 @@ export const RemotionHeroPlayer: React.FC<RemotionHeroPlayerProps> = ({ lang = '
           style={{
             width: '100%',
             height: '100%',
-            objectFit: 'contain',
-            borderRadius: '0.75rem',
+            objectFit: 'cover',
           }}
         />
       </div>

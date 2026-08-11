@@ -655,93 +655,80 @@ Supported rich formatting capabilities:
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-[600px] lg:h-[calc(100vh-170px)]">
       {/* Main Chat Area */}
       <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-col h-full overflow-hidden">
-        {/* Chat Studio Toolbar */}
-        <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-3">
-          {/* Mode Selector */}
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="w-4 h-4 text-slate-500" />
-            <span className="text-xs font-semibold text-slate-700">{lang === 'ar' ? 'وضع المحادثة:' : 'Chat Mode:'}</span>
-            <div className="flex bg-slate-200/80 p-1 rounded-xl gap-1 overflow-x-auto max-w-full">
-              {(['hybrid', 'private', 'general', 'analysis'] as ChatMode[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setSelectedMode(m)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
-                    selectedMode === m ? 'bg-white text-indigo-600 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {m === 'hybrid' && (lang === 'ar' ? '⚡ هجين RRF' : '⚡ RRF Hybrid')}
-                  {m === 'private' && (lang === 'ar' ? '🔒 خاص مغلق' : '🔒 Private')}
-                  {m === 'general' && (lang === 'ar' ? '🌐 عام مباشر' : '🌐 General')}
-                  {m === 'analysis' && (lang === 'ar' ? '🧠 جيميناي برو' : '🧠 Gemini Pro')}
-                </button>
-              ))}
+        {/* Chat Studio Toolbar - Compact & Creative */}
+        <div className="p-2 border-b border-slate-200 bg-white flex items-center justify-end shrink-0">
+          {/* Quick Controls & Chat Session Tools - Compact Icons */}
+          <div className="flex items-center gap-1.5">
+            {/* Sources Filter */}
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={() => setShowSourcesModal(!showSourcesModal)}
+                className={`p-1.5 rounded-lg border transition cursor-pointer flex items-center justify-center ${
+                  selectedCollectionIds.length > 0
+                    ? 'bg-amber-100 text-amber-700 border-amber-300'
+                    : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                }`}
+              >
+                <FolderKanban className="w-4 h-4" />
+                {selectedCollectionIds.length > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-amber-600 text-white text-[9px] w-3.5 h-3.5 flex items-center justify-center rounded-full font-bold">
+                    {selectedCollectionIds.length}
+                  </span>
+                )}
+              </button>
+              <div className="absolute top-full right-0 mt-2 hidden group-hover:block px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-lg whitespace-nowrap z-50">
+                {lang === 'ar' ? 'تخصيص مصادر المعرفة' : 'Active Sources'}
+              </div>
             </div>
-          </div>
 
-          {/* Quick Controls & Chat Session Tools */}
-          <div className="flex items-center gap-2">
-            {/* Sources & Collections Filter Button */}
-            <button
-              type="button"
-              onClick={() => setShowSourcesModal(!showSourcesModal)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
-                selectedCollectionIds.length > 0
-                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
-                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
-              }`}
-              title="تخصيص وتحديد مصادر المعرفة المسموح بالاستعلام منها في هذه الجلسة"
-            >
-              <FolderKanban className="w-3.5 h-3.5" />
-              <span>{lang === 'ar' ? 'المصادر المحددة' : 'Active Sources'}</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                selectedCollectionIds.length > 0
-                  ? 'bg-amber-100 text-amber-900'
-                  : 'bg-slate-100 text-slate-600'
-              }`}>
-                {selectedCollectionIds.length === 0
-                  ? (lang === 'ar' ? 'الكل' : 'All')
-                  : `${selectedCollectionIds.length}`}
-              </span>
-            </button>
+            {/* History Drawer Toggle */}
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={() => setShowHistoryDrawer(!showHistoryDrawer)}
+                className={`p-1.5 rounded-lg border transition cursor-pointer flex items-center justify-center ${
+                  showHistoryDrawer
+                    ? 'bg-indigo-100 text-indigo-700 border-indigo-300'
+                    : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                }`}
+              >
+                <History className="w-4 h-4" />
+              </button>
+              <div className="absolute top-full right-0 mt-2 hidden group-hover:block px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-lg whitespace-nowrap z-50">
+                {lang === 'ar' ? 'سجل المحادثات' : 'History'}
+              </div>
+            </div>
 
-            {/* Conversations History Drawer Toggle */}
-            <button
-              type="button"
-              onClick={() => setShowHistoryDrawer(!showHistoryDrawer)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
-                showHistoryDrawer
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                  : 'bg-white hover:bg-slate-100 text-indigo-700 border-indigo-200'
-              }`}
-            >
-              <History className="w-3.5 h-3.5" />
-              <span>{lang === 'ar' ? 'سجل المحادثات' : 'History'}</span>
-              <span className="bg-indigo-100 text-indigo-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
-                {conversations.length}
-              </span>
-            </button>
+            <div className="w-px h-5 bg-slate-200 mx-1"></div>
 
-            <button
-              type="button"
-              onClick={handleCreateNewConversation}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-              title="بدء جلسة محادثة جديدة"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{lang === 'ar' ? 'جلسة جديدة' : 'New Chat'}</span>
-            </button>
+            {/* New Chat */}
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={handleCreateNewConversation}
+                className="p-1.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 border border-emerald-300 transition cursor-pointer flex items-center justify-center"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <div className="absolute top-full right-0 mt-2 hidden group-hover:block px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-lg whitespace-nowrap z-50">
+                {lang === 'ar' ? 'جلسة محادثة جديدة' : 'New Chat Session'}
+              </div>
+            </div>
 
-            <button
-              type="button"
-              onClick={handleExportChat}
-              className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
-              title="تصدير سجل المحادثة كملف JSON"
-            >
-              <Download className="w-3.5 h-3.5 text-slate-500" />
-              <span className="hidden sm:inline">{lang === 'ar' ? 'تصدير' : 'Export'}</span>
-            </button>
+            {/* Export Chat */}
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={handleExportChat}
+                className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 transition cursor-pointer flex items-center justify-center"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <div className="absolute top-full right-0 mt-2 hidden group-hover:block px-2 py-1 bg-slate-800 text-white text-[10px] rounded shadow-lg whitespace-nowrap z-50">
+                {lang === 'ar' ? 'تصدير السجل JSON' : 'Export Chat JSON'}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -957,37 +944,6 @@ Supported rich formatting capabilities:
           </div>
         )}
 
-        {/* Live MCP Connected Gateways Bar */}
-        <div className="px-4 py-2 bg-indigo-900 text-white text-xs flex flex-wrap items-center justify-between gap-2 shadow-inner">
-          <div className="flex items-center gap-2">
-            <Plug className="w-4 h-4 text-emerald-400 animate-pulse" />
-            <span className="font-bold">
-              {lang === 'ar' ? 'خوادم وأدوات الـ MCP المربوطة بالدردشة:' : 'Connected MCP Tool Gateways:'}
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {mcpServers.map((srv) => (
-              <button
-                key={srv.id}
-                type="button"
-                onClick={() => {
-                  setActiveRightTab('mcp');
-                  setExpandedServerId(srv.id);
-                }}
-                className="px-2.5 py-1 rounded-md bg-indigo-800/90 hover:bg-indigo-700 text-indigo-100 border border-indigo-700/80 text-[11px] font-mono flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <span className={`w-2 h-2 rounded-full ${srv.status === 'healthy' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                <span className="font-semibold">{srv.name.split(' ')[0]}</span>
-                <span className="bg-indigo-950/80 px-1.5 py-0.2 rounded text-[10px] text-emerald-300 font-bold">
-                  {srv.enabledTools.length} {lang === 'ar' ? 'أدوات' : 'tools'}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Security Warning Banner if Blocked */}
         {securityNotice && (
           <div className="mx-4 mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2 animate-fadeIn">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -1160,15 +1116,15 @@ Supported rich formatting capabilities:
         })()}
 
         {/* Modernized Input Bar */}
-        <div className="p-4 border-t border-slate-200 bg-white">
+        <div className="p-4 bg-gradient-to-t from-white via-white to-transparent pt-6 shrink-0 relative z-10">
           {selectedCollectionIds.length > 0 && (
-            <div className="mb-2.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-900 text-xs flex items-center justify-between gap-2 shadow-2xs">
+            <div className="mb-3 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200/80 text-amber-900 text-xs flex items-center justify-between gap-2 shadow-2xs mx-auto max-w-2xl">
               <span className="flex items-center gap-1.5">
                 <FolderKanban className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="font-medium">
                   {lang === 'ar'
-                    ? `محيط الاستعلام مقيد بـ ${selectedCollectionIds.length} من أصل ${availableCollections.length} مجموعة معارف`
-                    : `Query scoped to ${selectedCollectionIds.length} of ${availableCollections.length} collections`}
+                    ? `النطاق محدد بـ ${selectedCollectionIds.length} مصادر`
+                    : `Scoped to ${selectedCollectionIds.length} sources`}
                 </span>
               </span>
               <div className="flex items-center gap-2 shrink-0">
@@ -1177,52 +1133,90 @@ Supported rich formatting capabilities:
                   onClick={() => setShowSourcesModal(true)}
                   className="font-bold underline text-amber-800 hover:text-amber-950 transition cursor-pointer"
                 >
-                  {lang === 'ar' ? 'تعديل المصادر' : 'Edit Sources'}
+                  {lang === 'ar' ? 'تعديل' : 'Edit'}
                 </button>
                 <button
                   type="button"
                   onClick={handleClearAllCollections}
-                  className="p-0.5 rounded hover:bg-amber-200/60 text-amber-700 hover:text-amber-950 transition cursor-pointer"
+                  className="p-0.5 rounded-full hover:bg-amber-200/60 text-amber-700 hover:text-amber-950 transition cursor-pointer"
                   title="إلغاء التصفية واستعلام كافة المصادر"
                 >
-                  <XCircle className="w-3.5 h-3.5" />
+                  <XCircle className="w-4 h-4" />
                 </button>
               </div>
             </div>
           )}
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSendMessage();
-            }}
-            className="relative flex items-center"
-          >
-            <input
-              type="text"
-              value={inputPrompt}
-              onChange={(e) => setInputPrompt(e.target.value)}
-              placeholder={
-                lang === 'ar'
-                  ? 'اكتب سؤالك هنا بخصوص المستندات أو الاستعلامات أو التحليلات المطلوبة...'
-                  : 'Type your question or query regarding documents and tools...'
-              }
-              className="w-full pl-4 pr-28 py-3 rounded-2xl border border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-sm text-slate-900 placeholder:text-slate-400 bg-slate-50/50 focus:bg-white transition-all shadow-3xs"
-            />
-            <div className="absolute left-2.5 rtl:left-auto rtl:right-2.5 flex items-center gap-1.5">
-              <button
-                type="submit"
-                disabled={isLoading || !inputPrompt.trim()}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-40 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:cursor-not-allowed"
-              >
-                <span>{lang === 'ar' ? 'إرسال' : 'Send'}</span>
-                <Send className="w-3.5 h-3.5" />
-              </button>
+          <div className="max-w-4xl mx-auto">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendMessage();
+              }}
+              className="relative flex items-center bg-white rounded-3xl shadow-sm border border-slate-200 focus-within:ring-4 focus-within:ring-indigo-500/10 focus-within:border-indigo-400 transition-all group"
+            >
+              <div className="relative group/mode ml-2 rtl:ml-0 rtl:mr-2">
+                <button
+                  type="button"
+                  className="w-10 h-10 rounded-full hover:bg-slate-100 text-slate-500 transition flex items-center justify-center shrink-0 cursor-pointer"
+                >
+                  {selectedMode === 'hybrid' && <Sparkles className="w-5 h-5 text-indigo-500" />}
+                  {selectedMode === 'private' && <Lock className="w-5 h-5 text-emerald-500" />}
+                  {selectedMode === 'general' && <Globe className="w-5 h-5 text-blue-500" />}
+                  {selectedMode === 'analysis' && <Cpu className="w-5 h-5 text-purple-500" />}
+                </button>
+                <div className="absolute bottom-full left-0 rtl:left-auto rtl:right-0 mb-2 hidden group-hover/mode:block p-2 bg-slate-800 text-white rounded-xl shadow-xl w-48 z-50 animate-fadeIn">
+                  <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-2 px-2">
+                    {lang === 'ar' ? 'وضع المحادثة' : 'Chat Mode'}
+                  </div>
+                  {(['hybrid', 'private', 'general', 'analysis'] as ChatMode[]).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setSelectedMode(m)}
+                      className={`w-full text-left rtl:text-right px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
+                        selectedMode === m ? 'bg-indigo-600 text-white' : 'hover:bg-slate-700 text-slate-300'
+                      }`}
+                    >
+                      {m === 'hybrid' && <Sparkles className="w-3.5 h-3.5 shrink-0" />}
+                      {m === 'private' && <Lock className="w-3.5 h-3.5 shrink-0" />}
+                      {m === 'general' && <Globe className="w-3.5 h-3.5 shrink-0" />}
+                      {m === 'analysis' && <Cpu className="w-3.5 h-3.5 shrink-0" />}
+                      <span className="truncate">
+                        {m === 'hybrid' && (lang === 'ar' ? 'هجين RRF' : 'RRF Hybrid')}
+                        {m === 'private' && (lang === 'ar' ? 'خاص مغلق' : 'Private')}
+                        {m === 'general' && (lang === 'ar' ? 'عام مباشر' : 'General')}
+                        {m === 'analysis' && (lang === 'ar' ? 'تحليل متقدم' : 'Advanced Analysis')}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <input
+                type="text"
+                value={inputPrompt}
+                onChange={(e) => setInputPrompt(e.target.value)}
+                placeholder={
+                  lang === 'ar'
+                    ? 'اكتب سؤالك هنا للتفاعل مع البيانات والأدوات...'
+                    : 'Type your question to interact with data and tools...'
+                }
+                className="flex-1 px-4 pr-16 rtl:pr-4 rtl:pl-16 py-4 bg-transparent focus:outline-none text-sm text-slate-900 placeholder:text-slate-400 font-medium"
+              />
+              <div className="absolute right-2 rtl:right-auto rtl:left-2 flex items-center gap-1.5">
+                <button
+                  type="submit"
+                  disabled={isLoading || !inputPrompt.trim()}
+                  className="w-10 h-10 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white flex items-center justify-center transition-all shadow-xs cursor-pointer disabled:cursor-not-allowed group-focus-within:scale-105"
+                >
+                  <Send className="w-4 h-4 rtl:-scale-x-100" />
+                </button>
+              </div>
+            </form>
+            <div className="mt-2 text-center flex items-center justify-center gap-2 text-[10px] text-slate-400 font-mono">
+              <Sparkles className="w-3 h-3 text-indigo-400" />
+              <span>{lang === 'ar' ? 'OmniRAG v0.1.8 - الذكاء المعرفي' : 'OmniRAG v0.1.8 Intelligence Engine'}</span>
             </div>
-          </form>
-          <div className="mt-1.5 px-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
-            <span>{lang === 'ar' ? 'اضغط Enter للإرسال' : 'Press Enter to send'}</span>
-            <span>{lang === 'ar' ? 'يدعم OmniRAG v0.1.8 المعالجة الذكية للمحتوى' : 'OmniRAG v0.1.8 Intelligence Engine'}</span>
           </div>
         </div>
       </div>

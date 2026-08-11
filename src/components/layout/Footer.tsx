@@ -88,6 +88,9 @@ export const Footer: React.FC<FooterProps> = ({ lang }) => {
           <div>
             © {new Date().getFullYear()} Next.js v16 App Router & SDLC Reference Standard.
           </div>
+          <div className="text-center font-mono text-[11px] tracking-wide bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-800/80">
+            POWERED BY <a href="https://github.com/ahmedAlmaghz/omnorag" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 underline font-bold">ENG. AHMED ALMAGHZ</a> - 2026 - v0.1.8
+          </div>
           <div className="flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
             <span>Built with Google AI Studio & Gemini GenAI</span>
