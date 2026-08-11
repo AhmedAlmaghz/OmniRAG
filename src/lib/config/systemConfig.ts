@@ -1,6 +1,10 @@
+import pkg from '../../../package.json';
+
 /**
  * System-wide Configuration Constants for OmniRAG
  */
+
+export const APP_VERSION = pkg.version || '0.2.0';
 
 export const SYSTEM_CONFIG = {
   DEFAULT_TENANT_ID: 'tenant-acme-01',

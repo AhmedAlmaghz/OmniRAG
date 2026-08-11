@@ -117,6 +117,12 @@ export interface MCPServerConfig {
   latencyMs: number;
   lastChecked: string;
   headers?: Record<string, string>;
+  category?: string;
+  url?: string;
+  authType?: 'none' | 'basic' | 'bearer' | 'oauth2';
+  transportType?: 'http' | 'sse' | 'stdio' | 'websocket';
+  config?: Record<string, any>;
+  customToolSchemas?: Record<string, any>;
 }
 
 export interface MCPToolDefinition {

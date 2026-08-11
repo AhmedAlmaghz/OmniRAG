@@ -1,5 +1,7 @@
 'use client';
 
+import { APP_VERSION } from '@/lib/config/systemConfig';
+
 import React, { useState, useEffect } from 'react';
 import {
   MessageSquare,
@@ -39,11 +41,12 @@ import {
 } from 'lucide-react';
 import { Message, ChatMode, Citation, MCPToolCall, MCPServerConfig, Conversation, Collection } from '@/lib/types/omnirag';
 import { RichMessageRenderer } from '@/components/chat/RichMessageRenderer';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
 interface ChatStudioProps {
   tenantId: string;
   lang: 'ar' | 'en';
-  onNavigateTab?: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics') => void;
+  onNavigateTab?: (tab: any) => void;
 }
 
 export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudioProps) {
@@ -70,17 +73,17 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
       role: 'assistant',
       content:
         lang === 'ar'
-          ? `مرحباً بك في **استوديو المحادثة المعززة من منصة OmniRAG (الإصدار v0.1.8)**.
+          ? `مرحباً بك في **استوديو المحادثة المعززة من منصة OmniRAG (الإصدار v${APP_VERSION})**.
 
 يدعم النظام الآن **تنسيق المعرفة المتقدم الشامل**:
-- 🧮 **الرموز والمعادلات الرياضية (MathJax & MathJax4Arabic):** مثل $E = mc^2$ والتكاملات $$\\int_0^\\infty f(x)dx$$ مع زر تحويل فوري للرموز العربية الأصيلة مثل (س، ص، د(س)).
+- 🧮 **الرموز والمعادلات الرياضية (MathJax & MathJax4Arabic):** مثل $E = mc^2$ والتكاملات $\\int_0^\\infty f(x)dx$ مع زر تحويل فوري للرموز العربية الأصيلة مثل (س، ص، د(س)).
 - 💻 **الشفرات البرمجية:** مدمجة بمظهر داكن أنيق مع تحديد لغة البرمجة وزر النسخ الفوري.
 - 🎬 **تطبيقات الوسائط:** تشغيل مباشر ومدمج للصور والفيديوهات والصوتيات.
 - 🔊 **القراءة الناطقة (Text-To-Speech):** وتكبير/تصغير الخط وتصدير الإجابات بصيغة Markdown.`
-          : `Welcome to **OmniRAG Agentic Chat Studio (v0.1.8)**.
+          : `Welcome to **OmniRAG Agentic Chat Studio (v${APP_VERSION})**.
 
 Supported rich formatting capabilities:
-- 🧮 **Math Equations (MathJax & MathJax4Arabic):** Formulas like $E = mc^2$ and $$\\int_0^\\infty f(x)dx$$ with instant Arabic Math Notation toggle.
+- 🧮 **Math Equations (MathJax & MathJax4Arabic):** Formulas like $E = mc^2$ and $\\int_0^\\infty f(x)dx$ with instant Arabic Math Notation toggle.
 - 💻 **Syntax-Highlighted Code Blocks:** Dark mode code blocks with copy-to-clipboard.
 - 🎬 **Embedded Media:** Direct playback for photos, video clips, and audio tracks.
 - 🔊 **Text-To-Speech (TTS), Font Sizing, and Markdown Exports.**`,
@@ -110,7 +113,7 @@ Supported rich formatting capabilities:
   const fetchConversations = async (autoSelectFirst = true) => {
     setIsLoadingConversations(true);
     try {
-      const res = await fetch(`/api/v1/conversations?tenantId=${tenantId}`);
+      const res = await fetchWithAuth(`/api/v1/conversations?tenantId=${tenantId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.conversations && data.conversations.length > 0) {
@@ -133,7 +136,7 @@ Supported rich formatting capabilities:
   const fetchCollections = async () => {
     setIsLoadingCollections(true);
     try {
-      const res = await fetch(`/api/v1/collections?tenantId=${tenantId}`);
+      const res = await fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.collections) {
@@ -151,7 +154,7 @@ Supported rich formatting capabilities:
   const fetchMessagesForConv = async (convId: string) => {
     setIsLoadingMessages(true);
     try {
-      const res = await fetch(`/api/v1/conversations?tenantId=${tenantId}&conversationId=${convId}`);
+      const res = await fetchWithAuth(`/api/v1/conversations?tenantId=${tenantId}&conversationId=${convId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.messages) {
@@ -312,7 +315,7 @@ Supported rich formatting capabilities:
   const fetchMcpServers = async () => {
     setIsRefreshingServers(true);
     try {
-      const res = await fetch(`/api/v1/mcp/servers?tenantId=${tenantId}`);
+      const res = await fetchWithAuth(`/api/v1/mcp/servers?tenantId=${tenantId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.servers) {
@@ -1215,7 +1218,7 @@ Supported rich formatting capabilities:
             </form>
             <div className="mt-2 text-center flex items-center justify-center gap-2 text-[10px] text-slate-400 font-mono">
               <Sparkles className="w-3 h-3 text-indigo-400" />
-              <span>{lang === 'ar' ? 'OmniRAG v0.1.8 - الذكاء المعرفي' : 'OmniRAG v0.1.8 Intelligence Engine'}</span>
+              <span>{lang === 'ar' ? `OmniRAG v${APP_VERSION} - الذكاء المعرفي` : `OmniRAG v${APP_VERSION} Intelligence Engine`}</span>
             </div>
           </div>
         </div>

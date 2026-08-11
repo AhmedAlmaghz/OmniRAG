@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node dev-server.js",
-    "build": "NODE_ENV=production next build",
+    "build": "NODE_OPTIONS='--max-old-space-size=1536' NODE_ENV=production next build && vite build && cp -r .next dist/",
     "start": "node server.ts",
     "clean": "rm -rf .next dist",
     "test": "vitest run",

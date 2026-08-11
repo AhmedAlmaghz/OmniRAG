@@ -333,8 +333,13 @@ async function ensureSeeded(): Promise<void> {
   seedingPromise = (async () => {
     try {
       const sourcesCol = collection(firestore, 'sources');
-      const snapshot = await getDocs(query(sourcesCol, limit(1)));
-      if (!snapshot.empty) {
+      const fetchPromise = getDocs(query(sourcesCol, limit(1)));
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Firestore connection timeout')), 1200)
+      );
+
+      const snapshot = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+      if (snapshot && !snapshot.empty) {
         isSeeded = true;
         return;
       }

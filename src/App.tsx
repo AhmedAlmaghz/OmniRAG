@@ -10,10 +10,8 @@ import { ComponentsGalleryPage } from './views/ComponentsGalleryPage';
 import { SettingsPage } from './views/SettingsPage';
 import KnowledgeBase from './components/KnowledgeBase';
 import ChatStudio from './components/ChatStudio';
-import RetrievalPlayground from './components/RetrievalPlayground';
+import AnalyticsCenter from './components/AnalyticsCenter';
 import McpGateway from './components/McpGateway';
-import SecurityCenter from './components/SecurityCenter';
-import AnalyticsView from './components/AnalyticsView';
 import MainApp from './components/MainApp';
 import { Language } from './types';
 
@@ -34,10 +32,10 @@ export default function App() {
             <Route path="/" element={<KnowledgeBase tenantId={tenantId} lang={lang} />} />
             <Route path="/knowledge" element={<KnowledgeBase tenantId={tenantId} lang={lang} />} />
             <Route path="/chat" element={<ChatStudio tenantId={tenantId} lang={lang} />} />
-            <Route path="/search" element={<RetrievalPlayground tenantId={tenantId} lang={lang} />} />
+            <Route path="/search" element={<AnalyticsCenter tenantId={tenantId} lang={lang} />} />
             <Route path="/mcp" element={<McpGateway tenantId={tenantId} lang={lang} />} />
-            <Route path="/security" element={<SecurityCenter tenantId={tenantId} lang={lang} />} />
-            <Route path="/analytics" element={<AnalyticsView tenantId={tenantId} lang={lang} />} />
+            <Route path="/security" element={<AnalyticsCenter tenantId={tenantId} lang={lang} />} />
+            <Route path="/analytics" element={<AnalyticsCenter tenantId={tenantId} lang={lang} />} />
             <Route path="/platform" element={<MainApp />} />
             <Route path="/home" element={<HomePage lang={lang} />} />
             <Route path="/dashboard" element={<DashboardPage lang={lang} />} />

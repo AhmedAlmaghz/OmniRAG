@@ -213,7 +213,7 @@ export default function ModelSettingsView() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6 lg:p-8 space-y-8" dir="rtl">
+    <div className="bg-slate-950 text-slate-100 p-6 rounded-2xl space-y-8 shadow-xl border border-slate-800" dir="rtl">
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-indigo-950/80 via-slate-900 to-slate-950 border border-indigo-500/30 rounded-2xl p-6 shadow-xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />

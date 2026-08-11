@@ -1,15 +1,14 @@
 'use client';
 
+import { APP_VERSION } from '@/lib/config/systemConfig';
+
 import React, { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import ChatStudio from '@/components/ChatStudio';
 import KnowledgeBase from '@/components/KnowledgeBase';
 import McpGateway from '@/components/McpGateway';
-import RetrievalPlayground from '@/components/RetrievalPlayground';
-import SecurityCenter from '@/components/SecurityCenter';
-import AnalyticsView from '@/components/AnalyticsView';
 import SettingsView from '@/components/SettingsView';
-import ModelSettingsView from '@/components/ModelSettingsView';
+import AnalyticsCenter from '@/components/AnalyticsCenter';
 import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
 import { auth, logOutUser } from '@/lib/auth/firebaseAuth';
@@ -27,14 +26,72 @@ import {
   Cpu, Settings,
 } from 'lucide-react';
 
-type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models' | 'settings';
+type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'analytics' | 'settings';
 
 export default function MainApp() {
   const [tenantId, setTenantId] = useState('tenant-acme-01');
+  const [currentTenantName, setCurrentTenantName] = useState<string>('');
   const [lang, setLang] = useState<'ar' | 'en'>('ar');
   const [activeTab, setActiveTab] = useState<TabType>('landing');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  // Load theme from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedTheme = localStorage.getItem('omnirag-theme') as 'light' | 'dark';
+      if (savedTheme) {
+        setTheme(savedTheme);
+      }
+    }
+  }, []);
+
+  const handleThemeChange = (newTheme: 'light' | 'dark') => {
+    setTheme(newTheme);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('omnirag-theme', newTheme);
+    }
+  };
+
+  // Dynamically fetch or determine correct tenant name
+  useEffect(() => {
+    async function fetchTenantName() {
+      if (!tenantId) return;
+
+      if (tenantId === 'tenant-acme-01') {
+        setCurrentTenantName(lang === 'ar' ? 'شركة أكمي العالمية (ACME Corp)' : 'ACME Corp');
+        return;
+      }
+      if (tenantId === 'tenant-health-02') {
+        setCurrentTenantName(lang === 'ar' ? 'مجموعة الرعاية الصحية العالمية (BioHealth)' : 'BioHealth Group');
+        return;
+      }
+
+      try {
+        const { doc, getDoc } = await import('firebase/firestore');
+        const { firestore } = await import('@/lib/firebase');
+        const snap = await getDoc(doc(firestore, 'tenants', tenantId));
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data && data.name) {
+            setCurrentTenantName(data.name);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching tenant name:', err);
+      }
+
+      if (userEmail) {
+        setCurrentTenantName(lang === 'ar' ? `مساحة عمل ${userEmail}` : `Workspace ${userEmail}`);
+      } else {
+        setCurrentTenantName(lang === 'ar' ? 'مساحة عمل مخصصة' : 'Custom Workspace');
+      }
+    }
+
+    fetchTenantName();
+  }, [tenantId, userEmail, lang]);
 
   // Subscribe to Firebase Auth state changes
   useEffect(() => {
@@ -74,7 +131,7 @@ export default function MainApp() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab') as TabType;
-      if (tabParam && ['landing', 'chat', 'knowledge', 'mcp', 'search', 'security', 'analytics', 'models'].includes(tabParam)) {
+      if (tabParam && ['landing', 'chat', 'knowledge', 'mcp', 'analytics', 'settings'].includes(tabParam)) {
         setActiveTab(tabParam);
       }
     }
@@ -107,12 +164,6 @@ export default function MainApp() {
       badge: 'Gemini 3.6',
     },
     {
-      id: 'models',
-      label: lang === 'ar' ? 'إعدادات نماذج AI' : 'AI Models Registry',
-      icon: Cpu,
-      badge: 'إدارة مركزية',
-    },
-    {
       id: 'knowledge',
       label: lang === 'ar' ? 'مستودع المعرفة والاستيعاب' : 'Knowledge Pipeline',
       icon: BookOpen,
@@ -125,22 +176,10 @@ export default function MainApp() {
       badge: 'Stateless 2026',
     },
     {
-      id: 'search',
-      label: lang === 'ar' ? 'مختبر الاسترجاع الهجين' : 'Hybrid Search',
-      icon: Search,
-      badge: 'RRF + HyDE',
-    },
-    {
-      id: 'security',
-      label: lang === 'ar' ? 'مركز الأمن والحوكمة' : 'Security Guardrails',
-      icon: ShieldCheck,
-      badge: 'HookHarness',
-    },
-    {
       id: 'analytics',
-      label: lang === 'ar' ? 'التحليلات وسجلات التدقيق' : 'Analytics & Audit',
+      label: lang === 'ar' ? 'مركز التحليلات' : 'Analytics Center',
       icon: BarChart3,
-      badge: 'P95 & Audit',
+      badge: 'Recall & Guard',
     },
     {
       id: 'settings',
@@ -190,8 +229,8 @@ export default function MainApp() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-      {/* Top Main Navigation Header */}
+    <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-950 text-slate-100 dark' : 'bg-slate-50 text-slate-900'}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+      {/* Top Main Navigation Header with integrated links */}
       <Header
         currentTenantId={tenantId}
         onTenantChange={setTenantId}
@@ -200,53 +239,23 @@ export default function MainApp() {
         onNavigateTab={handleTabChange}
         userEmail={userEmail}
         onLogOut={handleLogOut}
+        currentTenantName={currentTenantName}
+        activeTab={activeTab}
+        theme={theme}
+        onThemeChange={handleThemeChange}
       />
-
-      {/* Main Workspace Navigation Bar */}
-      <nav className="bg-white border-b border-slate-200 sticky top-16 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-center gap-2 sm:gap-3 flex-wrap py-2.5 items-center">
-            {navTabs.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <div key={tab.id} className="relative group">
-                  <button
-                    type="button"
-                    onClick={() => handleTabChange(tab.id as TabType)}
-                    className={`flex items-center justify-center w-10 h-10 rounded-xl transition cursor-pointer shrink-0 select-none ${
-                      isActive
-                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20 ring-2 ring-indigo-300'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-slate-50 border border-slate-200'
-                    }`}
-                  >
-                    <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-indigo-600'}`} />
-                  </button>
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 hidden group-hover:flex flex-col items-center px-3 py-1.5 bg-slate-800 text-white text-[11px] rounded shadow-lg border border-slate-700 whitespace-nowrap z-[999]">
-                    <span className="font-semibold">{tab.label}</span>
-                    <span className="text-[9px] text-slate-300 font-mono mt-0.5">{tab.badge}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </nav>
 
       {/* Workspace Active Tab View Content */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'chat' && <ChatStudio tenantId={tenantId} lang={lang} onNavigateTab={handleTabChange} />}
-        {activeTab === 'models' && <ModelSettingsView />}
         {activeTab === 'knowledge' && <KnowledgeBase tenantId={tenantId} lang={lang} />}
         {activeTab === 'mcp' && <McpGateway tenantId={tenantId} lang={lang} />}
-        {activeTab === 'search' && <RetrievalPlayground tenantId={tenantId} lang={lang} />}
-        {activeTab === 'security' && <SecurityCenter tenantId={tenantId} lang={lang} />}
-        {activeTab === 'analytics' && <AnalyticsView tenantId={tenantId} lang={lang} />}
+        {activeTab === 'analytics' && <AnalyticsCenter tenantId={tenantId} lang={lang} />}
         {activeTab === 'settings' && <SettingsView tenantId={tenantId} lang={lang} userEmail={userEmail} onLogOut={handleLogOut} />}
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
+      <footer className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-900 border-t border-slate-800' : 'bg-white border-t border-slate-200'}`}>
         <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
           <span>
             POWERED BY{' '}
@@ -258,7 +267,7 @@ export default function MainApp() {
             >
               ENG. AHMED ALMAGHZ
             </a>{' '}
-            - 2026 - v0.1.9
+            - 2026 - v{APP_VERSION}
           </span>
           <span>OmniRAG Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
         </div>

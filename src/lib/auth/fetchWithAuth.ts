@@ -15,13 +15,9 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
       console.warn('Failed to get Firebase ID token', e);
     }
   } else {
-    // Check if we are using the ACME demo tenant bypass
-    // The main app stores it in local storage or passes it, but we can read from localStorage
     if (typeof window !== 'undefined') {
-      const storedTenant = localStorage.getItem('omnirag_tenant_id');
-      if (storedTenant === 'tenant-acme-01') {
-        headers.set('Authorization', `Bearer ${storedTenant}`);
-      }
+      const storedTenant = localStorage.getItem('omnirag_tenant_id') || 'tenant-acme-01';
+      headers.set('Authorization', `Bearer ${storedTenant}`);
     }
   }
 

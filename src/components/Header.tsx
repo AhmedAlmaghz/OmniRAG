@@ -1,93 +1,334 @@
 'use client';
 
-import React from 'react';
-import { Layers, ShieldCheck, Cpu, Database, RefreshCw } from 'lucide-react';
-import { INITIAL_TENANTS } from '@/lib/storage/constants';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Layers, 
+  MessageSquare,
+  BookOpen,
+  Plug,
+  BarChart3,
+  Settings,
+  User,
+  LogOut,
+  LogIn,
+  UserPlus,
+  ChevronDown,
+  Globe,
+  Sun,
+  Moon,
+  Check
+} from 'lucide-react';
 
 interface HeaderProps {
   currentTenantId: string;
   onTenantChange: (id: string) => void;
   lang: 'ar' | 'en';
   onLangChange: (lang: 'ar' | 'en') => void;
-  onNavigateTab: (tab: 'chat' | 'knowledge' | 'mcp' | 'search' | 'security' | 'analytics' | 'models' | 'settings') => void;
+  onNavigateTab: (tab: any) => void;
   userEmail?: string | null;
   onLogOut?: () => void;
+  currentTenantName?: string;
+  activeTab?: string;
+  theme?: 'light' | 'dark';
+  onThemeChange?: (theme: 'light' | 'dark') => void;
 }
 
-export default function Header({ currentTenantId, onTenantChange, lang, onLangChange, onNavigateTab, userEmail, onLogOut }: HeaderProps) {
-  const currentTenant = INITIAL_TENANTS.find((t) => t.id === currentTenantId) || INITIAL_TENANTS[0];
+export default function Header({
+  currentTenantId,
+  onTenantChange,
+  lang,
+  onLangChange,
+  onNavigateTab,
+  userEmail,
+  onLogOut,
+  currentTenantName,
+  activeTab = 'landing',
+  theme = 'light',
+  onThemeChange,
+}: HeaderProps) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const navTabs = [
+    {
+      id: 'chat',
+      label: lang === 'ar' ? 'المحادثة' : 'Chat',
+      icon: MessageSquare,
+    },
+    {
+      id: 'knowledge',
+      label: lang === 'ar' ? 'المعرفة' : 'Knowledge',
+      icon: BookOpen,
+    },
+    {
+      id: 'mcp',
+      label: lang === 'ar' ? 'بوابة MCP' : 'MCP',
+      icon: Plug,
+    },
+    {
+      id: 'analytics',
+      label: lang === 'ar' ? 'التحليلات والأمن' : 'Analytics & Security',
+      icon: BarChart3,
+    },
+  ];
+
+  const handleDropdownAction = (action: () => void) => {
+    action();
+    setDropdownOpen(false);
+  };
 
   return (
     <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        {/* Brand Logo & Name - Clickable to Home/Chat */}
+        {/* Brand Logo & Name */}
         <button
           type="button"
-          onClick={() => onNavigateTab('chat')}
-          className="flex items-center gap-3 text-left dir-ltr cursor-pointer group focus:outline-none"
+          onClick={() => onNavigateTab('landing')}
+          className="flex items-center gap-3 text-left dir-ltr cursor-pointer group focus:outline-none shrink-0"
         >
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 flex items-center justify-center shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
             <Layers className="w-5 h-5 text-white" />
           </div>
-          <div>
+          <div className="hidden sm:block">
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-lg tracking-tight text-white group-hover:text-indigo-300 transition-colors">OmniRAG</span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                v2.4 Enterprise
-              </span>
             </div>
-            <p className="text-xs text-slate-400 hidden sm:block">
+            <p className="text-xs text-slate-400 hidden lg:block">
               {lang === 'ar' ? 'منصة وكلاء الاسترجاع المعزز والتحكم الحتمي' : 'Agentic RAG & MCP Security Gateway'}
             </p>
           </div>
         </button>
 
-        {/* Status Indicators & Tenant Selector */}
-        <div className="flex items-center gap-3">
-          {/* Tenant Selector */}
-          <div className="flex items-center gap-2 bg-slate-800/90 p-1 rounded-xl border border-slate-700">
-            <span className="text-xs text-slate-400 px-2 font-medium hidden sm:inline">
-              {lang === 'ar' ? 'المستأجر:' : 'Tenant:'}
-            </span>
-            <select
-              value={currentTenantId}
-              onChange={(e) => onTenantChange(e.target.value)}
-              className="bg-slate-900 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 font-medium border border-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
-            >
-              {INITIAL_TENANTS.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* User Profile & Logout */}
-          {userEmail && (
-            <div className="flex items-center gap-2 bg-slate-850 p-1.5 rounded-xl border border-slate-700/60 max-h-9 select-none">
-              <span className="text-[11px] text-indigo-300 font-medium font-mono hidden lg:inline max-w-[140px] truncate px-1.5" title={userEmail}>
-                {userEmail}
-              </span>
+        {/* Embedded Desktop Nav Links */}
+        <nav className="hidden md:flex items-center gap-1 bg-slate-950/60 p-1.5 rounded-2xl border border-slate-800/80 mx-4">
+          {navTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
               <button
+                key={tab.id}
                 type="button"
-                onClick={onLogOut}
-                className="px-2.5 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-[10px] text-rose-300 border border-rose-800/40 hover:border-rose-700 transition font-bold cursor-pointer select-none"
+                onClick={() => onNavigateTab(tab.id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap select-none ${
+                  isActive
+                    ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm shadow-indigo-500/30'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+                }`}
               >
-                {lang === 'ar' ? 'خروج' : 'Logout'}
+                <Icon className="w-4 h-4 text-indigo-400" />
+                <span>{tab.label}</span>
               </button>
-            </div>
-          )}
+            );
+          })}
+        </nav>
 
-          {/* Language Toggle */}
-          <button
-            type="button"
-            onClick={() => onLangChange(lang === 'ar' ? 'en' : 'ar')}
-            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 border border-slate-700 transition font-bold cursor-pointer"
-          >
-            {lang === 'ar' ? 'EN' : 'العربية'}
-          </button>
+        {/* User Account Dropdown Controls */}
+        <div className="flex items-center gap-3 shrink-0" ref={dropdownRef}>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="w-10 h-10 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700/80 flex items-center justify-center transition cursor-pointer select-none focus:outline-none ring-2 ring-indigo-500/20 hover:ring-indigo-500/40 shadow-sm"
+              aria-label={lang === 'ar' ? 'قائمة المستخدم' : 'User Menu'}
+              title={userEmail || (lang === 'ar' ? 'حساب المستخدم' : 'User Account')}
+            >
+              {userEmail ? (
+                <div className="w-full h-full rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white flex items-center justify-center font-bold text-sm uppercase shadow-inner">
+                  {userEmail.charAt(0)}
+                </div>
+              ) : (
+                <div className="w-full h-full rounded-full bg-slate-800 flex items-center justify-center text-slate-300 hover:text-white">
+                  <User className="w-4 h-4" />
+                </div>
+              )}
+            </button>
+
+            {/* Dropdown Menu */}
+            {dropdownOpen && (
+              <div 
+                className={`absolute mt-2 w-64 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-3 duration-150 ${
+                  lang === 'ar' ? 'left-0 origin-top-left' : 'right-0 origin-top-right'
+                }`}
+              >
+                {/* Profile Header section */}
+                <div className="px-4 py-3 border-b border-slate-800/65">
+                  <p className="text-[10px] font-mono font-bold tracking-wider text-indigo-400 uppercase">
+                    {userEmail ? (lang === 'ar' ? 'حساب نشط' : 'ACTIVE ACCOUNT') : (lang === 'ar' ? 'مستخدم زائر' : 'GUEST SESSION')}
+                  </p>
+                  <p className="text-sm font-semibold text-white truncate mt-1">
+                    {userEmail || (lang === 'ar' ? 'جلسة تجريبية آمنة' : 'Secure Demo Session')}
+                  </p>
+                  {userEmail && currentTenantName && (
+                    <p className="text-xs text-slate-400 mt-1 truncate">
+                      {lang === 'ar' ? 'مساحة:' : 'Space:'} {currentTenantName}
+                    </p>
+                  )}
+                </div>
+
+                {/* Main Action Links */}
+                <div className="p-1.5 border-b border-slate-800/65 space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => handleDropdownAction(() => onNavigateTab('settings'))}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer text-start"
+                  >
+                    <Settings className="w-4 h-4 text-indigo-400" />
+                    <span>{lang === 'ar' ? 'إعدادات المنصة' : 'Platform Settings'}</span>
+                  </button>
+                </div>
+
+                {/* Language Switch */}
+                <div className="p-1.5 border-b border-slate-800/65">
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    {lang === 'ar' ? 'اللغة والموقع' : 'LANGUAGE & LOCALIZATION'}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 p-1">
+                    <button
+                      type="button"
+                      onClick={() => handleDropdownAction(() => onLangChange('ar'))}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
+                        lang === 'ar' 
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                          : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                      }`}
+                    >
+                      <span>العربية</span>
+                      {lang === 'ar' && <Check className="w-3 h-3" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDropdownAction(() => onLangChange('en'))}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
+                        lang === 'en' 
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                          : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                      }`}
+                    >
+                      <span>English</span>
+                      {lang === 'en' && <Check className="w-3 h-3" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Theme / Appearance Switch */}
+                <div className="p-1.5 border-b border-slate-800/65">
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    {lang === 'ar' ? 'المظهر واللون' : 'THEME & APPEARANCE'}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 p-1">
+                    <button
+                      type="button"
+                      onClick={() => onThemeChange && handleDropdownAction(() => onThemeChange('light'))}
+                      className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
+                        theme === 'light' 
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                          : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                      }`}
+                    >
+                      <Sun className="w-3.5 h-3.5" />
+                      <span>{lang === 'ar' ? 'مضيء' : 'Light'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onThemeChange && handleDropdownAction(() => onThemeChange('dark'))}
+                      className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
+                        theme === 'dark' 
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                          : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                      }`}
+                    >
+                      <Moon className="w-3.5 h-3.5" />
+                      <span>{lang === 'ar' ? 'داكن' : 'Dark'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Auth Actions (Login / Register / Logout) */}
+                <div className="p-1.5">
+                  {userEmail ? (
+                    <button
+                      type="button"
+                      onClick={() => handleDropdownAction(onLogOut || (() => {}))}
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-rose-400 hover:text-white hover:bg-rose-950/50 transition cursor-pointer text-start"
+                    >
+                      <LogOut className="w-4 h-4 text-rose-400" />
+                      <span>{lang === 'ar' ? 'تسجيل الخروج' : 'Log Out'}</span>
+                    </button>
+                  ) : (
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => handleDropdownAction(() => {
+                          if (typeof window !== 'undefined') {
+                            const url = new URL(window.location.href);
+                            url.searchParams.set('auth', 'login');
+                            window.history.pushState({}, '', url.toString());
+                          }
+                          onNavigateTab('chat');
+                        })}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-indigo-400 hover:text-white hover:bg-indigo-950/40 transition cursor-pointer text-start"
+                      >
+                        <LogIn className="w-4 h-4 text-indigo-400" />
+                        <span>{lang === 'ar' ? 'تسجيل الدخول' : 'Sign In'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDropdownAction(() => {
+                          if (typeof window !== 'undefined') {
+                            const url = new URL(window.location.href);
+                            url.searchParams.set('auth', 'register');
+                            window.history.pushState({}, '', url.toString());
+                          }
+                          onNavigateTab('chat');
+                        })}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer text-start"
+                      >
+                        <UserPlus className="w-4 h-4 text-slate-400" />
+                        <span>{lang === 'ar' ? 'إنشاء حساب جديد' : 'Create Account'}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Embedded Mobile Subnav Row */}
+      <div className="md:hidden border-t border-slate-800/60 bg-slate-950/95 px-2 py-2 overflow-x-auto flex items-center gap-1 scrollbar-none">
+        {navTabs.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onNavigateTab(tab.id)}
+              className={`flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                isActive
+                  ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm'
+                  : 'text-slate-300 hover:bg-slate-900'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5 text-indigo-400" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
     </header>
   );
 }
+

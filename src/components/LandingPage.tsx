@@ -1,5 +1,7 @@
 'use client';
 
+import { APP_VERSION } from '@/lib/config/systemConfig';
+
 import React, { useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
@@ -219,7 +221,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
             <div>
               <span className="text-lg font-bold tracking-tight text-white">OmniRAG</span>
               <span className="ml-2 px-2 py-0.5 text-[10px] font-mono rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                v0.1.1 Enterprise
+                v{APP_VERSION} Enterprise
               </span>
             </div>
           </div>
@@ -546,7 +548,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
             >
               ENG. AHMED ALMAGHZ
             </a>{' '}
-            - 2026 - v0.1.8
+            - 2026 - v{APP_VERSION}
           </p>
           <p>{t.footerRights}</p>
         </div>
