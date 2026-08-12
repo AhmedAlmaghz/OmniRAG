@@ -2,12 +2,13 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
   const origin = request.headers.get('origin') || '*';
-  const hasCredentials = origin !== '*' && origin !== 'null';
+  const effectiveOrigin = (origin === 'null' || !origin) ? '*' : origin;
+  const hasCredentials = effectiveOrigin !== '*';
 
   const corsHeaders: Record<string, string> = {
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+    'Access-Control-Allow-Origin': effectiveOrigin,
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Accept',
   };
 
   if (hasCredentials) {

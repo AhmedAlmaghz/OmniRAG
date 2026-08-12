@@ -22,9 +22,9 @@ export default async function RootLayout({
   const headersList = await headers();
   const forwardedHost = headersList.get('x-forwarded-host');
   const host = forwardedHost || headersList.get('host') || 'localhost:3000';
-  const proto = headersList.get('x-forwarded-proto') || 'http';
+  const proto = headersList.get('x-forwarded-proto') || 'https';
   const firstProto = proto.split(',')[0].trim();
-  const isSecure = firstProto === 'https' || host.includes('run.app') || host.includes('europe-west1.run.app');
+  const isSecure = firstProto === 'https' || host.includes('run.app');
   
   let origin = `${isSecure ? 'https' : 'http'}://${host}`;
 

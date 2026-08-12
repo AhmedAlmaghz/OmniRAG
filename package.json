@@ -1,12 +1,12 @@
 {
   "name": "OmniRAG",
   "private": true,
-  "version": "0.3.4",
+  "version": "0.3.5",
   "author": "Ahmed Almaghz",
   "type": "module",
   "scripts": {
     "dev": "node dev-server.js",
-    "build": "NODE_OPTIONS='--max-old-space-size=1536' NODE_ENV=production next build && vite build && cp -r .next dist/",
+    "build": "rm -rf dist && NODE_OPTIONS='--max-old-space-size=1536' NODE_ENV=production next build",
     "start": "node server.ts",
     "clean": "rm -rf .next dist",
     "test": "vitest run",

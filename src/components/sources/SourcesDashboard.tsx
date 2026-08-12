@@ -92,10 +92,10 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     setIsLoading(true);
     try {
       const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
-        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(e => { console.error('Sources fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
-        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(e => { console.error('Collections fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
-        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(e => { console.error('Documents fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
-        fetchWithAuth('/api/v1/sources/system-status').catch(e => { console.error('System status fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
+        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(e => { console.warn('Sources fetch warning:', e); return { ok: false, json: async () => ({ sources: [], syncLogs: [], mcpResources: [] }) } as Response; }),
+        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(e => { console.warn('Collections fetch warning:', e); return { ok: false, json: async () => ({ collections: [] }) } as Response; }),
+        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(e => { console.warn('Documents fetch warning:', e); return { ok: false, json: async () => ({ documents: [] }) } as Response; }),
+        fetchWithAuth('/api/v1/sources/system-status').catch(e => { console.warn('System status fetch warning:', e); return { ok: false, json: async () => ({}) } as Response; }),
       ]);
 
       let sourcesData: any = {};
