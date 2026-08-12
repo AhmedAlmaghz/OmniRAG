@@ -315,7 +315,7 @@ async function ensureSeeded(): Promise<void> {
   seedingPromise = (async () => {
     try {
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 3000)
+        setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 15000)
       );
       await Promise.race([ensurePostgresTables(), timeoutPromise]);
       isSeeded = true;
@@ -357,10 +357,7 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getSources(tenantId);
-      const pgSources = await getPostgresSources(tenantId);
-      if (pgSources.length > 0) {
-        return pgSources;
-      }
+      return await getPostgresSources(tenantId);
     } catch (e) {
       this.handleDatabaseError(e, 'getSources');
     }
@@ -472,7 +469,7 @@ class OmniRAGDatabase {
       if (source.type === 'youtube') {
         const ytUrl = source.config?.playlistUrl || source.config?.url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         try {
-          const reqHost = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+          const reqHost = process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
           const ytRes = await fetch(`${reqHost}/api/v1/youtube/transcript`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -743,8 +740,7 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getMcpServers(tenantId);
-      const pgServers = await getPostgresMcpServers(tenantId);
-      if (pgServers.length > 0) return pgServers;
+      return await getPostgresMcpServers(tenantId);
     } catch (e) {
       this.handleDatabaseError(e, 'getMcpServers');
     }

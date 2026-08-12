@@ -158,9 +158,19 @@ export async function ensurePostgresTables() {
           auth_type VARCHAR(50),
           transport_type VARCHAR(50),
           config JSONB DEFAULT '{}'::jsonb,
-          custom_tool_schemas JSONB DEFAULT '{}'::jsonb
+          custom_tool_schemas JSONB DEFAULT '{}'::jsonb,
+          created_at VARCHAR(100) DEFAULT ''
         );
       `);
+
+      // Run instant migrations to fix any missing columns on existing tables in PostgreSQL
+      try {
+        await client.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NOT NULL DEFAULT 'file';`);
+        await client.query(`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS document_title TEXT NOT NULL DEFAULT '';`);
+        await client.query(`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS created_at VARCHAR(100) DEFAULT '';`);
+      } catch (migrateErr) {
+        console.warn('Postgres ALTER COLUMN migration skipped or failed:', migrateErr);
+      }
 
       // 7. Audit Logs Table
       await client.query(`
@@ -462,7 +472,7 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
     }));
   } catch (error) {
     console.error('Failed to get Postgres documents:', error);
-    return [];
+    throw error;
   } finally {
     client.release();
   }
@@ -494,7 +504,7 @@ export async function getPostgresDocumentById(id: string, tenantId: string): Pro
     };
   } catch (error) {
     console.error('Failed to get Postgres document by ID:', error);
-    return undefined;
+    throw error;
   } finally {
     client.release();
   }
@@ -546,6 +556,7 @@ export async function insertPostgresDocument(doc: {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Failed to insert document into Postgres:', error);
+    throw error;
   } finally {
     client.release();
   }
@@ -566,6 +577,7 @@ export async function deletePostgresDocument(documentId: string, tenantId: strin
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Failed to delete document from Postgres:', error);
+    throw error;
   } finally {
     client.release();
   }
@@ -594,7 +606,7 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
     }));
   } catch (error) {
     console.error('Failed to get Postgres chunks:', error);
-    return [];
+    throw error;
   } finally {
     client.release();
   }
@@ -672,7 +684,7 @@ export async function getPostgresSources(tenantId: string): Promise<SourceConnec
     }));
   } catch (error) {
     console.error('Failed to get Postgres sources:', error);
-    return [];
+    throw error;
   } finally {
     client.release();
   }
@@ -704,7 +716,7 @@ export async function getPostgresSourceById(id: string, tenantId: string): Promi
     };
   } catch (error) {
     console.error('Failed to get Postgres source by ID:', error);
-    return undefined;
+    throw error;
   } finally {
     client.release();
   }
@@ -742,6 +754,7 @@ export async function insertPostgresSource(source: SourceConnector) {
     );
   } catch (error) {
     console.error('Failed to insert Postgres source:', error);
+    throw error;
   } finally {
     client.release();
   }
@@ -757,6 +770,7 @@ export async function deletePostgresSource(id: string, tenantId: string) {
     await client.query('DELETE FROM sources WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
   } catch (error) {
     console.error('Failed to delete Postgres source:', error);
+    throw error;
   } finally {
     client.release();
   }
@@ -791,7 +805,7 @@ export async function getPostgresSyncLogs(tenantId: string, sourceId?: string): 
     }));
   } catch (error) {
     console.error('Failed to get Postgres sync logs:', error);
-    return [];
+    throw error;
   } finally {
     client.release();
   }
@@ -814,6 +828,7 @@ export async function insertPostgresSyncLog(log: SyncLogEntry) {
     );
   } catch (error) {
     console.error('Failed to insert Postgres sync log:', error);
+    throw error;
   } finally {
     client.release();
   }
@@ -838,7 +853,7 @@ export async function getPostgresCollections(tenantId: string): Promise<Collecti
     }));
   } catch (error) {
     console.error('Failed to get Postgres collections:', error);
-    return [];
+    throw error;
   } finally {
     client.release();
   }
@@ -860,6 +875,7 @@ export async function insertPostgresCollection(col: Collection) {
     );
   } catch (error) {
     console.error('Failed to insert Postgres collection:', error);
+    throw error;
   } finally {
     client.release();
   }

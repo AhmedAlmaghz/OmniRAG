@@ -2,13 +2,17 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
   const origin = request.headers.get('origin') || '*';
+  const hasCredentials = origin !== '*' && origin !== 'null';
 
-  const corsHeaders = {
+  const corsHeaders: Record<string, string> = {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-    'Access-Control-Allow-Credentials': 'true',
   };
+
+  if (hasCredentials) {
+    corsHeaders['Access-Control-Allow-Credentials'] = 'true';
+  }
 
   // Intercept OPTIONS preflight requests immediately
   if (request.method === 'OPTIONS') {
