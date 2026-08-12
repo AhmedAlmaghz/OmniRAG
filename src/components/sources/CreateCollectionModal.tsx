@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Collection } from '@/lib/types/omnirag';
 import { FolderPlus, X, Loader2, Sparkles, Folder } from 'lucide-react';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
 interface CreateCollectionModalProps {
   tenantId: string;
@@ -22,7 +23,7 @@ export function CreateCollectionModal({ tenantId, lang, onClose, onCreated }: Cr
 
     setIsSubmitting(true);
     try {
-      const res = await fetch('/api/v1/collections', {
+      const res = await fetchWithAuth('/api/v1/collections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

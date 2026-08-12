@@ -97,11 +97,7 @@ export async function signInUser(email: string, password: string): Promise<{ use
 
   // Verify tenant data exists in DB, if not seed it
   try {
-    const { db } = await import('../storage/db');
-    const documents = await db.getDocuments(tenantId);
-    if (documents.length === 0) {
-      await seedNewTenant(tenantId, `مساحة عمل ${email}`);
-    }
+    await seedNewTenant(tenantId, `مساحة عمل ${email}`);
   } catch (err) {
     console.log('Tenant verification/seeding failed during signInUser:', err);
   }
@@ -141,11 +137,7 @@ export async function signInWithGoogle(): Promise<{ user: User; tenantId: string
 
   // Verify tenant data exists in DB, if not seed it
   try {
-    const { db } = await import('../storage/db');
-    const documents = await db.getDocuments(tenantId);
-    if (documents.length === 0) {
-      await seedNewTenant(tenantId, user.displayName || `مساحة عمل ${user.email || 'جوجل'}`);
-    }
+    await seedNewTenant(tenantId, user.displayName || `مساحة عمل ${user.email || 'جوجل'}`);
   } catch (err) {
     console.log('Tenant verification/seeding failed during signInWithGoogle:', err);
   }

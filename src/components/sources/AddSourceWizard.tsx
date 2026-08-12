@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Collection, SourceType } from '@/lib/types/omnirag';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import {
   FileText,
   Globe,
@@ -62,7 +63,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
   } | null>(null);
 
   useEffect(() => {
-    fetch('/api/v1/sources/capabilities')
+    fetchWithAuth('/api/v1/sources/capabilities')
       .then((res) => res.json())
       .then((data) => {
         if (data.sourceTypes) {
@@ -193,7 +194,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     setIsSubmitting(true);
 
     try {
-      const res = await fetch('/api/v1/sources', {
+      const res = await fetchWithAuth('/api/v1/sources', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

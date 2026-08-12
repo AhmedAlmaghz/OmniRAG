@@ -17,5 +17,8 @@ const nextConfig: NextConfig = {
     'localhost:3000',
     '0.0.0.0:3000',
   ],
+  env: {
+    NEXT_PUBLIC_APP_URL: process.env.APP_URL || '',
+  },
 };
 export default nextConfig;

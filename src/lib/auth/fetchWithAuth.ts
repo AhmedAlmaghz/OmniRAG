@@ -9,71 +9,81 @@ export function resolveUrl(url: string): string {
     return url;
   }
 
-  // 1. Try server-injected origin
-  let origin = (window as any).__APP_ORIGIN__;
+  let origin = '';
 
-  // 2. Try standard window location origin
-  if (!origin || origin === 'null') {
-    origin = window.location.origin;
+  // 1. Extract directly from window.location.href via regex.
+  // This is the absolute most reliable method under any browser sandbox (even when location.origin is "null")
+  try {
+    if (window.location && window.location.href) {
+      const match = window.location.href.match(/^(https?:\/\/[^\/]+)/i);
+      if (match && match[1] && !match[1].includes('null') && !match[1].startsWith('about:') && !match[1].startsWith('data:')) {
+        origin = match[1];
+      }
+    }
+  } catch (e) {
+    // Ignored
   }
 
-  // 3. Try parsing window location href
-  if (!origin || origin === 'null') {
-    try {
-      const parsedUrl = new URL(window.location.href);
-      if (parsedUrl.origin && parsedUrl.origin !== 'null') {
-        origin = parsedUrl.origin;
-      }
-    } catch (e) {
-      console.warn('Failed to parse origin from window.location.href:', e);
+  // 2. Try server-injected window.__APP_ORIGIN__
+  if (!origin || origin === 'null' || origin.includes('localhost:3000')) {
+    const injected = (window as any).__APP_ORIGIN__;
+    if (injected && injected !== 'null') {
+      origin = injected;
     }
   }
 
-  // Fallback: If origin is still null or blank (common in sandboxed iframes or srcdoc),
-  // detect it from active DOM resource scripts/links which are fully resolved by the browser.
-  // CRITICAL: We MUST filter to ensure the scripts belong to our own Next.js assets
-  // (containing _next/, /static/, /chunks/, or /css) to avoid incorrectly returning external 
-  // script domains like apis.google.com or gstatic.com.
-  if (!origin || origin === 'null') {
+  // 3. Try NEXT_PUBLIC_APP_URL
+  if (!origin || origin === 'null' || origin.includes('localhost:3000')) {
+    const envUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+    if (envUrl && envUrl !== 'null') {
+      origin = envUrl;
+    }
+  }
+
+  // 4. Try document.referrer
+  if (!origin || origin === 'null' || origin.includes('localhost:3000')) {
     try {
-      const scripts = Array.from(document.getElementsByTagName('script'));
-      for (const script of scripts) {
-        const src = script.src;
-        if (src && src.startsWith('http')) {
-          if (src.includes('_next/') || src.includes('/static/') || src.includes('/chunks/') || src.includes('/bundle')) {
-            const parsed = new URL(src);
-            if (parsed.origin && parsed.origin !== 'null') {
-              origin = parsed.origin;
-              break;
-            }
-          }
+      if (document.referrer) {
+        const match = document.referrer.match(/^(https?:\/\/[^\/]+)/i);
+        if (match && match[1] && !match[1].includes('google.com') && !match[1].includes('gstatic.com')) {
+          origin = match[1];
         }
       }
+    } catch (e) {
+      // Ignored
+    }
+  }
 
-      if (!origin || origin === 'null') {
-        const links = Array.from(document.getElementsByTagName('link'));
-        for (const link of links) {
-          const href = link.href;
-          if (href && href.startsWith('http')) {
-            if (href.includes('_next/') || href.includes('/static/') || href.includes('/chunks/') || href.includes('/css')) {
-              const parsed = new URL(href);
-              if (parsed.origin && parsed.origin !== 'null') {
-                origin = parsed.origin;
-                break;
-              }
-            }
+  // 5. Try ancestorOrigins
+  if (!origin || origin === 'null' || origin.includes('localhost:3000')) {
+    try {
+      const ancestors = (window.location as any).ancestorOrigins;
+      if (ancestors && ancestors.length > 0) {
+        for (let i = 0; i < ancestors.length; i++) {
+          const anc = ancestors[i];
+          if (anc && anc !== 'null' && !anc.includes('google.com') && !anc.includes('gstatic.com')) {
+            origin = anc;
+            break;
           }
         }
       }
     } catch (e) {
-      console.warn('Failed to detect origin from DOM resources:', e);
+      // Ignored
     }
+  }
+
+  // 6. Final safe defaults
+  if (!origin || origin === 'null') {
+    origin = window.location.origin || '';
   }
 
   if (origin && origin !== 'null') {
+    if (origin.endsWith('/')) {
+      origin = origin.slice(0, -1);
+    }
     // Force HTTPS if running under HTTPS, or on Cloud Run/production hosts
     if (origin.startsWith('http://')) {
-      const shouldForceHttps = (typeof window !== 'undefined' && window.location.protocol === 'https:') ||
+      const shouldForceHttps = window.location.protocol === 'https:' ||
         origin.includes('run.app') ||
         origin.includes('europe-west1.run.app');
       if (shouldForceHttps) {
@@ -120,6 +130,9 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
   }
 
   const finalUrl = typeof url === 'string' ? resolveUrl(url) : url;
+  if (typeof window !== 'undefined') {
+    console.log(`[fetchWithAuth] Resolving URL: ${url} -> ${finalUrl}`);
+  }
 
   return fetch(finalUrl, {
     ...options,

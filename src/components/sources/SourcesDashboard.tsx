@@ -75,6 +75,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   // Filters & searches state
   const [filterType, setFilterType] = useState<string>('all');
   const [filterHealth, setFilterHealth] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'name' | 'type' | 'status' | 'date'>('date');
   const [searchQuery, setSearchQuery] = useState('');
   const [docSearchQuery, setDocSearchQuery] = useState('');
   const [docCollectionFilter, setDocCollectionFilter] = useState<string>('all');
@@ -260,12 +261,27 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     setTimeout(() => setCopiedChunkId(null), 1800);
   };
 
-  const filteredSources = sources.filter((s) => {
-    const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.type.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType = filterType === 'all' || s.type === filterType;
-    const matchesHealth = filterHealth === 'all' || s.status === filterHealth;
-    return matchesSearch && matchesType && matchesHealth;
-  });
+  const filteredSources = sources
+    .filter((s) => {
+      const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.type.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesType = filterType === 'all' || s.type === filterType;
+      const matchesHealth = filterHealth === 'all' || s.status === filterHealth;
+      return matchesSearch && matchesType && matchesHealth;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'name') {
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === 'type') {
+        return a.type.localeCompare(b.type);
+      }
+      if (sortBy === 'status') {
+        return a.status.localeCompare(b.status);
+      }
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
 
   const filteredDocuments = documents.filter((doc) => {
     const matchesSearch = doc.title.toLowerCase().includes(docSearchQuery.toLowerCase()) || doc.content.toLowerCase().includes(docSearchQuery.toLowerCase());
@@ -771,6 +787,20 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                       <option value="healthy">Healthy</option>
                       <option value="degraded">Degraded</option>
                       <option value="failed">Failed</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-bold text-slate-500">{isRtl ? 'ترتيب حسب:' : 'Sort by:'}</span>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as any)}
+                      className="px-2.5 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs font-medium focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      <option value="date">{isRtl ? 'الأحدث إنشائاً' : 'Newest'}</option>
+                      <option value="name">{isRtl ? 'الاسم أبجدياً' : 'Name'}</option>
+                      <option value="type">{isRtl ? 'نوع الموصل' : 'Type'}</option>
+                      <option value="status">{isRtl ? 'الحالة الصحية' : 'Health Status'}</option>
                     </select>
                   </div>
                 </div>
@@ -1551,6 +1581,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
           lang={lang}
           onClose={() => setEditingSource(null)}
           onSave={handleUpdateSource}
+          availableCollections={collections}
         />
       )}
 

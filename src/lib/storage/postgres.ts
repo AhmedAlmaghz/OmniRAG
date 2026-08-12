@@ -20,6 +20,7 @@ import {
   INITIAL_SYNC_LOGS,
   INITIAL_AUDIT_LOGS,
 } from './constants';
+import { migrateAndSeedWithDrizzle } from '../db/migrateAndSeedDrizzle';
 
 let pool: any = null;
 let initialized = false;
@@ -56,6 +57,15 @@ export async function ensurePostgresTables() {
   if (initialized) return;
   const p = getPostgresPool();
   if (!p) return;
+
+  try {
+    await migrateAndSeedWithDrizzle();
+    initialized = true;
+    console.log('PostgreSQL Drizzle tables verified, created, and seeded successfully.');
+    return;
+  } catch (drizzleErr) {
+    console.warn('Drizzle migration failed, falling back to legacy SQL setup:', drizzleErr);
+  }
 
   try {
     const client = await p.connect();
@@ -166,8 +176,13 @@ export async function ensurePostgresTables() {
       // Run instant migrations to fix any missing columns on existing tables in PostgreSQL
       try {
         await client.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NOT NULL DEFAULT 'file';`);
+        await client.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_count INT DEFAULT 0;`);
+        await client.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS collection_ids JSONB;`);
         await client.query(`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS document_title TEXT NOT NULL DEFAULT '';`);
         await client.query(`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS created_at VARCHAR(100) DEFAULT '';`);
+        await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS collection_ids JSONB DEFAULT '[]'::jsonb;`);
+        await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
+        await client.query(`ALTER TABLE collections ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
       } catch (migrateErr) {
         console.warn('Postgres ALTER COLUMN migration skipped or failed:', migrateErr);
       }

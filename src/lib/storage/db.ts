@@ -403,7 +403,16 @@ class OmniRAGDatabase {
 
   async updateSource(id: string, updates: Partial<SourceConnector>, tenantId: string): Promise<SourceConnector | undefined> {
     const memUpdated = memoryDb.updateSource(id, updates, tenantId);
-    if (this.useMemory) return memUpdated;
+    if (this.useMemory) {
+      if (updates.collectionIds) {
+        const docs = memoryDb.getDocuments(tenantId);
+        const docsToUpdate = docs.filter((d) => d.metadata?.sourceId === id);
+        for (const d of docsToUpdate) {
+          memoryDb.addDocument({ ...d, collectionIds: updates.collectionIds });
+        }
+      }
+      return memUpdated;
+    }
 
     try {
       await ensureSeeded();
@@ -412,6 +421,16 @@ class OmniRAGDatabase {
       if (s) {
         const updated = { ...s, ...updates };
         await insertPostgresSource(updated);
+
+        // Cascade updates to all documents ingested by this source
+        if (updates.collectionIds) {
+          const docs = await this.getDocuments(tenantId);
+          const docsToUpdate = docs.filter((d) => d.metadata?.sourceId === id);
+          for (const d of docsToUpdate) {
+            await this.updateDocument(d.id, { collectionIds: updates.collectionIds }, tenantId);
+          }
+        }
+
         return updated;
       }
     } catch (e) {
@@ -631,6 +650,23 @@ class OmniRAGDatabase {
     } catch (e) {
       this.handleDatabaseError(e, 'addDocument');
     }
+  }
+
+  async updateDocument(id: string, updates: Partial<Document>, tenantId: string): Promise<Document | undefined> {
+    const d = await this.getDocumentById(id, tenantId);
+    if (d) {
+      const updated = { ...d, ...updates };
+      memoryDb.addDocument(updated);
+      if (!this.useMemory) {
+        try {
+          await insertPostgresDocument(updated);
+        } catch (e) {
+          this.handleDatabaseError(e, 'updateDocument');
+        }
+      }
+      return updated;
+    }
+    return undefined;
   }
 
   async deleteDocument(id: string, tenantId: string): Promise<void> {

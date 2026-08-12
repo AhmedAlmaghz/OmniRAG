@@ -4,6 +4,17 @@ import { db } from '../lib/storage/db';
 import { Tenant, Collection, MCPServerConfig, SourceConnector, Document, DocumentChunk } from '../lib/types/omnirag';
 
 export async function seedNewTenant(tenantId: string, tenantName: string): Promise<void> {
+  // Check if tenant has documents already to make this call fully idempotent and safe
+  try {
+    const existingDocs = await db.getDocuments(tenantId);
+    if (existingDocs.length > 0) {
+      console.log(`[Seeding] Tenant ${tenantId} is already seeded. Skipping.`);
+      return;
+    }
+  } catch (err) {
+    console.error(`[Seeding] Error checking existing tenant documents:`, err);
+  }
+
   const colId = `col-general-${tenantId.slice(-6)}`;
   const mcpServerId = `mcp-core-${tenantId.slice(-6)}`;
   const sourceId = `src-guide-${tenantId.slice(-6)}`;
