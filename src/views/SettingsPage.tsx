@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Settings, ShieldCheck, Cpu, Key, Database, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { Language } from '../types';
+import DiagnosticUtility from '../components/diagnostics/DiagnosticUtility';
 
 interface SettingsPageProps {
   lang: Language;
@@ -148,6 +149,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ lang }) => {
           </div>
         </div>
 
+      </div>
+
+      {/* Production Connection Diagnostics Component */}
+      <div className="pt-4">
+        <DiagnosticUtility lang={lang} autoRunOnMount={true} />
       </div>
 
     </div>

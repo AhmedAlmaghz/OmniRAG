@@ -26,9 +26,13 @@ import {
   RefreshCw,
   Sliders,
   Type,
-  LayoutGrid
+  LayoutGrid,
+  Activity
 } from 'lucide-react';
 import ModelSettingsView from './ModelSettingsView';
+import DiagnosticUtility from './diagnostics/DiagnosticUtility';
+import EnvVariablesManager from './env/EnvVariablesManager';
+import FirstLaunchEnvModal from './env/FirstLaunchEnvModal';
 
 interface SettingsViewProps {
   tenantId: string;
@@ -37,10 +41,11 @@ interface SettingsViewProps {
   onLogOut?: () => void;
 }
 
-type TabType = 'account' | 'notifications' | 'security' | 'appearance' | 'aiModels';
+type TabType = 'account' | 'notifications' | 'security' | 'appearance' | 'aiModels' | 'diagnostics' | 'envVars';
 
 export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<TabType>('account');
+  const [showFirstLaunchWizard, setShowFirstLaunchWizard] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -161,6 +166,8 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       tabSecurity: 'الأمان والوصول',
       tabAppearance: 'المظهر والخطوط',
       tabAiModels: 'إعدادات الذكاء الاصطناعي',
+      tabEnvVars: 'متغيرات البيئة والربط',
+      tabDiagnostics: 'فحص الاتصال والتشخيص',
       profileDetails: 'بيانات الملف الشخصي',
       displayName: 'الاسم المعروض',
       jobTitle: 'المسمى الوظيفي',
@@ -215,6 +222,8 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       tabSecurity: 'Security & API Keys',
       tabAppearance: 'Appearance & Font',
       tabAiModels: 'AI Engine Settings',
+      tabEnvVars: 'Environment Variables',
+      tabDiagnostics: 'System Diagnostics',
       profileDetails: 'Profile Details',
       displayName: 'Display Name',
       jobTitle: 'Job Title',
@@ -400,6 +409,38 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               {t.tabAiModels}
             </span>
             <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'aiModels' ? 'opacity-100' : 'opacity-40'}`} />
+          </button>
+
+          <button
+            id="tab-btn-envvars"
+            onClick={() => setActiveTab('envVars')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium text-xs transition duration-200 cursor-pointer ${
+              activeTab === 'envVars'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10 border-l-4 border-l-indigo-400'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-white border border-slate-200'
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Key className="w-4 h-4" />
+              {t.tabEnvVars}
+            </span>
+            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'envVars' ? 'opacity-100' : 'opacity-40'}`} />
+          </button>
+
+          <button
+            id="tab-btn-diagnostics"
+            onClick={() => setActiveTab('diagnostics')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium text-xs transition duration-200 cursor-pointer ${
+              activeTab === 'diagnostics'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10 border-l-4 border-l-indigo-400'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-white border border-slate-200'
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Activity className="w-4 h-4" />
+              {t.tabDiagnostics}
+            </span>
+            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'diagnostics' ? 'opacity-100' : 'opacity-40'}`} />
           </button>
         </div>
 
@@ -915,6 +956,24 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                   <ModelSettingsView />
                 </div>
               )}
+
+              {activeTab === 'envVars' && (
+                <div id="section-envvars">
+                  <EnvVariablesManager lang={lang} onOpenWizard={() => setShowFirstLaunchWizard(true)} />
+                </div>
+              )}
+
+              {activeTab === 'diagnostics' && (
+                <div id="section-diagnostics">
+                  <DiagnosticUtility lang={lang} autoRunOnMount={true} />
+                </div>
+              )}
+
+              <FirstLaunchEnvModal
+                lang={lang}
+                isOpen={showFirstLaunchWizard}
+                onClose={() => setShowFirstLaunchWizard(false)}
+              />
               <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm" id="settings-shared-bar">
                 <p className="text-[11px] text-slate-500 text-center sm:text-left rtl:sm:text-right leading-relaxed max-w-md font-medium">
                   {lang === 'ar' 

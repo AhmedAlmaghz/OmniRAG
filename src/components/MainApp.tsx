@@ -11,6 +11,7 @@ import SettingsView from '@/components/SettingsView';
 import AnalyticsCenter from '@/components/AnalyticsCenter';
 import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
+import FirstLaunchEnvModal from '@/components/env/FirstLaunchEnvModal';
 import { auth, logOutUser } from '@/lib/auth/firebaseAuth';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -36,10 +37,16 @@ export default function MainApp() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [showFirstLaunchEnvModal, setShowFirstLaunchEnvModal] = useState(false);
 
-  // Load saved theme, session, and active tab from localStorage on initial boot
+  // Load saved theme, session, active tab, and first launch onboarding check from localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      const isFirstLaunchDone = localStorage.getItem('omnirag_env_first_launch_done');
+      if (isFirstLaunchDone !== 'true') {
+        setShowFirstLaunchEnvModal(true);
+      }
+
       const savedTheme = localStorage.getItem('omnirag-theme') as 'light' | 'dark';
       if (savedTheme) {
         setTheme(savedTheme);
@@ -330,6 +337,14 @@ export default function MainApp() {
           <span>OmniRAG Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
         </div>
       </footer>
+
+      {/* First-Launch Environment Variables Onboarding Modal */}
+      <FirstLaunchEnvModal
+        lang={lang}
+        isOpen={showFirstLaunchEnvModal}
+        onClose={() => setShowFirstLaunchEnvModal(false)}
+        onComplete={() => setShowFirstLaunchEnvModal(false)}
+      />
     </div>
   );
 }
