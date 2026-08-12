@@ -7,6 +7,11 @@ import { headers } from 'next/headers';
 export const metadata: Metadata = {
   title: 'OmniRAG - Enterprise Agentic RAG Platform',
   description: 'Enterprise Agentic RAG Platform with Hybrid Retrieval, MCP Gateway, Multi-Tenancy, and Deterministic Security Guardrails',
+  icons: {
+    icon: '/icon.jpg',
+    shortcut: '/favicon.ico',
+    apple: '/icon.jpg',
+  },
 };
 
 export default async function RootLayout({
@@ -26,6 +31,8 @@ export default async function RootLayout({
   return (
     <html lang="ar" dir="rtl" className="h-full">
       <head>
+        <link rel="icon" href="/icon.jpg" type="image/jpeg" />
+        <link rel="apple-touch-icon" href="/icon.jpg" />
         <script
           dangerouslySetInnerHTML={{
             __html: `window.__APP_ORIGIN__ = ${JSON.stringify(origin)};`,

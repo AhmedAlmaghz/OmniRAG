@@ -99,20 +99,23 @@ export const Navbar: React.FC<NavbarProps> = ({ lang, setLang }) => {
           
           {/* Logo & Version Badge */}
           <Link to="/" className="flex items-center gap-3 group">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-violet-600 flex items-center justify-center text-white font-black text-xl shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
-              N
-            </div>
+            <img 
+              src="/icon.jpg" 
+              alt="OmniRAG Icon" 
+              className="w-9 h-9 rounded-xl object-cover shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform border border-slate-700/60"
+              referrerPolicy="no-referrer"
+            />
             <div className="flex flex-col">
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-lg bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-                  Next.js v16
+                  OmniRAG
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                  App Router
+                  Enterprise RAG
                 </span>
               </div>
               <span className="text-xs text-slate-400">
-                {lang === 'ar' ? 'معمارية متكاملة وفق أفضل ممارسات SDLC' : 'Enterprise SDLC Standard Architecture'}
+                {lang === 'ar' ? 'منصة الاسترجاع المعزز بالوكلاء الذكية' : 'Enterprise Agentic RAG Platform'}
               </span>
             </div>
           </Link>
