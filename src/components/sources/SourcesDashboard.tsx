@@ -2,12 +2,12 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { SourceConnector, SyncLogEntry, McpResourceItem, Collection, Document, DocumentChunk } from '@/lib/types/omnirag';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { AddSourceWizard } from './AddSourceWizard';
 import { DocumentIngestionStudio } from './DocumentIngestionStudio';
 import { EditSourceModal } from './EditSourceModal';
 import { SyncLogModal } from './SyncLogModal';
 import { CreateCollectionModal } from './CreateCollectionModal';
-import { persistSources, loadSources, persistCollections, loadCollections, persistSyncLogs, loadSyncLogs } from '@/lib/storage/localStorage';
 import {
   Database,
   RefreshCw,
@@ -15,6 +15,7 @@ import {
   Upload,
   Search,
   FileText,
+  FileCheck,
   Clock,
   Layers,
   Sparkles,
@@ -88,21 +89,12 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
   const fetchSourcesData = useCallback(async () => {
     setIsLoading(true);
-
-    // 1) Load from localStorage first for instant display
-    const cachedSources = loadSources(tenantId);
-    if (cachedSources && cachedSources.length > 0) setSources(cachedSources);
-    const cachedCols = loadCollections(tenantId);
-    if (cachedCols && cachedCols.length > 0) setCollections(cachedCols);
-    const cachedLogs = loadSyncLogs(tenantId);
-    if (cachedLogs && cachedLogs.length > 0) setSyncLogs(cachedLogs);
-
     try {
       const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
-        fetch(`/api/v1/sources?tenantId=${tenantId}`),
-        fetch(`/api/v1/collections?tenantId=${tenantId}`),
-        fetch(`/api/v1/documents?tenantId=${tenantId}`),
-        fetch('/api/v1/sources/api-keys-status'),
+        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`),
+        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`),
+        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`),
+        fetchWithAuth('/api/v1/sources/api-keys-status'),
       ]);
 
       let sourcesData: any = {};
@@ -134,19 +126,10 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
         console.warn('Failed to parse api-keys-status JSON:', e);
       }
 
-      if (sourcesData.sources) {
-        setSources(sourcesData.sources);
-        persistSources(tenantId, sourcesData.sources);
-      }
-      if (sourcesData.syncLogs) {
-        setSyncLogs(sourcesData.syncLogs);
-        persistSyncLogs(tenantId, sourcesData.syncLogs);
-      }
+      if (sourcesData.sources) setSources(sourcesData.sources);
+      if (sourcesData.syncLogs) setSyncLogs(sourcesData.syncLogs);
       if (sourcesData.mcpResources) setMcpResources(sourcesData.mcpResources);
-      if (colsData.collections) {
-        setCollections(colsData.collections);
-        persistCollections(tenantId, colsData.collections);
-      }
+      if (colsData.collections) setCollections(colsData.collections);
       if (keysData) setKeysStatus(keysData);
       
       if (docsData.documents) {
@@ -170,7 +153,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const fetchChunksForDoc = useCallback(async (docId: string) => {
     setIsLoadingChunks(true);
     try {
-      const res = await fetch(`/api/v1/documents?tenantId=${tenantId}&documentId=${docId}`);
+      const res = await fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}&documentId=${docId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.chunks) {
@@ -195,7 +178,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   // Sync single source
   const handleSyncSource = async (sourceId: string) => {
     try {
-      const res = await fetch(`/api/v1/sources/${sourceId}/sync`, {
+      const res = await fetchWithAuth(`/api/v1/sources/${sourceId}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tenantId }),
@@ -214,7 +197,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     try {
       await Promise.all(
         sources.map((s) =>
-          fetch(`/api/v1/sources/${s.id}/sync`, {
+          fetchWithAuth(`/api/v1/sources/${s.id}/sync`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tenantId }),
@@ -233,7 +216,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const handleDeleteSource = async (sourceId: string) => {
     if (!confirm(lang === 'ar' ? 'هل أنت تأكد من حذف هذا الموصل وإلغاء فهرسة مستنداته؟' : 'Are you sure you want to delete this source connector?')) return;
     try {
-      const res = await fetch(`/api/v1/sources?id=${sourceId}&tenantId=${tenantId}`, {
+      const res = await fetchWithAuth(`/api/v1/sources?id=${sourceId}&tenantId=${tenantId}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -248,7 +231,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const handleDeleteDocument = async (docId: string) => {
     if (!confirm(lang === 'ar' ? 'هل تود حذف هذا المستند ومتجهاته نهائياً من Qdrant؟' : 'Permanently delete this document and its Qdrant vectors?')) return;
     try {
-      const res = await fetch(`/api/v1/documents?id=${docId}&tenantId=${tenantId}`, {
+      const res = await fetchWithAuth(`/api/v1/documents?id=${docId}&tenantId=${tenantId}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -262,7 +245,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
   // Update source config
   const handleUpdateSource = async (id: string, updates: Partial<SourceConnector>) => {
-    await fetch(`/api/v1/sources/${id}`, {
+    await fetchWithAuth(`/api/v1/sources/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tenantId, ...updates }),
@@ -293,11 +276,15 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const getSourceIcon = (type: string) => {
     switch (type) {
       case 'file': return <FileText className="w-5 h-5 text-indigo-600" />;
+      case 'pdf': return <FileText className="w-5 h-5 text-rose-600" />;
+      case 'text': return <FileCheck className="w-5 h-5 text-emerald-600" />;
+      case 'sample': return <Sparkles className="w-5 h-5 text-indigo-500" />;
       case 'url': return <Globe className="w-5 h-5 text-blue-600" />;
       case 'youtube': return <Youtube className="w-5 h-5 text-rose-600" />;
       case 'github': return <Github className="w-5 h-5 text-slate-800" />;
       case 'database': return <Database className="w-5 h-5 text-amber-600" />;
       case 'gdrive': return <FolderPlus className="w-5 h-5 text-emerald-600" />;
+      case 'custom_mcp': return <Zap className="w-5 h-5 text-amber-500" />;
       default: return <Server className="w-5 h-5 text-violet-600" />;
     }
   };
@@ -996,9 +983,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
               tenantId={tenantId}
               collections={collections}
               lang={lang}
+              onNavigateTab={(tab) => setActiveTab(tab as any)}
               onIngestionCompleted={() => {
                 fetchSourcesData();
-                setActiveTab('documents');
               }}
             />
           )}
@@ -1010,9 +997,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
               collections={collections}
               lang={lang}
               initialTab="youtube"
+              onNavigateTab={(tab) => setActiveTab(tab as any)}
               onIngestionCompleted={() => {
                 fetchSourcesData();
-                setActiveTab('documents');
               }}
             />
           )}

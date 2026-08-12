@@ -16,7 +16,14 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
     }
   } else {
     if (typeof window !== 'undefined') {
-      const storedTenant = localStorage.getItem('omnirag_tenant_id') || 'tenant-acme-01';
+      let storedTenant = 'tenant-acme-01';
+      try {
+        storedTenant = localStorage.getItem('omnirag-tenant-id') || 
+                       localStorage.getItem('omnirag_tenant_id') || 
+                       'tenant-acme-01';
+      } catch (e) {
+        console.warn('Failed to safely read tenant-id from localStorage due to sandboxing:', e);
+      }
       headers.set('Authorization', `Bearer ${storedTenant}`);
     }
   }
@@ -26,7 +33,27 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
     headers.set('Content-Type', 'application/json');
   }
 
-  return fetch(url, {
+  // Under sandboxed iframes, relative URLs can occasionally resolve incorrectly.
+  // Resolve them explicitly against the current window origin or href to prevent opaque origin ("null") issues.
+  let finalUrl = url;
+  if (typeof window !== 'undefined' && typeof url === 'string' && url.startsWith('/')) {
+    let origin = window.location.origin;
+    if (!origin || origin === 'null') {
+      try {
+        const parsedUrl = new URL(window.location.href);
+        if (parsedUrl.origin && parsedUrl.origin !== 'null') {
+          origin = parsedUrl.origin;
+        }
+      } catch (e) {
+        console.warn('Failed to parse origin from window.location.href:', e);
+      }
+    }
+    if (origin && origin !== 'null') {
+      finalUrl = `${origin}${url}`;
+    }
+  }
+
+  return fetch(finalUrl, {
     ...options,
     headers,
   });

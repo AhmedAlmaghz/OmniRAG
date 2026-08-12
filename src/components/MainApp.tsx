@@ -37,15 +37,56 @@ export default function MainApp() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
-  // Load theme from localStorage
+  // Load saved theme, session, and active tab from localStorage on initial boot
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedTheme = localStorage.getItem('omnirag-theme') as 'light' | 'dark';
       if (savedTheme) {
         setTheme(savedTheme);
       }
+
+      const savedAuth = localStorage.getItem('omnirag-auth');
+      const savedTenant = localStorage.getItem('omnirag-tenant-id');
+      const savedEmail = localStorage.getItem('omnirag-user-email');
+
+      // Check URL query parameters for tab overriding
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab') as TabType;
+      const savedTab = localStorage.getItem('omnirag-active-tab') as TabType;
+
+      if (tabParam && ['landing', 'chat', 'knowledge', 'mcp', 'analytics', 'settings'].includes(tabParam)) {
+        setActiveTab(tabParam);
+      } else if (savedTab && ['landing', 'chat', 'knowledge', 'mcp', 'analytics', 'settings'].includes(savedTab)) {
+        setActiveTab(savedTab);
+      }
+
+      if (savedAuth === 'true' && savedTenant) {
+        setIsAuthenticated(true);
+        setTenantId(savedTenant);
+        if (savedEmail) setUserEmail(savedEmail);
+      } else {
+        setIsAuthenticated(false);
+      }
     }
   }, []);
+
+  const handleAuthSuccess = (tid: string, email: string) => {
+    setTenantId(tid);
+    setUserEmail(email);
+    setIsAuthenticated(true);
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('omnirag-auth', 'true');
+      localStorage.setItem('omnirag-tenant-id', tid);
+      localStorage.setItem('omnirag-user-email', email);
+
+      const currentTab = localStorage.getItem('omnirag-active-tab') as TabType;
+      if (!currentTab || currentTab === 'landing') {
+        setActiveTab('chat');
+        localStorage.setItem('omnirag-active-tab', 'chat');
+      }
+    }
+  };
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme);
@@ -68,21 +109,6 @@ export default function MainApp() {
         return;
       }
 
-      try {
-        const { doc, getDoc } = await import('firebase/firestore');
-        const { firestore } = await import('@/lib/firebase');
-        const snap = await getDoc(doc(firestore, 'tenants', tenantId));
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data && data.name) {
-            setCurrentTenantName(data.name);
-            return;
-          }
-        }
-      } catch (err) {
-        console.error('Error fetching tenant name:', err);
-      }
-
       if (userEmail) {
         setCurrentTenantName(lang === 'ar' ? `مساحة عمل ${userEmail}` : `Workspace ${userEmail}`);
       } else {
@@ -95,20 +121,35 @@ export default function MainApp() {
 
   // Subscribe to Firebase Auth state changes
   useEffect(() => {
-    if (!auth) {
-      setIsAuthenticated(false);
-      return;
-    }
+    if (!auth) return;
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
+        const tid = `tenant-${user.uid}`;
+        const email = user.email || '';
         setIsAuthenticated(true);
-        setTenantId(`tenant-${user.uid}`);
-        setUserEmail(user.email || '');
+        setTenantId(tid);
+        setUserEmail(email);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('omnirag-auth', 'true');
+          localStorage.setItem('omnirag-tenant-id', tid);
+          localStorage.setItem('omnirag-user-email', email);
+        }
       } else {
-        setIsAuthenticated(false);
-        setUserEmail(null);
+        // If Firebase auth user is null, check if a valid local storage session exists before forcing logout
+        if (typeof window !== 'undefined') {
+          const savedAuth = localStorage.getItem('omnirag-auth');
+          if (savedAuth !== 'true') {
+            setIsAuthenticated(false);
+            setUserEmail(null);
+          }
+        } else {
+          setIsAuthenticated(false);
+          setUserEmail(null);
+        }
       }
     });
+
     return () => unsubscribe();
   }, []);
 
@@ -117,29 +158,26 @@ export default function MainApp() {
       if (auth) {
         await logOutUser();
       }
+    } catch (e) {
+      console.error('Logout error:', e);
+    } finally {
       setIsAuthenticated(false);
       setUserEmail(null);
       setTenantId('tenant-acme-01');
       setActiveTab('landing');
-    } catch (e) {
-      console.error('Logout error:', e);
-    }
-  };
-
-  // Initialize active tab from URL search params if present
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const tabParam = params.get('tab') as TabType;
-      if (tabParam && ['landing', 'chat', 'knowledge', 'mcp', 'analytics', 'settings'].includes(tabParam)) {
-        setActiveTab(tabParam);
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('omnirag-auth');
+        localStorage.removeItem('omnirag-tenant-id');
+        localStorage.removeItem('omnirag-user-email');
+        localStorage.setItem('omnirag-active-tab', 'landing');
       }
     }
-  }, []);
+  };
 
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab);
     if (typeof window !== 'undefined') {
+      localStorage.setItem('omnirag-active-tab', tab);
       try {
         const url = new URL(window.location.href);
         url.searchParams.set('tab', tab);
@@ -189,18 +227,7 @@ export default function MainApp() {
     },
   ];
 
-  if (isAuthenticated === null) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-200">
-        <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center animate-spin mb-4">
-          <Layers className="w-6 h-6 text-white" />
-        </div>
-        <p className="text-xs font-mono tracking-widest text-indigo-400">OMNIRAG v2.4 SECURE CONTAINER BOOTING...</p>
-      </div>
-    );
-  }
-
-  // 1. Prioritize displaying the landing page if activeTab is 'landing' (even for unauthenticated users)
+  // 1. Prioritize displaying the landing page if activeTab is 'landing' (instantly available)
   if (activeTab === 'landing') {
     return (
       <LandingPage
@@ -212,15 +239,22 @@ export default function MainApp() {
     );
   }
 
+  if (isAuthenticated === null) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-200">
+        <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center animate-spin mb-4">
+          <Layers className="w-6 h-6 text-white" />
+        </div>
+        <p className="text-xs font-mono tracking-widest text-indigo-400">OMNIRAG v2.4 SECURE CONTAINER BOOTING...</p>
+      </div>
+    );
+  }
+
   // 2. If trying to access any other tab, require authentication
   if (!isAuthenticated) {
     return (
       <AuthScreen
-        onAuthSuccess={(tid, email) => {
-          setTenantId(tid);
-          setUserEmail(email);
-          setIsAuthenticated(true);
-        }}
+        onAuthSuccess={handleAuthSuccess}
         lang={lang}
         onLangChange={setLang}
         onBackToLanding={() => handleTabChange('landing')}

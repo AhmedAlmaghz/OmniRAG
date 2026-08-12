@@ -130,6 +130,40 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
   };
 
   const handleTestConnection = () => {
+    if (selectedType === 'youtube') {
+      const url = fieldsState.url || '';
+      const ytRegExp = /^.*(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/)([^#&?]*).*/;
+      const match = url.trim().match(ytRegExp);
+      const videoId = match && match[1] && match[1].length === 11 ? match[1] : null;
+
+      if (!videoId) {
+        setTestDiagnostics({
+          step: 1,
+          logs: [
+            lang === 'ar'
+              ? '❌ رابط يوتيوب غير صحيح. النسق المطلوب: https://www.youtube.com/watch?v=XXXXX'
+              : '❌ Invalid YouTube URL. Required format: https://www.youtube.com/watch?v=XXXXX',
+          ],
+          success: false,
+        });
+        return;
+      }
+    } else if (selectedType === 'url' || selectedType === 'rss') {
+      const url = fieldsState.url || '';
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        setTestDiagnostics({
+          step: 1,
+          logs: [
+            lang === 'ar'
+              ? '❌ رابط الويب غير صحيح. يجب أن يبدأ بـ http:// أو https://'
+              : '❌ Invalid URL. Must start with http:// or https://',
+          ],
+          success: false,
+        });
+        return;
+      }
+    }
+
     setIsTesting(true);
     setTestDiagnostics({ step: 1, logs: [lang === 'ar' ? 'جاري فحص الاتصال وتحديد النطاق (DNS Lookup)...' : 'Checking DNS & Endpoint latency...'] });
 
@@ -144,7 +178,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
           step: 3,
           logs: [
             ...(prev?.logs || []),
-            lang === 'ar' ? '✓ تم التحقق من هويات الوصول وبروتوكول المصادقة TLS/OAuth' : '✓ SSL/TLS Auth Handshake verified',
+            lang === 'ar' ? '✓ تم التحقق من سلامة وصحة الرابط والتأكد من توفر البيانات' : '✓ Target endpoint & URL structure validated successfully',
             lang === 'ar' ? '✓ تم جلب عينة بيانات أولية وقراءة هيكل المحتوى بنجاح 100%' : '✓ Sample payload extracted successfully (100% Schema match)',
           ],
           success: true,

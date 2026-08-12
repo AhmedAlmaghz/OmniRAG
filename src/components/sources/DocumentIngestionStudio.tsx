@@ -26,6 +26,8 @@ import {
   ListPlus,
   Clock,
   Youtube,
+  Database,
+  Plus,
 } from 'lucide-react';
 
 interface IngestionProgressStep {
@@ -96,7 +98,8 @@ interface DocumentIngestionStudioProps {
   tenantId: string;
   collections: Collection[];
   lang: 'ar' | 'en';
-  onIngestionCompleted: () => void;
+  onIngestionCompleted: (createdSourceId?: string) => void;
+  onNavigateTab?: (tab: string) => void;
   initialTab?: 'upload' | 'youtube' | 'text' | 'sample';
 }
 
@@ -192,11 +195,87 @@ async def process_document_ingestion(req: ChunkingRequest):
   },
 ];
 
+// Validation Helper Functions
+const SUPPORTED_EXTENSIONS = new Set([
+  'pdf', 'docx', 'doc', 'txt', 'md', 'markdown', 'json', 'csv',
+  'py', 'js', 'jsx', 'ts', 'tsx', 'go', 'html', 'css', 'xml',
+  'yaml', 'yml', 'sql', 'c', 'cpp', 'h'
+]);
+
+function validateUploadedFile(file: File): { isValid: boolean; errorAr?: string; errorEn?: string } {
+  if (!file) {
+    return { isValid: false, errorAr: 'لم يتم اختيار أي ملف.', errorEn: 'No file selected.' };
+  }
+
+  if (file.size === 0) {
+    return {
+      isValid: false,
+      errorAr: 'الملف المختار فارغ (0 بايت). يرجى اختيار ملف يحتوي على بيانات ومحتوى نصي.',
+      errorEn: 'The selected file is empty (0 bytes). Please choose a valid file containing text content.',
+    };
+  }
+
+  const MAX_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+  if (file.size > MAX_SIZE_BYTES) {
+    return {
+      isValid: false,
+      errorAr: `حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)}MB) يتجاوز الحد المسموح به (20 ميجابايت).`,
+      errorEn: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit (20 MB).`,
+    };
+  }
+
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const isSupportedExt = SUPPORTED_EXTENSIONS.has(ext);
+  const isSupportedMime = file.type.startsWith('text/') ||
+                          file.type === 'application/pdf' ||
+                          file.type === 'application/json' ||
+                          file.type.includes('spreadsheet') ||
+                          file.type.includes('wordprocessingml') ||
+                          file.type === 'application/octet-stream';
+
+  if (!isSupportedExt && !isSupportedMime) {
+    return {
+      isValid: false,
+      errorAr: `صيغة الملف (.${ext || 'غير معروفة'}) غير مدعومة. الصيغ المدعومة حالياً: PDF، DOCX، TXT، Markdown (MD)، JSON، CSV، وشفرات البرمجة (Python, JS, TS).`,
+      errorEn: `Unsupported file format (.${ext || 'unknown'}). Supported formats: PDF, DOCX, TXT, Markdown (MD), JSON, CSV, and code files (Python, JS, TS).`,
+    };
+  }
+
+  return { isValid: true };
+}
+
+function validateYoutubeUrl(url: string): { isValid: boolean; videoId?: string; errorAr?: string; errorEn?: string } {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return {
+      isValid: false,
+      errorAr: 'يرجى إدخال رابط فيديو يوتيوب أولاً.',
+      errorEn: 'Please enter a YouTube video URL first.',
+    };
+  }
+
+  // Regex matching standard YouTube video URL formats
+  const ytRegExp = /^.*(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/)([^#&?]*).*/;
+  const match = trimmed.match(ytRegExp);
+  const videoId = match && match[1] && match[1].length === 11 ? match[1] : null;
+
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    return {
+      isValid: false,
+      errorAr: 'رابط فيديو يوتيوب غير صالح أو غير مكتمل. النسق المطلوب مثال: https://www.youtube.com/watch?v=dQw4w9WgXcQ أو https://youtu.be/dQw4w9WgXcQ',
+      errorEn: 'Invalid YouTube video URL structure. Required format example: https://www.youtube.com/watch?v=dQw4w9WgXcQ or https://youtu.be/dQw4w9WgXcQ',
+    };
+  }
+
+  return { isValid: true, videoId };
+}
+
 export function DocumentIngestionStudio({
   tenantId,
   collections,
   lang,
   onIngestionCompleted,
+  onNavigateTab,
   initialTab = 'upload',
 }: DocumentIngestionStudioProps) {
   const [inputTab, setInputTab] = useState<'upload' | 'youtube' | 'text' | 'sample'>(initialTab);
@@ -207,6 +286,15 @@ export function DocumentIngestionStudio({
     }
   }, [initialTab]);
   
+  // Ingestion Completion State
+  const [completionData, setCompletionData] = useState<{
+    sourceId: string;
+    sourceName: string;
+    chunkCount: number;
+    documentId: string;
+    sourceType: string;
+  } | null>(null);
+
   // Document State
   const [docTitle, setDocTitle] = useState('');
   const [docContent, setDocContent] = useState('');
@@ -226,10 +314,12 @@ export function DocumentIngestionStudio({
 
   // Extract YouTube Transcript Handler
   const handleExtractYoutubeTranscript = async () => {
-    if (!youtubeUrl.trim()) {
+    // Input validation step
+    const validation = validateYoutubeUrl(youtubeUrl);
+    if (!validation.isValid) {
       setStatusMessage({
         type: 'error',
-        text: lang === 'ar' ? 'يرجى أدخال رابط فيديو يوتيوب أولاً' : 'Please enter a valid YouTube Video URL',
+        text: lang === 'ar' ? validation.errorAr! : validation.errorEn!,
       });
       return;
     }
@@ -261,17 +351,17 @@ export function DocumentIngestionStudio({
         setStatusMessage({
           type: 'success',
           text: lang === 'ar'
-            ? `تم استخراج تفريغ الفيديو بنجاح (${data.wordCount} كلمة)! يمكنك الآن مراجعة النص وتقسيمه لمقاطع.`
-            : `YouTube transcript extracted successfully (${data.wordCount} words)! Ready for chunking and vector indexing.`,
+            ? `تم التحقق واستخراج تفريغ الفيديو بنجاح (${data.wordCount} كلمة)! يمكنك الآن مراجعة النص وتقسيمه لمقاطع.`
+            : `YouTube URL validated & transcript extracted successfully (${data.wordCount} words)! Ready for chunking and vector indexing.`,
         });
       } else {
-        throw new Error(data.error || 'فشل استخراج تفريغ الفيديو');
+        throw new Error(data.error || (lang === 'ar' ? 'فشل استخراج تفريغ الفيديو أو أن الفيديو غير متاح' : 'Failed to extract video transcript or video is inaccessible'));
       }
     } catch (err: any) {
       console.error('YouTube transcript error:', err);
       setStatusMessage({
         type: 'error',
-        text: lang === 'ar' ? `خطأ أثناء استخراج تفريغ الفيديو: ${err.message}` : `Extraction failed: ${err.message}`,
+        text: lang === 'ar' ? `خطأ أثناء التحقق واستخراج التفريغ: ${err.message}` : `Validation & extraction failed: ${err.message}`,
       });
     } finally {
       setIsExtractingYoutube(false);
@@ -308,6 +398,16 @@ export function DocumentIngestionStudio({
   // Handle Real File Selection / Drag & Drop
   const handleFileProcess = async (file: File) => {
     if (!file) return;
+
+    // File validation step
+    const validation = validateUploadedFile(file);
+    if (!validation.isValid) {
+      setStatusMessage({
+        type: 'error',
+        text: lang === 'ar' ? validation.errorAr! : validation.errorEn!,
+      });
+      return;
+    }
 
     setSelectedFileName(file.name);
     setFileSizeStr(`${(file.size / 1024).toFixed(1)} KB`);
@@ -464,10 +564,40 @@ export function DocumentIngestionStudio({
   // Submit & Ingest Document
   const handleIngestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!docTitle.trim() || !docContent.trim()) {
+
+    if (!docTitle.trim()) {
       setStatusMessage({
         type: 'error',
-        text: lang === 'ar' ? 'يرجى تقديم عنوان ومحتوى المستند أولاً' : 'Please provide document title & content',
+        text: lang === 'ar' ? 'عنوان المستند مطلوب قبل البدء برفع وفهرسة البيانات.' : 'Document title is required before starting ingestion.',
+      });
+      return;
+    }
+
+    if (!docContent.trim() || docContent.trim().length < 10) {
+      if (inputTab === 'youtube') {
+        const ytValidation = validateYoutubeUrl(youtubeUrl);
+        if (!ytValidation.isValid) {
+          setStatusMessage({
+            type: 'error',
+            text: lang === 'ar' ? ytValidation.errorAr! : ytValidation.errorEn!,
+          });
+          return;
+        } else {
+          setStatusMessage({
+            type: 'error',
+            text: lang === 'ar'
+              ? 'يرجى النقر على زر "استخراج التفريغ" لجلب نص الفيديو قبل المتابعة.'
+              : 'Please click "Extract Transcript" to retrieve video text before proceeding.',
+          });
+          return;
+        }
+      }
+
+      setStatusMessage({
+        type: 'error',
+        text: lang === 'ar'
+          ? 'محتوى المستند فارغ أو قصير جداً (أقل من 10 أحرف). يرجى تقديم محتوى نصي صالح للفهرسة.'
+          : 'Document content is empty or too short (less than 10 characters). Please provide valid text content for indexing.',
       });
       return;
     }
@@ -540,6 +670,29 @@ export function DocumentIngestionStudio({
     }, 100);
 
     try {
+      let determinedSourceType: string = 'file';
+      let sourceConfig: Record<string, any> = {};
+
+      if (inputTab === 'youtube') {
+        determinedSourceType = 'youtube';
+        sourceConfig = {
+          url: youtubeUrl,
+          channel: youtubeVideoMeta?.channel,
+          duration: youtubeVideoMeta?.duration,
+          thumbnail: youtubeVideoMeta?.thumbnail,
+        };
+      } else if (selectedFileName?.toLowerCase().endsWith('.pdf')) {
+        determinedSourceType = 'pdf';
+        sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };
+      } else if (inputTab === 'text') {
+        determinedSourceType = 'text';
+      } else if (inputTab === 'sample') {
+        determinedSourceType = 'sample';
+      } else if (selectedFileName) {
+        determinedSourceType = 'file';
+        sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };
+      }
+
       const res = await fetch('/api/v1/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -547,7 +700,8 @@ export function DocumentIngestionStudio({
           tenantId,
           title: docTitle,
           content: docContent,
-          sourceType: 'file',
+          sourceType: determinedSourceType,
+          sourceConfig,
           language: 'ar',
           collectionIds: selectedColId ? [selectedColId] : [],
           chunkingConfig: {
@@ -574,16 +728,26 @@ export function DocumentIngestionStudio({
         setOverallProgress(100);
         setEstimatedSecondsLeft(0);
 
+        const createdSourceId = data.source?.id || data.document?.metadata?.sourceId || `src-${determinedSourceType}-${Date.now().toString().slice(-6)}`;
+        const createdSourceName = data.source?.name || docTitle || 'المستند المرفوع';
+        const createdChunkCount = data.document?.chunkCount || generatedChunks.length || 1;
+
+        setCompletionData({
+          sourceId: createdSourceId,
+          sourceName: createdSourceName,
+          chunkCount: createdChunkCount,
+          documentId: data.document?.id || '',
+          sourceType: determinedSourceType,
+        });
+
         setStatusMessage({
           type: 'success',
           text: lang === 'ar'
-            ? `تم استيعاب المستند وتجزئته بنجاح إلى ${data.document?.chunkCount || generatedChunks.length} مقطع في Qdrant!`
-            : 'Document successfully ingested & chunked into Qdrant!',
+            ? `تم حفظ الموصل واستيعاب المستند بنجاح! (${createdChunkCount} مقطع دلالي مفهرس)`
+            : 'Document and source connector saved successfully!',
         });
-        setDocTitle('');
-        setDocContent('');
-        setSelectedFileName(null);
-        onIngestionCompleted();
+
+        onIngestionCompleted(createdSourceId);
       } else {
         const err = await res.json();
         
@@ -616,6 +780,81 @@ export function DocumentIngestionStudio({
 
   return (
     <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-md space-y-6">
+      {/* 0. Persistent Success Confirmation Card */}
+      {completionData && (
+        <div className="bg-emerald-50/90 border border-emerald-200 rounded-3xl p-5 space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 bg-emerald-100 rounded-2xl flex items-center justify-center text-emerald-700 border border-emerald-200 shrink-0">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-emerald-950">
+                  {lang === 'ar' ? 'تم حفظ موصل البيانات وفهرسة المتجهات بنجاح!' : 'Source Connector Saved & Vectors Indexed!'}
+                </h3>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  {lang === 'ar'
+                    ? 'تم تسجيل المصدر في قاعدة البيانات وتجزئة المحتوى وتخزين المتجهات بنجاح.'
+                    : 'The source connector has been saved to the database, chunked, and indexed.'}
+                </p>
+              </div>
+            </div>
+            <span className="text-[9px] font-mono font-bold bg-emerald-200 text-emerald-900 px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              {lang === 'ar' ? 'محفوظ وفاعل' : 'SAVED & ACTIVE'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white/90 p-3 rounded-2xl border border-emerald-100 text-xs">
+            <div>
+              <span className="text-[10px] text-slate-400 font-bold uppercase block">{lang === 'ar' ? 'اسم المصدر' : 'Source Name'}</span>
+              <span className="font-bold text-slate-800 line-clamp-1">{completionData.sourceName}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-bold uppercase block">{lang === 'ar' ? 'عدد المقاطع' : 'Indexed Chunks'}</span>
+              <span className="font-bold text-indigo-600">{completionData.chunkCount} {lang === 'ar' ? 'مقطع دلالي' : 'chunks'}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-bold uppercase block">{lang === 'ar' ? 'معرّف الموصل' : 'Source ID'}</span>
+              <span className="font-mono text-slate-600 text-[11px]">{completionData.sourceId}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => onNavigateTab?.('connectors')}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>{lang === 'ar' ? 'عرض المصدر في الموصلات' : 'View in Connectors'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigateTab?.('documents')}
+              className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-600" />
+              <span>{lang === 'ar' ? 'استعراض مقاطع Qdrant' : 'Inspect Qdrant Vectors'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCompletionData(null);
+                setDocTitle('');
+                setDocContent('');
+                setSelectedFileName(null);
+                setSteps(INITIAL_STEPS);
+                setStatusMessage(null);
+              }}
+              className="px-3.5 py-2 bg-emerald-100 text-emerald-900 hover:bg-emerald-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-emerald-200"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{lang === 'ar' ? 'استيعاب مصدر جديد' : 'Ingest Another Source'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div>
@@ -794,6 +1033,34 @@ export function DocumentIngestionStudio({
                 )}
               </button>
             </div>
+
+            {/* Live YouTube URL Structure Validation Indicator */}
+            {youtubeUrl.trim().length > 0 && (
+              <div className="pt-1">
+                {(() => {
+                  const check = validateYoutubeUrl(youtubeUrl);
+                  if (check.isValid) {
+                    return (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>
+                          {lang === 'ar'
+                            ? `رابط يوتيوب صحيح ومكتمل (معرّف الفيديو: ${check.videoId})`
+                            : `Valid YouTube URL structure (Video ID: ${check.videoId})`}
+                        </span>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
+                        <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                        <span>{lang === 'ar' ? check.errorAr : check.errorEn}</span>
+                      </div>
+                    );
+                  }
+                })()}
+              </div>
+            )}
 
             {/* Video Preview Card if extracted */}
             {youtubeVideoMeta && (

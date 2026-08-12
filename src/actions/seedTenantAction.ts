@@ -1,7 +1,5 @@
 'use server';
 
-import { doc, setDoc } from 'firebase/firestore';
-import { firestore } from '../lib/firebase';
 import { db } from '../lib/storage/db';
 import { Tenant, Collection, MCPServerConfig, SourceConnector, Document, DocumentChunk } from '../lib/types/omnirag';
 
@@ -20,7 +18,7 @@ export async function seedNewTenant(tenantId: string, tenantName: string): Promi
     documentCount: 1,
     createdAt: new Date().toISOString(),
   };
-  await setDoc(doc(firestore, 'collections', colId), initialCollection);
+  await db.addCollection(initialCollection);
 
   const initialMcpServer: MCPServerConfig = {
     id: mcpServerId,
@@ -36,7 +34,7 @@ export async function seedNewTenant(tenantId: string, tenantName: string): Promi
     enabledTools: ['web_live_search', 'fetch_url_content', 'knowledge_ingest_document', 'external_postgres_query'],
     requireConfirmationTools: ['external_postgres_query'],
   };
-  await setDoc(doc(firestore, 'mcpServers', mcpServerId), initialMcpServer);
+  await db.addMcpServer(initialMcpServer);
 
   const initialSource: SourceConnector = {
     id: sourceId,

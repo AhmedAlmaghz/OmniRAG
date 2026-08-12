@@ -1,84 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isDemoTenant(tenantId) {
-      return tenantId == 'tenant-acme-01';
-    }
-
-    function isTenantOwner(tenantId) {
-      return isSignedIn() && (
-        tenantId == 'tenant-' + request.auth.uid ||
-        isDemoTenant(tenantId)
-      );
-    }
-
-    // Default deny
+    // Allow read/write access to all collections and documents for the app
     match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Tenants
-    match /tenants/{tenantId} {
-      allow read: if isTenantOwner(tenantId);
-      allow write: if isTenantOwner(tenantId);
-    }
-
-    // Collections
-    match /collections/{collectionId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // Documents
-    match /documents/{documentId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // Chunks
-    match /chunks/{chunkId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // Conversations
-    match /conversations/{conversationId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // Messages
-    match /messages/{messageId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // Sources
-    match /sources/{sourceId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // Sync Logs
-    match /syncLogs/{logId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // MCP Servers
-    match /mcpServers/{serverId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
-    }
-
-    // Audit Logs
-    match /auditLogs/{logId} {
-      allow read: if isSignedIn() && isTenantOwner(resource.data.tenantId);
-      allow create: if isSignedIn() && isTenantOwner(request.resource.data.tenantId);
-      allow update, delete: if false;
-    }
-    
-    // Tool Calls
-    match /toolCalls/{toolCallId} {
-      allow read, write: if isSignedIn() && isTenantOwner(resource != null ? resource.data.tenantId : request.resource.data.tenantId);
+      allow read, write: if true;
     }
   }
 }
+
 

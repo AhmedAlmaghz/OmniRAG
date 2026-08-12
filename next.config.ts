@@ -11,9 +11,11 @@ const nextConfig: NextConfig = {
     },
   },
   allowedDevOrigins: [
-    'ais-dev-ypmwpx3fedypwckng2sfii-280445036461.europe-west3.run.app',
-    'ais-pre-ypmwpx3fedypwckng2sfii-280445036461.europe-west3.run.app',
+    '*.run.app',
+    '*.europe-west1.run.app',
+    '*.europe-west3.run.app',
     'localhost:3000',
+    '0.0.0.0:3000',
   ],
 };
 export default nextConfig;

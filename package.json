@@ -1,7 +1,7 @@
 {
   "name": "OmniRAG",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.0",
   "author": "Ahmed Almaghz",
   "type": "module",
   "scripts": {
@@ -17,6 +17,7 @@
     "@google/genai": "*",
     "@qdrant/js-client-rest": "^1.11.0",
     "@remotion/player": "^4.0.507",
+    "@types/pdf-parse": "^1.1.5",
     "ai": "^7.0.58",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.7",
@@ -26,6 +27,7 @@
     "lucide-react": "^0.468.0",
     "motion": "^11.15.0",
     "next": "^16.3.0",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.13.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

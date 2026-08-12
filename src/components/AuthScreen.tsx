@@ -135,6 +135,8 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
         errMsg = lang === 'ar' ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة' : 'Invalid login credentials';
       } else if (err.code === 'auth/weak-password') {
         errMsg = lang === 'ar' ? 'كلمة المرور ضعيفة جداً (يجب أن لا تقل عن 6 أحرف)' : 'Password is too weak (min 6 characters)';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errMsg = lang === 'ar' ? 'تسجيل الدخول بالبريد غير مفعل في إعدادات الفايربيس. تم تحويلك للتسجيل التجريبي المباشر.' : 'Sign-in method not enabled in Firebase Console. Fallback session created.';
       }
       setError(errMsg);
     } finally {
