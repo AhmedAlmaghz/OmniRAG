@@ -1,3 +1,4 @@
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
@@ -328,7 +329,7 @@ export function DocumentIngestionStudio({
     setStatusMessage(null);
 
     try {
-      const res = await fetch('/api/v1/youtube/transcript', {
+      const res = await fetchWithAuth('/api/v1/youtube/transcript', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: youtubeUrl.trim(), lang }),
@@ -373,7 +374,7 @@ export function DocumentIngestionStudio({
   const [chunkStrategy, setChunkStrategy] = useState<'semantic' | 'markdown' | 'code' | 'sliding'>('semantic');
   const [chunkSize, setChunkSize] = useState<number>(512);
   const [chunkOverlap, setChunkOverlap] = useState<number>(20);
-  const [selectedColId, setSelectedColId] = useState<string>('');
+  const [selectedColIds, setSelectedColIds] = useState<string[]>([]);
 
   // Processing state
   const [isUploading, setIsUploading] = useState(false);
@@ -442,7 +443,7 @@ export function DocumentIngestionStudio({
       reader.onload = async (e) => {
         const base64Data = e.target?.result as string;
         try {
-          const res = await fetch('/api/v1/documents/parse', {
+          const res = await fetchWithAuth('/api/v1/documents/parse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -693,7 +694,7 @@ export function DocumentIngestionStudio({
         sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };
       }
 
-      const res = await fetch('/api/v1/documents', {
+      const res = await fetchWithAuth('/api/v1/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -703,7 +704,7 @@ export function DocumentIngestionStudio({
           sourceType: determinedSourceType,
           sourceConfig,
           language: 'ar',
-          collectionIds: selectedColId ? [selectedColId] : [],
+          collectionIds: selectedColIds,
           chunkingConfig: {
             strategy: chunkStrategy,
             size: chunkSize,
@@ -1278,21 +1279,34 @@ export function DocumentIngestionStudio({
           {/* Target Collection Option */}
           {collections.length > 0 && (
             <div className="pt-2 border-t border-slate-800">
-              <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                {lang === 'ar' ? 'ربط بمجموعة معينة (Target Collection):' : 'Target Collection:'}
+              <label className="text-[11px] font-bold text-slate-300 block mb-2">
+                {lang === 'ar' ? 'ربط بالمجموعات المعرفية المستهدفة:' : 'Target Collections:'}
               </label>
-              <select
-                value={selectedColId}
-                onChange={(e) => setSelectedColId(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-indigo-500"
-              >
-                <option value="">{lang === 'ar' ? 'بدون مجموعة خاصة (General Pool)' : 'General Pool'}</option>
-                {collections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <div className="border border-slate-700 bg-slate-900 rounded-xl p-2 max-h-32 overflow-y-auto space-y-1">
+                {collections.map((c) => {
+                  const isChecked = selectedColIds.includes(c.id);
+                  return (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer p-1.5 rounded hover:bg-slate-800 transition"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedColIds([...selectedColIds, c.id]);
+                          } else {
+                            setSelectedColIds(selectedColIds.filter((id) => id !== c.id));
+                          }
+                        }}
+                        className="rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-900"
+                      />
+                      <span className="truncate">{c.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           )}
 

@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Settings,
   Sparkles,
+  Database,
   Smartphone,
   Globe,
   Lock,
@@ -400,6 +401,22 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
             </span>
             <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'aiModels' ? 'opacity-100' : 'opacity-40'}`} />
           </button>
+          
+          <button
+            id="tab-btn-diagnostics"
+            onClick={() => setActiveTab('diagnostics')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium text-xs transition duration-200 cursor-pointer ${
+              activeTab === 'diagnostics'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10 border-l-4 border-l-indigo-400'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-white border border-slate-200'
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Database className="w-4 h-4" />
+              {t.tabDiagnostics}
+            </span>
+            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'diagnostics' ? 'opacity-100' : 'opacity-40'}`} />
+          </button>
         </div>
 
         {/* Content Area with Animations */}
@@ -550,18 +567,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
 
                     </div>
                   </div>
-                </div>
-              )}
-
-              {activeTab === 'aiModels' && (
-                <div id="section-aimodels">
-                  <ModelSettingsView />
-                </div>
-              )}
-
-              {activeTab === 'aiModels' && (
-                <div id="section-aimodels" className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden p-6 text-slate-100">
-                  <ModelSettingsView />
                 </div>
               )}
 
@@ -927,7 +932,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                 </div>
               )}
 
-              {/* SHARED CONTROLS BAR: SAVE BUTTONS */}
+              {activeTab === 'diagnostics' && (
+                <div id="section-diagnostics">
+                  <DiagnosticsView tenantId={tenantId} lang={lang} />
+                </div>
+              )}
               <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm" id="settings-shared-bar">
                 <p className="text-[11px] text-slate-500 text-center sm:text-left rtl:sm:text-right leading-relaxed max-w-md font-medium">
                   {lang === 'ar' 

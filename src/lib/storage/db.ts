@@ -42,7 +42,7 @@ import {
   getPostgresMessages,
   insertPostgresMessage,
 } from './postgres';
-import { upsertQdrantChunk, deleteQdrantDocument } from './qdrant';
+import { upsertQdrantChunk, deleteQdrantDocument, updateQdrantDocumentPayload } from './qdrant';
 import { generateEmbedding } from '../rag/embedding';
 
 import {
@@ -660,6 +660,10 @@ class OmniRAGDatabase {
       if (!this.useMemory) {
         try {
           await insertPostgresDocument(updated);
+          
+          if (updates.collectionIds) {
+            await updateQdrantDocumentPayload(id, tenantId, { collectionIds: updates.collectionIds });
+          }
         } catch (e) {
           this.handleDatabaseError(e, 'updateDocument');
         }
@@ -737,6 +741,7 @@ class OmniRAGDatabase {
           pageNumber: chunk.pageNumber || 1,
           language: chunk.language || 'ar',
           collectionIds,
+          ...(chunk.metadata || {})
         },
       });
     } catch (vecErr) {

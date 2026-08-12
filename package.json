@@ -1,7 +1,7 @@
 {
   "name": "OmniRAG",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": "Ahmed Almaghz",
   "type": "module",
   "scripts": {
@@ -20,6 +20,7 @@
     "@types/pdf-parse": "^1.1.5",
     "ai": "^7.0.58",
     "clsx": "^2.1.1",
+    "d3": "^7.9.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.45.2",
     "firebase": "^10.14.1",
@@ -44,6 +45,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
     "@tailwindcss/vite": "^4.0.0",
+    "@types/d3": "^7.4.3",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.0",
     "@types/react": "^19.0.0",

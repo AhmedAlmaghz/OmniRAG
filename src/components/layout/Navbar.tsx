@@ -1,3 +1,4 @@
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
@@ -25,7 +26,7 @@ export const Navbar: React.FC<NavbarProps> = ({ lang, setLang }) => {
   const [serverStatus, setServerStatus] = useState<'online' | 'checking' | 'offline'>('checking');
 
   useEffect(() => {
-    fetch('/api/health')
+    fetchWithAuth('/api/health')
       .then((res) => res.json())
       .then((data) => {
         if (data.status === 'ok') setServerStatus('online');

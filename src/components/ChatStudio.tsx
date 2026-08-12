@@ -192,7 +192,7 @@ Supported rich formatting capabilities:
         const activeConv = conversations.find((c) => c.id === activeConversationId);
         if (activeConv) {
           const updatedConv = { ...activeConv, collectionIds: updated };
-          fetch('/api/v1/conversations', {
+          fetchWithAuth('/api/v1/conversations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -224,7 +224,7 @@ Supported rich formatting capabilities:
   // Create a new chat session in Firestore
   const handleCreateNewConversation = async () => {
     try {
-      const res = await fetch('/api/v1/conversations', {
+      const res = await fetchWithAuth('/api/v1/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -253,7 +253,7 @@ Supported rich formatting capabilities:
     e.stopPropagation();
     if (!confirm(lang === 'ar' ? 'هل أنت تأكد من حذف هذه المحادثة بالكامل من قاعدة البيانات؟' : 'Are you sure you want to delete this chat session?')) return;
     try {
-      const res = await fetch('/api/v1/conversations', {
+      const res = await fetchWithAuth('/api/v1/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -285,7 +285,7 @@ Supported rich formatting capabilities:
   const handleRenameConversation = async (convId: string) => {
     if (!editingTitle.trim()) return;
     try {
-      const res = await fetch('/api/v1/conversations', {
+      const res = await fetchWithAuth('/api/v1/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -335,7 +335,7 @@ Supported rich formatting capabilities:
 
   const handleToggleTool = async (serverId: string, toolName: string) => {
     try {
-      const res = await fetch('/api/v1/mcp/servers', {
+      const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ serverId, toolName, tenantId }),
@@ -351,7 +351,7 @@ Supported rich formatting capabilities:
   const handlePingServer = async (serverId: string) => {
     setPingingServerId(serverId);
     try {
-      const res = await fetch('/api/v1/mcp/servers', {
+      const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'ping', serverId, tenantId }),
@@ -419,7 +419,7 @@ Supported rich formatting capabilities:
     setIsLoading(true);
 
     // Persist User Message to Firestore
-    fetch('/api/v1/conversations', {
+    fetchWithAuth('/api/v1/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -430,7 +430,7 @@ Supported rich formatting capabilities:
     }).catch((err) => console.error("Firestore user message save error:", err));
 
     try {
-      const res = await fetch('/api/v1/chat/completions', {
+      const res = await fetchWithAuth('/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -463,7 +463,7 @@ Supported rich formatting capabilities:
         };
         setMessages((prev) => [...prev, blockedMsg]);
 
-        fetch('/api/v1/conversations', {
+        fetchWithAuth('/api/v1/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -515,7 +515,7 @@ Supported rich formatting capabilities:
       setMessages((prev) => [...prev, assistantMsg]);
 
       // Persist Assistant Message to Firestore
-      fetch('/api/v1/conversations', {
+      fetchWithAuth('/api/v1/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

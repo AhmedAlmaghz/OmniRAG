@@ -1,3 +1,4 @@
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -88,7 +89,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
   const fetchServers = async () => {
     try {
-      const res = await fetch(`/api/v1/mcp/servers?tenantId=${tenantId}`);
+      const res = await fetchWithAuth(`/api/v1/mcp/servers?tenantId=${tenantId}`);
       const data = await res.json();
       if (data.servers) {
         setServers(data.servers);
@@ -111,7 +112,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     setBuilderError(null);
 
     try {
-      const res = await fetch('/api/v1/mcp/generate-tool', {
+      const res = await fetchWithAuth('/api/v1/mcp/generate-tool', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -141,7 +142,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     setBuilderError(null);
 
     try {
-      const res = await fetch('/api/v1/mcp/generate-tool', {
+      const res = await fetchWithAuth('/api/v1/mcp/generate-tool', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -201,7 +202,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     setIsSavingEdit(true);
     try {
       const formattedHeaders = formatHeadersObject(editHeaders);
-      const res = await fetch('/api/v1/mcp/servers', {
+      const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -242,7 +243,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     setIsSubmitting(true);
     try {
       const formattedHeaders = formatHeadersObject(addHeaders);
-      const res = await fetch('/api/v1/mcp/servers', {
+      const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -276,7 +277,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   };
 
   const toggleTool = async (serverId: string, toolName: string) => {
-    await fetch('/api/v1/mcp/servers', {
+    await fetchWithAuth('/api/v1/mcp/servers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ serverId, toolName, tenantId }),
@@ -292,7 +293,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     const toolName = customToolInputs[serverId]?.trim();
     if (!toolName) return;
 
-    await fetch('/api/v1/mcp/servers', {
+    await fetchWithAuth('/api/v1/mcp/servers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ serverId, toolName, tenantId }),
@@ -307,7 +308,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   const testServerPing = async (serverId: string) => {
     setIsTesting(serverId);
     try {
-      const res = await fetch('/api/v1/mcp/servers', {
+      const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'ping', serverId, tenantId }),
@@ -346,7 +347,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     if (!window.confirm(confirmMsg)) return;
 
     try {
-      const res = await fetch('/api/v1/mcp/servers', {
+      const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', serverId, tenantId }),

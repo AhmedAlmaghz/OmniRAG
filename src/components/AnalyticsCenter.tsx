@@ -1,6 +1,8 @@
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import ChunksDistributionChart from './analytics/ChunksDistributionChart';
 import {
   BarChart3,
   Activity,
@@ -45,7 +47,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
   const fetchAnalytics = async () => {
     setIsAnalyticsLoading(true);
     try {
-      const res = await fetch(`/api/v1/analytics?tenantId=${tenantId}`);
+      const res = await fetchWithAuth(`/api/v1/analytics?tenantId=${tenantId}`);
       const data = await res.json();
       if (data.stats) setStats(data.stats);
       if (data.auditLogs) setAuditLogs(data.auditLogs);
@@ -140,7 +142,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
 
     setIsSearchLoading(true);
     try {
-      const res = await fetch('/api/v1/search', {
+      const res = await fetchWithAuth('/api/v1/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -260,6 +262,11 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                 </div>
                 <span className="text-[11px] text-slate-400">{lang === 'ar' ? 'مفهرسة مع RLS' : 'Indexed with RLS protection'}</span>
               </div>
+            </div>
+
+            {/* Chunks Distribution Chart */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <ChunksDistributionChart data={stats?.chunksPerCollection || []} lang={lang} />
             </div>
 
             {/* Audit Trail Table */}

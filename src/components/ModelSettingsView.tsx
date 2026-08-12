@@ -1,3 +1,4 @@
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -81,7 +82,7 @@ export default function ModelSettingsView() {
 
     // Also persist via server API endpoint
     try {
-      await fetch('/api/v1/settings/models', {
+      await fetchWithAuth('/api/v1/settings/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated),
@@ -112,7 +113,7 @@ export default function ModelSettingsView() {
 
     try {
       const selectedModelName = config[testOperation];
-      const res = await fetch('/api/v1/chat/stream', {
+      const res = await fetchWithAuth('/api/v1/chat/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

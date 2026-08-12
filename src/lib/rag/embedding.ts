@@ -58,7 +58,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     return fallback;
   }
 
-  const candidateModels = Array.from(new Set([primaryModel, 'text-embedding-004', 'embedding-001']));
+  const candidateModels = Array.from(new Set([primaryModel, 'gemini-embedding-2', 'text-embedding-004', 'embedding-001']));
 
   for (const modelName of candidateModels) {
     try {
@@ -68,8 +68,9 @@ export async function generateEmbedding(text: string): Promise<number[]> {
       });
 
       const res = response as any;
-      if (res.embedding?.values && Array.isArray(res.embedding.values) && res.embedding.values.length > 0) {
-        const normalized = normalizeTo3072(res.embedding.values);
+      const embeddingValues = res.embeddings?.[0]?.values || res.embedding?.values;
+      if (embeddingValues && Array.isArray(embeddingValues) && embeddingValues.length > 0) {
+        const normalized = normalizeTo3072(embeddingValues);
         setCachedEmbedding(cacheKey, normalized);
         return normalized;
       }

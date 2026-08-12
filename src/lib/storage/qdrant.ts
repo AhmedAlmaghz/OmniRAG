@@ -78,6 +78,7 @@ export async function upsertQdrantChunk(params: {
     pageNumber: number;
     language: string;
     collectionIds?: string[];
+    [key: string]: any;
   };
 }) {
   await ensureQdrantCollection();
@@ -138,6 +139,26 @@ export async function deleteQdrantChunk(id: string) {
     });
   } catch (error) {
     console.error(`Failed to delete point ${id} from Qdrant:`, error);
+  }
+}
+
+export async function updateQdrantDocumentPayload(documentId: string, tenantId: string, payloadUpdates: Record<string, any>) {
+  await ensureQdrantCollection();
+  const qc = getQdrantClient();
+  if (!qc) return;
+
+  try {
+    await qc.setPayload(COLLECTION_NAME, {
+      payload: payloadUpdates,
+      filter: {
+        must: [
+          { key: 'tenantId', match: { value: tenantId } },
+          { key: 'documentId', match: { value: documentId } },
+        ],
+      },
+    });
+  } catch (error) {
+    console.error(`Failed to update payload for document ${documentId} in Qdrant:`, error);
   }
 }
 
