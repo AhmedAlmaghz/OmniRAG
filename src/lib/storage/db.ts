@@ -1,15 +1,8 @@
-import {
-  collection,
-  getDocs,
-  getDoc,
-  setDoc as firestoreSetDoc,
-  doc,
-  deleteDoc,
-  query,
-  where,
-  limit,
-} from 'firebase/firestore';
-import { firestore } from '../firebase';
+// Type definitions for Firestore document snapshots
+type AnyDoc = { id: string; data: () => any };
+type AnySnapshot = { docs: AnyDoc[]; empty: boolean; exists: boolean; data: () => any };
+
+import { adminDb } from '../auth/firebaseAdmin';
 import {
   Tenant,
   Document,
@@ -57,9 +50,9 @@ import {
   INITIAL_SYNC_LOGS,
 } from './constants';
 
-// Wrapper to intercept setDoc calls and sanitize undefined fields
-async function setDoc(docRef: any, data: any, options?: any) {
-  return firestoreSetDoc(docRef, cleanUndefined(data), options);
+// Wrapper to sanitize undefined fields before writing
+function sanitize(data: any): any {
+  return cleanUndefined(data);
 }
 
 // Lazy-seeding state
@@ -83,9 +76,18 @@ class MemoryDatabase {
   }
 
   getSources(tenantId: string): SourceConnector[] {
-    return this.sources
-      .filter((s) => s.tenantId === tenantId)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    let list = this.sources.filter((s) => s.tenantId === tenantId);
+    if (list.length === 0) {
+      // Auto-seed default sources for new tenants
+      const defaults = INITIAL_SOURCES.map((s) => ({
+        ...s,
+        id: `${s.id}-${tenantId}`,
+        tenantId,
+      }));
+      this.sources.push(...defaults);
+      list = defaults;
+    }
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
   getSourceById(id: string, tenantId: string): SourceConnector | undefined {
@@ -332,8 +334,9 @@ async function ensureSeeded(): Promise<void> {
 
   seedingPromise = (async () => {
     try {
-      const sourcesCol = collection(firestore, 'sources');
-      const fetchPromise = getDocs(query(sourcesCol, limit(1)));
+      // Use Admin SDK to check if database has data (bypasses security rules)
+      const sourcesCol = adminDb.collection('sources');
+      const fetchPromise = sourcesCol.limit(1).get();
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Firestore connection timeout')), 1200)
       );
@@ -348,42 +351,42 @@ async function ensureSeeded(): Promise<void> {
 
       // Seed Tenants
       for (const tenant of INITIAL_TENANTS) {
-        await setDoc(doc(firestore, 'tenants', tenant.id), tenant);
+        await adminDb.collection('tenants').doc(tenant.id).set(tenant);
       }
 
       // Seed Collections
       for (const col of INITIAL_COLLECTIONS) {
-        await setDoc(doc(firestore, 'collections', col.id), col);
+        await adminDb.collection('collections').doc(col.id).set(col);
       }
 
       // Seed Documents
       for (const docObj of INITIAL_DOCUMENTS) {
-        await setDoc(doc(firestore, 'documents', docObj.id), docObj);
+        await adminDb.collection('documents').doc(docObj.id).set(docObj);
       }
 
       // Seed Chunks
       for (const chunk of INITIAL_CHUNKS) {
-        await setDoc(doc(firestore, 'chunks', chunk.id), chunk);
+        await adminDb.collection('chunks').doc(chunk.id).set(chunk);
       }
 
       // Seed MCP Servers
       for (const server of INITIAL_MCP_SERVERS) {
-        await setDoc(doc(firestore, 'mcpServers', server.id), server);
+        await adminDb.collection('mcpServers').doc(server.id).set(server);
       }
 
       // Seed Sources
       for (const source of INITIAL_SOURCES) {
-        await setDoc(doc(firestore, 'sources', source.id), source);
+        await adminDb.collection('sources').doc(source.id).set(source);
       }
 
       // Seed Sync Logs
       for (const log of INITIAL_SYNC_LOGS) {
-        await setDoc(doc(firestore, 'syncLogs', log.id), log);
+        await adminDb.collection('syncLogs').doc(log.id).set(log);
       }
 
       // Seed Audit Logs
       for (const audit of INITIAL_AUDIT_LOGS) {
-        await setDoc(doc(firestore, 'auditLogs', audit.id), audit);
+        await adminDb.collection('auditLogs').doc(audit.id).set(audit);
       }
 
       console.log('Firestore database seeding completed!');
@@ -418,11 +421,28 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getSources(tenantId);
-      const q = query(collection(firestore, 'sources'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
-      return snapshot.docs
-        .map((d) => d.data() as SourceConnector)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      // Use Admin SDK to bypass security rules
+      const snapshot = await adminDb.collection('sources').where('tenantId', '==', tenantId).get();
+      let sources = snapshot.docs.map((d: any) => d.data() as SourceConnector);
+
+      // Auto-seed default sources for new tenants
+      if (sources.length === 0) {
+        const defaults = INITIAL_SOURCES.map((s) => ({
+          ...s,
+          id: `${s.id}-${tenantId}`,
+          tenantId,
+        }));
+        for (const source of defaults) {
+          try {
+            await adminDb.collection('sources').doc(source.id).set(source);
+          } catch (e) {
+            console.log('Auto-seed source warning:', (e as Error)?.message);
+          }
+        }
+        sources = defaults;
+      }
+
+      return sources.sort((a: SourceConnector, b: SourceConnector) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch (e) {
       console.log('Firebase error fetching sources, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -435,9 +455,9 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getSourceById(id, tenantId);
-      const docRef = doc(firestore, 'sources', id);
-      const snap = await getDoc(docRef);
-      if (snap.exists() && snap.data().tenantId === tenantId) {
+      const docRef = adminDb.collection('sources').doc(id);
+      const snap = await docRef.get();
+      if (snap.exists && snap.data()?.tenantId === tenantId) {
         return snap.data() as SourceConnector;
       }
       return undefined;
@@ -459,7 +479,7 @@ class OmniRAGDatabase {
         memoryDb.addSource(source);
         return;
       }
-      await setDoc(doc(firestore, 'sources', source.id), source);
+      await adminDb.collection('sources').doc(source.id).set(source);
       await this.addSyncLog({
         id: `log-${Date.now()}`,
         tenantId: source.tenantId,
@@ -483,12 +503,12 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.updateSource(id, updates, tenantId);
-      const docRef = doc(firestore, 'sources', id);
-      const snap = await getDoc(docRef);
-      if (!snap.exists() || snap.data().tenantId !== tenantId) return undefined;
+      const docRef = adminDb.collection('sources').doc(id);
+      const snap = await docRef.get();
+      if (!snap.exists || snap.data()?.tenantId !== tenantId) return undefined;
 
       const updatedData = { ...snap.data(), ...updates };
-      await setDoc(docRef, updatedData);
+      await docRef.set(updatedData);
       return updatedData as SourceConnector;
     } catch (e) {
       console.log('Firebase error updating source, falling back to memory database:', (e as Error)?.message);
@@ -508,11 +528,11 @@ class OmniRAGDatabase {
         memoryDb.deleteSource(id, tenantId);
         return;
       }
-      const docRef = doc(firestore, 'sources', id);
-      const snap = await getDoc(docRef);
-      if (!snap.exists() || snap.data().tenantId !== tenantId) return;
+      const docRef = adminDb.collection('sources').doc(id);
+      const snap = await docRef.get();
+      if (!snap.exists || snap.data()?.tenantId !== tenantId) return;
 
-      await deleteDoc(docRef);
+      await docRef.delete();
       if (purgeDocs) {
         const docs = await this.getDocuments(tenantId);
         const docsToRemove = docs.filter((d) => d.metadata?.sourceId === id);
@@ -545,7 +565,7 @@ class OmniRAGDatabase {
         memoryDb.updateSource(id, source, tenantId);
       } else {
         try {
-          await setDoc(doc(firestore, 'sources', id), source);
+          await adminDb.collection('sources').doc(id).set(source);
         } catch (e) {
           console.log('Firebase error setting synced source status, switching to memory database fallback:', (e as Error)?.message);
           this.useMemory = true;
@@ -560,7 +580,8 @@ class OmniRAGDatabase {
       if (source.type === 'youtube') {
         const ytUrl = source.config?.playlistUrl || source.config?.url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         try {
-          const reqHost = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+          const vercelUrl = typeof globalThis !== 'undefined' && (globalThis as any).process && (globalThis as any).process.env && (globalThis as any).process.env.VERCEL_URL;
+          const reqHost = vercelUrl ? `https://${vercelUrl}` : 'http://localhost:3000';
           const ytRes = await fetch(`${reqHost}/api/v1/youtube/transcript`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -648,13 +669,12 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getSyncLogs(tenantId, sourceId);
-      const q = query(collection(firestore, 'syncLogs'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
-      let logs = snapshot.docs.map((d) => d.data() as SyncLogEntry);
+      const snapshot = await adminDb.collection('syncLogs').where('tenantId', '==', tenantId).get();
+      let logs = snapshot.docs.map((d: any) => d.data() as SyncLogEntry);
       if (sourceId) {
-        logs = logs.filter((l) => l.sourceId === sourceId);
+        logs = logs.filter((l: SyncLogEntry) => l.sourceId === sourceId);
       }
-      return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      return logs.sort((a: SyncLogEntry, b: SyncLogEntry) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     } catch (e) {
       console.log('Firebase error getting sync logs, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -673,7 +693,7 @@ class OmniRAGDatabase {
         memoryDb.addSyncLog(log);
         return;
       }
-      await setDoc(doc(firestore, 'syncLogs', log.id), log);
+      await adminDb.collection('syncLogs').doc(log.id).set(log);
     } catch (e) {
       console.log('Firebase error adding sync log, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -710,11 +730,10 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getDocuments(tenantId);
-      const q = query(collection(firestore, 'documents'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
+      const snapshot = await adminDb.collection('documents').where('tenantId', '==', tenantId).get();
       return snapshot.docs
-        .map((d) => d.data() as Document)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        .map((d: any) => d.data() as Document)
+        .sort((a: Document, b: Document) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch (e) {
       console.log('Firebase error getting documents, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -727,9 +746,9 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getDocumentById(id, tenantId);
-      const docRef = doc(firestore, 'documents', id);
-      const snap = await getDoc(docRef);
-      if (snap.exists() && snap.data().tenantId === tenantId) {
+      const docRef = adminDb.collection('documents').doc(id);
+      const snap = await docRef.get();
+      if (snap.exists && snap.data()?.tenantId === tenantId) {
         return snap.data() as Document;
       }
       return undefined;
@@ -751,7 +770,7 @@ class OmniRAGDatabase {
         memoryDb.addDocument(docObj);
         return;
       }
-      await setDoc(doc(firestore, 'documents', docObj.id), docObj);
+      await adminDb.collection('documents').doc(docObj.id).set(docObj);
 
       try {
         await insertPostgresDocument({
@@ -785,17 +804,18 @@ class OmniRAGDatabase {
         memoryDb.deleteDocument(id, tenantId);
         return;
       }
-      const docRef = doc(firestore, 'documents', id);
-      const snap = await getDoc(docRef);
-      if (!snap.exists() || snap.data().tenantId !== tenantId) return;
+      const docRef = adminDb.collection('documents').doc(id);
+      const snap = await docRef.get();
+      if (!snap.exists || snap.data()?.tenantId !== tenantId) return;
 
-      await deleteDoc(docRef);
+      await docRef.delete();
 
-      const chunksRef = collection(firestore, 'chunks');
-      const q = query(chunksRef, where('documentId', '==', id), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
-      for (const chunkDoc of snapshot.docs) {
-        await deleteDoc(chunkDoc.ref);
+      const chunksSnapshot = await adminDb.collection('chunks')
+        .where('documentId', '==', id)
+        .where('tenantId', '==', tenantId)
+        .get();
+      for (const chunkDoc of chunksSnapshot.docs) {
+        await chunkDoc.ref.delete();
       }
 
       try {
@@ -817,9 +837,8 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getChunks(tenantId);
-      const q = query(collection(firestore, 'chunks'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map((d) => d.data() as DocumentChunk);
+      const snapshot = await adminDb.collection('chunks').where('tenantId', '==', tenantId).get();
+      return snapshot.docs.map((d: any) => d.data() as DocumentChunk);
     } catch (e) {
       console.log('Firebase error getting chunks, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -838,7 +857,7 @@ class OmniRAGDatabase {
         memoryDb.addChunk(chunk);
         return;
       }
-      await setDoc(doc(firestore, 'chunks', chunk.id), chunk);
+      await adminDb.collection('chunks').doc(chunk.id).set(chunk);
 
       try {
         const vector = await generateEmbedding(chunk.content);
@@ -894,11 +913,10 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getCollections(tenantId);
-      const q = query(collection(firestore, 'collections'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
+      const snapshot = await adminDb.collection('collections').where('tenantId', '==', tenantId).get();
       return snapshot.docs
-        .map((d) => d.data() as Collection)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        .map((d: any) => d.data() as Collection)
+        .sort((a: Collection, b: Collection) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch (e) {
       console.log('Firebase error getting collections, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -917,7 +935,7 @@ class OmniRAGDatabase {
         memoryDb.addCollection(col);
         return;
       }
-      await setDoc(doc(firestore, 'collections', col.id), col);
+      await adminDb.collection('collections').doc(col.id).set(col);
     } catch (e) {
       console.log('Firebase error adding collection, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -931,9 +949,8 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getMcpServers(tenantId);
-      const q = query(collection(firestore, 'mcpServers'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
-      const existing = snapshot.docs.map((d) => d.data() as MCPServerConfig);
+      const snapshot = await adminDb.collection('mcpServers').where('tenantId', '==', tenantId).get();
+      const existing = snapshot.docs.map((d: any) => d.data() as MCPServerConfig);
 
       if (existing.length > 0) {
         return existing;
@@ -947,7 +964,7 @@ class OmniRAGDatabase {
 
       for (const server of defaultServers) {
         try {
-          await setDoc(doc(firestore, 'mcpServers', server.id), server);
+          await adminDb.collection('mcpServers').doc(server.id).set(server);
         } catch (e) {
           console.log('Auto-seed MCP server warning:', (e as Error)?.message);
         }
@@ -972,7 +989,7 @@ class OmniRAGDatabase {
         memoryDb.addMcpServer(server);
         return;
       }
-      await setDoc(doc(firestore, 'mcpServers', server.id), server);
+      await adminDb.collection('mcpServers').doc(server.id).set(server);
     } catch (e) {
       console.log('Firebase error adding MCP server, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -991,9 +1008,9 @@ class OmniRAGDatabase {
         memoryDb.toggleMcpTool(serverId, toolName, tenantId);
         return;
       }
-      const docRef = doc(firestore, 'mcpServers', serverId);
-      const snap = await getDoc(docRef);
-      if (!snap.exists() || snap.data().tenantId !== tenantId) return;
+      const docRef = adminDb.collection('mcpServers').doc(serverId);
+      const snap = await docRef.get();
+      if (!snap.exists || snap.data()?.tenantId !== tenantId) return;
 
       const server = snap.data() as MCPServerConfig;
       if (server.enabledTools.includes(toolName)) {
@@ -1001,7 +1018,7 @@ class OmniRAGDatabase {
       } else {
         server.enabledTools.push(toolName);
       }
-      await setDoc(docRef, server);
+      await docRef.set(server);
     } catch (e) {
       console.log('Firebase error toggling MCP tool, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -1020,10 +1037,10 @@ class OmniRAGDatabase {
         memoryDb.deleteMcpServer(serverId, tenantId);
         return;
       }
-      const docRef = doc(firestore, 'mcpServers', serverId);
-      const snap = await getDoc(docRef);
-      if (snap.exists() && snap.data().tenantId === tenantId) {
-        await deleteDoc(docRef);
+      const docRef = adminDb.collection('mcpServers').doc(serverId);
+      const snap = await docRef.get();
+      if (snap.exists && snap.data()?.tenantId === tenantId) {
+        await docRef.delete();
       }
     } catch (e) {
       console.log('Firebase error deleting MCP server, falling back to memory database:', (e as Error)?.message);
@@ -1038,11 +1055,10 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getAuditLogs(tenantId);
-      const q = query(collection(firestore, 'auditLogs'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
+      const snapshot = await adminDb.collection('auditLogs').where('tenantId', '==', tenantId).get();
       return snapshot.docs
-        .map((d) => d.data() as AuditLogEntry)
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        .map((d: any) => d.data() as AuditLogEntry)
+        .sort((a: AuditLogEntry, b: AuditLogEntry) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     } catch (e) {
       console.log('Firebase error getting audit logs, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -1061,7 +1077,7 @@ class OmniRAGDatabase {
         memoryDb.addAuditLog(entry);
         return;
       }
-      await setDoc(doc(firestore, 'auditLogs', entry.id), entry);
+      await adminDb.collection('auditLogs').doc(entry.id).set(entry);
     } catch (e) {
       console.log('Firebase error adding audit log, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -1075,11 +1091,10 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getToolCalls(tenantId);
-      const q = query(collection(firestore, 'toolCalls'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
+      const snapshot = await adminDb.collection('toolCalls').where('tenantId', '==', tenantId).get();
       return snapshot.docs
-        .map((d) => d.data() as MCPToolCall)
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        .map((d: any) => d.data() as MCPToolCall)
+        .sort((a: MCPToolCall, b: MCPToolCall) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     } catch (e) {
       console.log('Firebase error getting tool calls, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -1098,7 +1113,7 @@ class OmniRAGDatabase {
         memoryDb.addToolCall(tc);
         return;
       }
-      await setDoc(doc(firestore, 'toolCalls', tc.id), tc);
+      await adminDb.collection('toolCalls').doc(tc.id).set(tc);
     } catch (e) {
       console.log('Firebase error adding tool call, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -1112,12 +1127,11 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getConversations(tenantId);
-      const q = query(collection(firestore, 'conversations'), where('tenantId', '==', tenantId));
-      const snapshot = await getDocs(q);
-      const convs = snapshot.docs.map((d) => d.data() as Conversation);
+      const snapshot = await adminDb.collection('conversations').where('tenantId', '==', tenantId).get();
+      const convs = snapshot.docs.map((d: any) => d.data() as Conversation);
 
       if (convs.length > 0) {
-        return convs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        return convs.sort((a: Conversation, b: Conversation) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
       }
 
       const defaultConv: Conversation = {
@@ -1133,7 +1147,7 @@ class OmniRAGDatabase {
       };
 
       try {
-        await setDoc(doc(firestore, 'conversations', defaultConv.id), defaultConv);
+        await adminDb.collection('conversations').doc(defaultConv.id).set(defaultConv);
         const welcomeMsg: Message = {
           id: `msg-welcome-${defaultConv.id}`,
           tenantId,
@@ -1143,7 +1157,7 @@ class OmniRAGDatabase {
           createdAt: new Date().toISOString(),
           modelUsed: 'gemini-3.6-flash',
         };
-        await setDoc(doc(firestore, 'messages', welcomeMsg.id), welcomeMsg);
+        await adminDb.collection('messages').doc(welcomeMsg.id).set(welcomeMsg);
       } catch (e) {
         console.log('Auto-seed default conversation error:', (e as Error)?.message);
       }
@@ -1161,8 +1175,8 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getConversationById(id, tenantId);
-      const snap = await getDoc(doc(firestore, 'conversations', id));
-      if (!snap.exists()) return null;
+      const snap = await adminDb.collection('conversations').doc(id).get();
+      if (!snap.exists) return null;
       const conv = snap.data() as Conversation;
       return conv.tenantId === tenantId ? conv : null;
     } catch (e) {
@@ -1183,7 +1197,7 @@ class OmniRAGDatabase {
         memoryDb.saveConversation(conv);
         return;
       }
-      await setDoc(doc(firestore, 'conversations', conv.id), conv, { merge: true });
+      await adminDb.collection('conversations').doc(conv.id).set(conv, { merge: true });
     } catch (e) {
       console.log('Firebase error saving conversation, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -1202,16 +1216,17 @@ class OmniRAGDatabase {
         memoryDb.deleteConversation(id, tenantId);
         return;
       }
-      const convRef = doc(firestore, 'conversations', id);
-      const snap = await getDoc(convRef);
-      if (snap.exists() && snap.data().tenantId === tenantId) {
-        await deleteDoc(convRef);
+      const convRef = adminDb.collection('conversations').doc(id);
+      const snap = await convRef.get();
+      if (snap.exists && snap.data()?.tenantId === tenantId) {
+        await convRef.delete();
 
-        const msgsRef = collection(firestore, 'messages');
-        const q = query(msgsRef, where('conversationId', '==', id), where('tenantId', '==', tenantId));
-        const msgSnap = await getDocs(q);
+        const msgSnap = await adminDb.collection('messages')
+          .where('conversationId', '==', id)
+          .where('tenantId', '==', tenantId)
+          .get();
         for (const mDoc of msgSnap.docs) {
-          await deleteDoc(mDoc.ref);
+          await mDoc.ref.delete();
         }
       }
     } catch (e) {
@@ -1226,13 +1241,11 @@ class OmniRAGDatabase {
     try {
       await ensureSeeded();
       if (this.useMemory) return memoryDb.getMessages(conversationId, tenantId);
-      const q = query(
-        collection(firestore, 'messages'),
-        where('conversationId', '==', conversationId),
-        where('tenantId', '==', tenantId)
-      );
-      const snapshot = await getDocs(q);
-      const msgs = snapshot.docs.map((d) => d.data() as Message);
+      const snapshot = await adminDb.collection('messages')
+        .where('conversationId', '==', conversationId)
+        .where('tenantId', '==', tenantId)
+        .get();
+      const msgs = snapshot.docs.map((d: any) => d.data() as Message);
       if (msgs.length === 0 && conversationId.startsWith('conv-init')) {
         const welcomeMsg: Message = {
           id: `msg-welcome-${conversationId}`,
@@ -1243,10 +1256,10 @@ class OmniRAGDatabase {
           createdAt: new Date().toISOString(),
           modelUsed: 'gemini-3.6-flash',
         };
-        await setDoc(doc(firestore, 'messages', welcomeMsg.id), welcomeMsg);
+        await adminDb.collection('messages').doc(welcomeMsg.id).set(welcomeMsg);
         return [welcomeMsg];
       }
-      return msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      return msgs.sort((a: Message, b: Message) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     } catch (e) {
       console.log('Firebase error getting messages, falling back to memory database:', (e as Error)?.message);
       this.useMemory = true;
@@ -1265,12 +1278,12 @@ class OmniRAGDatabase {
         memoryDb.addMessage(msg);
         return;
       }
-      await setDoc(doc(firestore, 'messages', msg.id), msg);
+      await adminDb.collection('messages').doc(msg.id).set(msg);
 
       try {
-        const convRef = doc(firestore, 'conversations', msg.conversationId);
-        const convSnap = await getDoc(convRef);
-        if (convSnap.exists()) {
+        const convRef = adminDb.collection('conversations').doc(msg.conversationId);
+        const convSnap = await convRef.get();
+        if (convSnap.exists) {
           const conv = convSnap.data() as Conversation;
           const updates: Partial<Conversation> = {
             updatedAt: new Date().toISOString(),
@@ -1278,7 +1291,7 @@ class OmniRAGDatabase {
           if (msg.role === 'user' && (conv.title.startsWith('محادثة جديدة') || conv.title.startsWith('New Conversation') || conv.title === 'جلسة استفسارات السياسات والأمن')) {
             updates.title = msg.content.length > 35 ? msg.content.substring(0, 35) + '...' : msg.content;
           }
-          await setDoc(convRef, updates, { merge: true });
+          await convRef.set(updates, { merge: true });
         }
       } catch (e) {
         console.log('Failed to touch conversation timestamp:', (e as Error)?.message);

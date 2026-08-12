@@ -7,6 +7,7 @@ import { DocumentIngestionStudio } from './DocumentIngestionStudio';
 import { EditSourceModal } from './EditSourceModal';
 import { SyncLogModal } from './SyncLogModal';
 import { CreateCollectionModal } from './CreateCollectionModal';
+import { persistSources, loadSources, persistCollections, loadCollections, persistSyncLogs, loadSyncLogs } from '@/lib/storage/localStorage';
 import {
   Database,
   RefreshCw,
@@ -87,6 +88,15 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
   const fetchSourcesData = useCallback(async () => {
     setIsLoading(true);
+
+    // 1) Load from localStorage first for instant display
+    const cachedSources = loadSources(tenantId);
+    if (cachedSources && cachedSources.length > 0) setSources(cachedSources);
+    const cachedCols = loadCollections(tenantId);
+    if (cachedCols && cachedCols.length > 0) setCollections(cachedCols);
+    const cachedLogs = loadSyncLogs(tenantId);
+    if (cachedLogs && cachedLogs.length > 0) setSyncLogs(cachedLogs);
+
     try {
       const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
         fetch(`/api/v1/sources?tenantId=${tenantId}`),
@@ -124,10 +134,19 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
         console.warn('Failed to parse api-keys-status JSON:', e);
       }
 
-      if (sourcesData.sources) setSources(sourcesData.sources);
-      if (sourcesData.syncLogs) setSyncLogs(sourcesData.syncLogs);
+      if (sourcesData.sources) {
+        setSources(sourcesData.sources);
+        persistSources(tenantId, sourcesData.sources);
+      }
+      if (sourcesData.syncLogs) {
+        setSyncLogs(sourcesData.syncLogs);
+        persistSyncLogs(tenantId, sourcesData.syncLogs);
+      }
       if (sourcesData.mcpResources) setMcpResources(sourcesData.mcpResources);
-      if (colsData.collections) setCollections(colsData.collections);
+      if (colsData.collections) {
+        setCollections(colsData.collections);
+        persistCollections(tenantId, colsData.collections);
+      }
       if (keysData) setKeysStatus(keysData);
       
       if (docsData.documents) {
