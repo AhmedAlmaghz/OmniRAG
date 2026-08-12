@@ -21,13 +21,7 @@ export default async function RootLayout({
   const firstProto = proto.split(',')[0].trim();
   const isSecure = firstProto === 'https' || host.includes('run.app') || host.includes('europe-west1.run.app');
   
-  let origin = process.env.APP_URL || '';
-  if (origin && origin.endsWith('/')) {
-    origin = origin.slice(0, -1);
-  }
-  if (!origin) {
-    origin = `${isSecure ? 'https' : 'http'}://${host}`;
-  }
+  let origin = `${isSecure ? 'https' : 'http'}://${host}`;
 
   return (
     <html lang="ar" dir="rtl" className="h-full">
