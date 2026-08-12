@@ -13,6 +13,7 @@ import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
 import FirstLaunchEnvModal from '@/components/env/FirstLaunchEnvModal';
 import { auth, logOutUser } from '@/lib/auth/firebaseAuth';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { onAuthStateChanged } from 'firebase/auth';
 
 import {
@@ -73,6 +74,29 @@ export default function MainApp() {
         if (savedEmail) setUserEmail(savedEmail);
       } else {
         setIsAuthenticated(false);
+      }
+
+      // Sync client local environment variables to server runtime
+      const envKeys = ['DATABASE_URL', 'POSTGRES_URL', 'QDRANT_URL', 'QDRANT_API_KEY', 'MISTRAL_API_KEY', 'UNSTRUCTURED_API_KEY', 'GEMINI_API_KEY'];
+      const localEnvs: Record<string, string> = {};
+      envKeys.forEach((k) => {
+        try {
+          const val = localStorage.getItem(`omnirag_env_${k}`);
+          if (val && !val.includes('•') && val.trim() !== '') {
+            localEnvs[k] = val.trim();
+          }
+        } catch (e) {}
+      });
+
+      if (Object.keys(localEnvs).length > 0) {
+        fetchWithAuth('/api/v1/env-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'sync',
+            envs: localEnvs,
+          }),
+        }).catch(() => {});
       }
     }
   }, []);

@@ -8,6 +8,7 @@ import { generateEmbedding } from './embedding';
 import { rerankChunks } from './reranker';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { getAiModel } from '../config/aiModels';
+import { getEnv } from '../env/runtimeEnv';
 
 // Singleton AI Client instance for agentic MCP calls
 let globalAiClient: GoogleGenAI | null = null;
@@ -314,8 +315,8 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   const lexicalSearchContent = query;
 
   // Check if we can use real database connections
-  const isPostgresActive = !!(process.env.DATABASE_URL || process.env.POSTGRES_URL);
-  const isQdrantActive = !!process.env.QDRANT_URL;
+  const isPostgresActive = !!(getEnv('DATABASE_URL') || getEnv('POSTGRES_URL'));
+  const isQdrantActive = !!getEnv('QDRANT_URL');
 
   let resultChunks: any[] = [];
   let totalCount = 0;

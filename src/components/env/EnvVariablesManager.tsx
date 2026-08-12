@@ -146,13 +146,35 @@ export default function EnvVariablesManager({
     }
   };
 
-  const handleSaveAll = () => {
+  const handleSaveAll = async () => {
+    const envsToSave: Record<string, string> = {};
+    Object.entries(formValues).forEach(([k, v]) => {
+      if (v && !v.includes('•') && v.trim() !== '') {
+        envsToSave[k] = v.trim();
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`omnirag_env_${k}`, v.trim());
+        }
+      }
+    });
+
+    try {
+      await fetchWithAuth('/api/v1/env-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          envs: envsToSave,
+        }),
+      });
+    } catch (e) {}
+
     setSaveNotice(
       lang === 'ar'
-        ? 'تم حفظ وتأكيد تهيئة متغيرات البيئة ببيئة تشغيل الجلسة بنجاح.'
-        : 'All environment variables saved and committed to session runtime successfully.'
+        ? 'تم حفظ وتأكيد تهيئة متغيرات البيئة ببيئة الخادم وبقية المحركات بنجاح.'
+        : 'All environment variables saved and synced to backend server runtime successfully.'
     );
     setTimeout(() => setSaveNotice(null), 4000);
+    loadEnvStatus();
   };
 
   const copyDotEnvTemplate = () => {

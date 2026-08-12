@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { getPostgresPool } from '@/lib/storage/postgres';
+import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,9 +33,9 @@ function maskKey(key: string): string {
   return `${key.slice(0, 4)}••••••••${key.slice(-4)}`;
 }
 
-async function runPostgresDiagnostic() {
+async function runPostgresDiagnostic(req?: any) {
   const startTime = Date.now();
-  const connStr = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const connStr = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
 
   if (!connStr) {
     return {
@@ -53,7 +54,7 @@ async function runPostgresDiagnostic() {
   }
 
   try {
-    const pool = getPostgresPool();
+    const pool = getPostgresPool(req);
     if (!pool) {
       return {
         service: 'postgresql',
@@ -117,10 +118,10 @@ async function runPostgresDiagnostic() {
   }
 }
 
-async function runQdrantDiagnostic() {
+async function runQdrantDiagnostic(req?: any) {
   const startTime = Date.now();
-  const url = process.env.QDRANT_URL;
-  const apiKey = process.env.QDRANT_API_KEY;
+  const url = getEnv('QDRANT_URL', req);
+  const apiKey = getEnv('QDRANT_API_KEY', req);
 
   if (!url) {
     return {
@@ -196,9 +197,9 @@ async function runQdrantDiagnostic() {
   }
 }
 
-async function runMistralDiagnostic() {
+async function runMistralDiagnostic(req?: any) {
   const startTime = Date.now();
-  const apiKey = process.env.MISTRAL_API_KEY;
+  const apiKey = getEnv('MISTRAL_API_KEY', req);
 
   if (!apiKey) {
     return {
@@ -277,7 +278,7 @@ async function runMistralDiagnostic() {
   }
 }
 
-function runEnvAudit() {
+function runEnvAudit(req?: any) {
   const envVars = [
     { name: 'DATABASE_URL', category: 'Storage', desc: 'PostgreSQL Lexical & Metadata DB', required: true },
     { name: 'QDRANT_URL', category: 'Vector DB', desc: 'Qdrant Cluster Endpoint', required: true },
@@ -289,7 +290,7 @@ function runEnvAudit() {
   ];
 
   return envVars.map(v => {
-    const val = process.env[v.name];
+    const val = getEnv(v.name, req);
     const present = !!val && val !== 'null' && val !== 'undefined' && val.trim() !== '';
     let preview = 'Not Set';
 
@@ -313,12 +314,12 @@ function runEnvAudit() {
 
 export const GET = withAuthAndRateLimit(async (req, authCtx) => {
   const [postgres, qdrant, mistral] = await Promise.all([
-    runPostgresDiagnostic(),
-    runQdrantDiagnostic(),
-    runMistralDiagnostic(),
+    runPostgresDiagnostic(req),
+    runQdrantDiagnostic(req),
+    runMistralDiagnostic(req),
   ]);
 
-  const envAudit = runEnvAudit();
+  const envAudit = runEnvAudit(req);
 
   // Calculate System Production Readiness Score
   let score = 0;
@@ -330,7 +331,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx) => {
 
   if (mistral.status === 'connected') score += 20;
 
-  if (process.env.GEMINI_API_KEY) score += 10;
+  if (getEnv('GEMINI_API_KEY', req)) score += 10;
 
   let overallStatus: 'healthy' | 'degraded' | 'critical' = 'healthy';
   if (score < 50) overallStatus = 'critical';

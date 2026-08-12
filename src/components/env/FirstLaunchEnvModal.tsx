@@ -161,10 +161,32 @@ export default function FirstLaunchEnvModal({
     }
   };
 
-  const handleFinishOnboarding = () => {
+  const handleFinishOnboarding = async () => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('omnirag_env_first_launch_done', 'true');
     }
+
+    const envsToSave: Record<string, string> = {};
+    Object.entries(formValues).forEach(([k, v]) => {
+      if (v && !v.includes('•') && v.trim() !== '') {
+        envsToSave[k] = v.trim();
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`omnirag_env_${k}`, v.trim());
+        }
+      }
+    });
+
+    try {
+      await fetchWithAuth('/api/v1/env-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          envs: envsToSave,
+        }),
+      });
+    } catch (e) {}
+
     if (onComplete) onComplete();
     onClose();
   };

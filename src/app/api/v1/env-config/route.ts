@@ -1,5 +1,8 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { getEnv, setServerEnv, setServerEnvs } from '@/lib/env/runtimeEnv';
+import { resetPostgresPool } from '@/lib/storage/postgres';
+import { resetQdrantClient } from '@/lib/storage/qdrant';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,7 +135,7 @@ const ENV_METADATA: Omit<EnvVariableDefinition, 'isConfigured' | 'isInjectedBySy
 
 export const GET = withAuthAndRateLimit(async (req, authCtx) => {
   const envList: EnvVariableDefinition[] = ENV_METADATA.map((meta) => {
-    const rawVal = process.env[meta.key];
+    const rawVal = getEnv(meta.key, req);
     const isConfigured = !!rawVal && rawVal.trim() !== '' && rawVal !== 'null' && rawVal !== 'undefined';
     const isInjectedBySystem = meta.key === 'GEMINI_API_KEY' || meta.key === 'APP_URL';
     const type = meta.key.includes('URL') ? 'url' : 'key';
@@ -166,15 +169,42 @@ export const GET = withAuthAndRateLimit(async (req, authCtx) => {
 export const POST = withAuthAndRateLimit(async (req, authCtx) => {
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, key, value } = body;
+    const { action, key, value, envs } = body;
 
     const isMaskedOrEmpty = (val: any) => !val || typeof val !== 'string' || val.trim() === '' || val.includes('•');
     const resolveValue = (inputVal: any, envKey: string) => {
       if (!isMaskedOrEmpty(inputVal)) {
         return inputVal.trim();
       }
-      return process.env[envKey] || '';
+      return getEnv(envKey, req) || '';
     };
+
+    // Save/Sync environment variables to global runtime server store
+    if (action === 'save' || action === 'sync') {
+      const targetEnvs = envs || (key ? { [key]: value } : {});
+      const updatedKeys: string[] = [];
+
+      Object.entries(targetEnvs).forEach(([k, v]) => {
+        if (typeof v === 'string' && !isMaskedOrEmpty(v)) {
+          setServerEnv(k, v.trim());
+          updatedKeys.push(k);
+        }
+      });
+
+      if (updatedKeys.includes('DATABASE_URL') || updatedKeys.includes('POSTGRES_URL')) {
+        resetPostgresPool();
+      }
+      if (updatedKeys.includes('QDRANT_URL') || updatedKeys.includes('QDRANT_API_KEY')) {
+        resetQdrantClient();
+      }
+
+      return NextResponse.json({
+        success: true,
+        action,
+        updatedKeys,
+        message: `تم تحديث وسفظ ${updatedKeys.length} من متغيرات البيئة في الخادم بنجاح.`,
+      });
+    }
 
     // Test specific key connection
     if (action === 'test' && key) {

@@ -22,14 +22,24 @@ import {
 } from './constants';
 import { migrateAndSeedWithDrizzle } from '../db/migrateAndSeedDrizzle';
 
+import { getEnv } from '../env/runtimeEnv';
+
 let pool: any = null;
 let initialized = false;
 
-export function getPostgresPool(): any {
+export function resetPostgresPool() {
+  if (pool) {
+    try { pool.end(); } catch (e) {}
+  }
+  pool = null;
+  initialized = false;
+}
+
+export function getPostgresPool(req?: any): any {
   if (typeof window !== 'undefined') return null; // Safe guard for client-side compilation
   if (pool) return pool;
 
-  const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const connectionString = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
   if (!connectionString) {
     console.warn('PostgreSQL Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.');
     return null;

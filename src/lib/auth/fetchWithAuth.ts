@@ -83,6 +83,19 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
     }
   }
 
+  // Attach client-saved environment variables for runtime backend execution
+  if (typeof window !== 'undefined') {
+    const envKeys = ['DATABASE_URL', 'POSTGRES_URL', 'QDRANT_URL', 'QDRANT_API_KEY', 'MISTRAL_API_KEY', 'UNSTRUCTURED_API_KEY', 'GEMINI_API_KEY'];
+    envKeys.forEach((k) => {
+      try {
+        const val = localStorage.getItem(`omnirag_env_${k}`);
+        if (val && val.trim() !== '' && !val.includes('•')) {
+          headers.set(`x-env-${k.toLowerCase().replace(/_/g, '-')}`, encodeURIComponent(val.trim()));
+        }
+      } catch (e) {}
+    });
+  }
+
   if (options.body && !headers.has('Content-Type') && typeof options.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }

@@ -1,13 +1,20 @@
+import { getEnv } from '../env/runtimeEnv';
+
 let client: any = null;
 let collectionVerified = false;
 const COLLECTION_NAME = 'omnirag_chunks';
 
-export function getQdrantClient(): any {
+export function resetQdrantClient() {
+  client = null;
+  collectionVerified = false;
+}
+
+export function getQdrantClient(req?: any): any {
   if (typeof window !== 'undefined') return null; // Safe guard for client-side compilation
   if (client) return client;
 
-  const url = process.env.QDRANT_URL;
-  const apiKey = process.env.QDRANT_API_KEY;
+  const url = getEnv('QDRANT_URL', req);
+  const apiKey = getEnv('QDRANT_API_KEY', req);
 
   if (!url) {
     console.warn('Qdrant URL (QDRANT_URL) is missing. Qdrant semantic search will be bypassed.');
