@@ -13,6 +13,7 @@ import {
   Lock,
   ArrowRight,
   ArrowLeft,
+  XCircle,
   CheckCircle2,
   Terminal,
   Globe,
@@ -43,6 +44,8 @@ interface LandingPageProps {
 export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }: LandingPageProps) {
   const isAr = lang === 'ar';
   const [activeTab, setActiveTab] = useState<'architecture' | 'mcp' | 'security' | 'benchmarks'>('architecture');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(1);
 
   const navLinks = [
     { id: 'chat', label: isAr ? 'المحادثة الذكية' : 'Agentic Chat' },
@@ -307,6 +310,17 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
                 <Code2 className="w-4 h-4 text-indigo-400" />
                 <span>{t.ctaSecondary}</span>
               </button>
+
+              <button
+                onClick={() => {
+                  setShowOnboarding(true);
+                  setOnboardingStep(1);
+                }}
+                className="px-6 py-3.5 text-sm font-semibold rounded-xl bg-indigo-900/40 border border-indigo-500/30 text-indigo-300 hover:border-indigo-500/50 hover:text-white transition-all flex items-center gap-2"
+              >
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                <span>{isAr ? 'بدء الدليل التفاعلي السريع' : 'Start Quick Setup Guide'}</span>
+              </button>
             </div>
           </div>
 
@@ -553,6 +567,82 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
           <p>{t.footerRights}</p>
         </div>
       </footer>
+
+      {/* Onboarding Overlay */}
+      {showOnboarding && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-8 max-w-xl w-full shadow-2xl relative">
+            <button 
+              onClick={() => setShowOnboarding(false)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white transition cursor-pointer"
+            >
+              <XCircle className="w-6 h-6" />
+            </button>
+            <h2 className="text-2xl font-bold text-white mb-6">
+              {isAr ? 'إعداد مساحة العمل الخاصة بك' : 'Set Up Your Workspace'}
+            </h2>
+            
+            <div className="space-y-8">
+              {/* Step 1 */}
+              <div className={`transition-opacity ${onboardingStep >= 1 ? 'opacity-100' : 'opacity-40'}`}>
+                <div className="flex items-start gap-4">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 1 ? 'bg-emerald-500 text-white' : onboardingStep === 1 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                    {onboardingStep > 1 ? <CheckCircle2 className="w-5 h-5" /> : '1'}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">{isAr ? 'إنشاء مجموعة معرفية' : 'Create a Knowledge Collection'}</h3>
+                    <p className="text-xs text-slate-400 mt-1">{isAr ? 'قم بتنظيم مستنداتك في مجموعات مخصصة (مثال: مستندات الموارد البشرية، الدعم الفني).' : 'Organize your documents into collections (e.g., HR Docs, Technical Support).'}</p>
+                    {onboardingStep === 1 && (
+                      <button onClick={() => setOnboardingStep(2)} className="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition cursor-pointer">
+                        {isAr ? 'متابعة' : 'Continue'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className={`transition-opacity ${onboardingStep >= 2 ? 'opacity-100' : 'opacity-40'}`}>
+                <div className="flex items-start gap-4">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 2 ? 'bg-emerald-500 text-white' : onboardingStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                    {onboardingStep > 2 ? <CheckCircle2 className="w-5 h-5" /> : '2'}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">{isAr ? 'رفع أول مستند' : 'Upload Your First Document'}</h3>
+                    <p className="text-xs text-slate-400 mt-1">{isAr ? 'سيقوم نظام RAG بتجزئة وفهرسة مستندك (PDF/TXT) آلياً.' : 'The RAG system will automatically chunk and index your document (PDF/TXT).'}</p>
+                    {onboardingStep === 2 && (
+                      <button onClick={() => setOnboardingStep(3)} className="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition cursor-pointer">
+                        {isAr ? 'متابعة' : 'Continue'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className={`transition-opacity ${onboardingStep >= 3 ? 'opacity-100' : 'opacity-40'}`}>
+                <div className="flex items-start gap-4">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 3 ? 'bg-emerald-500 text-white' : onboardingStep === 3 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                    {onboardingStep > 3 ? <CheckCircle2 className="w-5 h-5" /> : '3'}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">{isAr ? 'بدء المحادثة الذكية' : 'Start Agentic Chat'}</h3>
+                    <p className="text-xs text-slate-400 mt-1">{isAr ? 'الآن أنت جاهز لطرح الأسئلة واستخراج المعلومات بأمان.' : 'You are now ready to ask questions and extract information securely.'}</p>
+                    {onboardingStep === 3 && (
+                      <button onClick={() => {
+                        setShowOnboarding(false);
+                        onEnterApp();
+                      }} className="mt-3 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition shadow-md shadow-emerald-600/20 cursor-pointer">
+                        {isAr ? 'إنهاء والانتقال للمحادثة' : 'Finish & Go to Chat'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

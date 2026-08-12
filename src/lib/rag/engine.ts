@@ -5,6 +5,7 @@ import { db } from '../storage/db';
 import { searchPostgresLexical } from '../storage/postgres';
 import { searchQdrantSemantic } from '../storage/qdrant';
 import { generateEmbedding } from './embedding';
+import { rerankChunks } from './reranker';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { getAiModel } from '../config/aiModels';
 
@@ -454,6 +455,13 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
     semanticMatches = resultChunks.filter((c) => (c.semanticScore || 0) > 0.4).length;
     lexicalMatches = resultChunks.filter((c) => (c.lexicalScore || 0) > 0.3).length;
+  }
+
+  // Optional Cross-Encoder LLM Reranking (SPEC-C04)
+  if (searchQuery.rerank && resultChunks.length > 1) {
+    const preRerankTime = Date.now();
+    resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[], topK);
+    console.log(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
   }
 
   return {

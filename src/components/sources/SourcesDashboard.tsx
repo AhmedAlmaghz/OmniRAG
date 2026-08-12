@@ -92,10 +92,10 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     setIsLoading(true);
     try {
       const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
-        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`),
-        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`),
-        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`),
-        fetchWithAuth('/api/v1/sources/api-keys-status'),
+        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(e => { console.error('Sources fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
+        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(e => { console.error('Collections fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
+        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(e => { console.error('Documents fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
+        fetchWithAuth('/api/v1/sources/system-status').catch(e => { console.error('System status fetch error', e); return { ok: false, json: async () => ({}) } as Response; }),
       ]);
 
       let sourcesData: any = {};
@@ -124,7 +124,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
       try {
         if (keysRes.ok) keysData = await keysRes.json();
       } catch (e) {
-        console.warn('Failed to parse api-keys-status JSON:', e);
+        console.warn('Failed to parse system-status JSON:', e);
       }
 
       if (sourcesData.sources) setSources(sourcesData.sources);

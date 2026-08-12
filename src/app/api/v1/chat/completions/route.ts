@@ -23,7 +23,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
     const tenantId = auth.tenantId;
-    const { prompt, mode = 'hybrid', collectionIds, modelOverride, approvedToolCall } = body;
+    const { prompt, mode = 'hybrid', collectionIds, modelOverride, approvedToolCall, rerank } = body;
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json(
@@ -55,6 +55,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       tenantId,
       collectionIds,
       topK: 4,
+      rerank: rerank ?? (mode === 'analysis') // Auto-rerank in analysis mode
     });
 
     // Step 2: RAG Generation

@@ -401,22 +401,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
             </span>
             <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'aiModels' ? 'opacity-100' : 'opacity-40'}`} />
           </button>
-          
-          <button
-            id="tab-btn-diagnostics"
-            onClick={() => setActiveTab('diagnostics')}
-            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium text-xs transition duration-200 cursor-pointer ${
-              activeTab === 'diagnostics'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10 border-l-4 border-l-indigo-400'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-white border border-slate-200'
-            }`}
-          >
-            <span className="flex items-center gap-2.5">
-              <Database className="w-4 h-4" />
-              {t.tabDiagnostics}
-            </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'diagnostics' ? 'opacity-100' : 'opacity-40'}`} />
-          </button>
         </div>
 
         {/* Content Area with Animations */}
@@ -929,12 +913,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               {activeTab === 'aiModels' && (
                 <div id="section-aimodels">
                   <ModelSettingsView />
-                </div>
-              )}
-
-              {activeTab === 'diagnostics' && (
-                <div id="section-diagnostics">
-                  <DiagnosticsView tenantId={tenantId} lang={lang} />
                 </div>
               )}
               <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm" id="settings-shared-bar">

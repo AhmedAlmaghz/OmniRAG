@@ -1,39 +1,14 @@
 import { auth } from './firebaseAuth';
 
 export function resolveUrl(url: string): string {
-  if (typeof window === 'undefined' || !url.startsWith('/')) {
+  // Return relative URL on client
+  if (typeof window !== 'undefined' || !url.startsWith('/')) {
     return url;
   }
   
-  let origin = '';
-  const envUrl = process.env.NEXT_PUBLIC_APP_URL || '';
-  if (envUrl && envUrl !== 'null') {
-    origin = envUrl;
-  }
-
-  // Fallback to window.location.origin if it's not null and we don't have envUrl
-  if (!origin && window.location.origin && window.location.origin !== 'null') {
-    origin = window.location.origin;
-  }
-
-  if (origin && origin !== 'null') {
-    if (origin.endsWith('/')) {
-      origin = origin.slice(0, -1);
-    }
-    // Force HTTPS
-    if (origin.startsWith('http://')) {
-      const shouldForceHttps = window.location.protocol === 'https:' ||
-        origin.includes('run.app') ||
-        origin.includes('europe-west1.run.app');
-      if (shouldForceHttps) {
-        origin = origin.replace('http://', 'https://');
-      }
-    }
-    return `${origin}${url}`;
-  }
-  
-  // If we couldn't resolve an absolute URL, just return the relative one and hope the browser allows it.
-  return url;
+  let origin = process.env.APP_URL || 'http://localhost:3000';
+  if (origin.endsWith('/')) origin = origin.slice(0, -1);
+  return `${origin}${url}`;
 }
 
 export async function fetchWithAuth(url: string | URL | Request, options: RequestInit = {}): Promise<Response> {
@@ -65,7 +40,6 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
   }
 
   const finalUrl = typeof url === 'string' ? resolveUrl(url) : url;
-
   return fetch(finalUrl, {
     ...options,
     headers,

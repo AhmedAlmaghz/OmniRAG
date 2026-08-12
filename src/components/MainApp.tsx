@@ -188,6 +188,30 @@ export default function MainApp() {
     }
   };
 
+  // Global keyboard shortcuts for tabs
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        if (e.key === '1') {
+          e.preventDefault();
+          handleTabChange('chat');
+        } else if (e.key === '2') {
+          e.preventDefault();
+          handleTabChange('knowledge');
+        } else if (e.key === '3') {
+          e.preventDefault();
+          handleTabChange('mcp');
+        } else if (e.key === '4') {
+          e.preventDefault();
+          handleTabChange('analytics');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const navTabs = [
     {
       id: 'landing',

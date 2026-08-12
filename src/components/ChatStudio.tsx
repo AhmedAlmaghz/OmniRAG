@@ -109,6 +109,30 @@ Supported rich formatting capabilities:
   const [expandedToolCallId, setExpandedToolCallId] = useState<string | null>(null);
   const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
 
+  // Auto-save message draft to localStorage using a debounced effect
+  useEffect(() => {
+    const draftKey = `omnirag-draft-${tenantId}-${activeConversationId}`;
+    const savedDraft = localStorage.getItem(draftKey);
+    if (savedDraft) {
+      setInputPrompt(savedDraft);
+    } else {
+      setInputPrompt('');
+    }
+  }, [tenantId, activeConversationId]);
+
+  useEffect(() => {
+    const draftKey = `omnirag-draft-${tenantId}-${activeConversationId}`;
+    const timer = setTimeout(() => {
+      if (inputPrompt.trim()) {
+        localStorage.setItem(draftKey, inputPrompt);
+      } else {
+        localStorage.removeItem(draftKey);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [inputPrompt, tenantId, activeConversationId]);
+
   // Load conversations from Firestore
   const fetchConversations = async (autoSelectFirst = true) => {
     setIsLoadingConversations(true);
