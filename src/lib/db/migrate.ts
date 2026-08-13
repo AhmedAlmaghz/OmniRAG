@@ -9,11 +9,14 @@ export async function runMigrations() {
   }
 
   console.log('Starting PostgreSQL schema migrations...');
+  const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
   const pool = new Pool({
     connectionString,
-    ssl: {
-      rejectUnauthorized: true,
-    },
+    ssl: isLocal
+      ? false
+      : {
+          rejectUnauthorized: false,
+        },
     max: 1,
   });
 

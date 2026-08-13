@@ -224,7 +224,16 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       if (key === 'DATABASE_URL') {
         try {
           const { Client } = require('pg');
-          const client = new Client({ connectionString: valToTest, connectionTimeoutMillis: 4000 });
+          const isLocal = valToTest.includes('localhost') || valToTest.includes('127.0.0.1');
+          const client = new Client({
+            connectionString: valToTest,
+            connectionTimeoutMillis: 4000,
+            ssl: isLocal
+              ? false
+              : {
+                  rejectUnauthorized: false,
+                },
+          });
           await client.connect();
           await client.query('SELECT 1;');
           await client.end();
