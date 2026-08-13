@@ -4,6 +4,10 @@ import * as schema from './schema';
 
 let dbInstance: any = null;
 
+export function resetDrizzle() {
+  dbInstance = null;
+}
+
 export function getDrizzle() {
   if (dbInstance) return dbInstance;
   

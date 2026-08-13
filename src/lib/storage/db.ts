@@ -41,6 +41,7 @@ import {
   deletePostgresConversation,
   getPostgresMessages,
   insertPostgresMessage,
+  resetPostgresPool,
 } from './postgres';
 import { upsertQdrantChunk, deleteQdrantDocument, updateQdrantDocumentPayload } from './qdrant';
 import { generateEmbedding } from '../rag/embedding';
@@ -339,8 +340,19 @@ class OmniRAGDatabase {
     this.useMemory = true;
   }
 
+  disableMemoryFallback() {
+    this.useMemory = false;
+  }
+
   isMemoryEnabled(): boolean {
     return this.useMemory;
+  }
+
+  resetDatabaseState() {
+    this.useMemory = false;
+    resetPostgresPool();
+    isSeeded = false;
+    seedingPromise = null;
   }
 
   private handleDatabaseError(error: any, actionName: string) {

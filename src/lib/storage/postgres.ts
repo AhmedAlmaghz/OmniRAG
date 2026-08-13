@@ -21,6 +21,7 @@ import {
   INITIAL_AUDIT_LOGS,
 } from './constants';
 import { migrateAndSeedWithDrizzle } from '../db/migrateAndSeedDrizzle';
+import { resetDrizzle } from '../../db';
 
 import { getEnv } from '../env/runtimeEnv';
 
@@ -33,6 +34,9 @@ export function resetPostgresPool() {
   }
   pool = null;
   initialized = false;
+  try {
+    resetDrizzle();
+  } catch (e) {}
 }
 
 export function getPostgresPool(req?: any): any {
