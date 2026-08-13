@@ -353,15 +353,36 @@ class OmniRAGDatabase {
 
   // Sources
   async getSources(tenantId: string): Promise<SourceConnector[]> {
-    if (this.useMemory) return memoryDb.getSources(tenantId);
-    try {
-      await ensureSeeded();
-      if (this.useMemory) return memoryDb.getSources(tenantId);
-      return await getPostgresSources(tenantId);
-    } catch (e) {
-      this.handleDatabaseError(e, 'getSources');
+    let sourcesList: SourceConnector[] = [];
+    if (this.useMemory) {
+      sourcesList = memoryDb.getSources(tenantId);
+    } else {
+      try {
+        await ensureSeeded();
+        if (this.useMemory) {
+          sourcesList = memoryDb.getSources(tenantId);
+        } else {
+          sourcesList = await getPostgresSources(tenantId);
+        }
+      } catch (e) {
+        this.handleDatabaseError(e, 'getSources');
+        sourcesList = memoryDb.getSources(tenantId);
+      }
     }
-    return memoryDb.getSources(tenantId);
+
+    if (sourcesList.length === 0) {
+      const defaultSources = INITIAL_SOURCES.map((s) => ({
+        ...s,
+        id: `${s.id}-${tenantId}`,
+        tenantId,
+      }));
+      for (const s of defaultSources) {
+        await this.addSource(s);
+      }
+      return defaultSources;
+    }
+
+    return sourcesList;
   }
 
   async getSourceById(id: string, tenantId: string): Promise<SourceConnector | undefined> {
@@ -570,15 +591,36 @@ class OmniRAGDatabase {
 
   // Sync Logs
   async getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
-    if (this.useMemory) return memoryDb.getSyncLogs(tenantId, sourceId);
-    try {
-      await ensureSeeded();
-      if (this.useMemory) return memoryDb.getSyncLogs(tenantId, sourceId);
-      return await getPostgresSyncLogs(tenantId, sourceId);
-    } catch (e) {
-      this.handleDatabaseError(e, 'getSyncLogs');
+    let logsList: SyncLogEntry[] = [];
+    if (this.useMemory) {
+      logsList = memoryDb.getSyncLogs(tenantId, sourceId);
+    } else {
+      try {
+        await ensureSeeded();
+        if (this.useMemory) {
+          logsList = memoryDb.getSyncLogs(tenantId, sourceId);
+        } else {
+          logsList = await getPostgresSyncLogs(tenantId, sourceId);
+        }
+      } catch (e) {
+        this.handleDatabaseError(e, 'getSyncLogs');
+        logsList = memoryDb.getSyncLogs(tenantId, sourceId);
+      }
     }
-    return memoryDb.getSyncLogs(tenantId, sourceId);
+
+    if (logsList.length === 0) {
+      const defaultLogs = INITIAL_SYNC_LOGS.map((l) => ({
+        ...l,
+        id: `${l.id}-${tenantId}`,
+        tenantId,
+      }));
+      for (const l of defaultLogs) {
+        await this.addSyncLog(l);
+      }
+      return defaultLogs;
+    }
+
+    return logsList;
   }
 
   async addSyncLog(log: SyncLogEntry): Promise<void> {
@@ -615,15 +657,47 @@ class OmniRAGDatabase {
 
   // Documents
   async getDocuments(tenantId: string): Promise<Document[]> {
-    if (this.useMemory) return memoryDb.getDocuments(tenantId);
-    try {
-      await ensureSeeded();
-      if (this.useMemory) return memoryDb.getDocuments(tenantId);
-      return await getPostgresDocuments(tenantId);
-    } catch (e) {
-      this.handleDatabaseError(e, 'getDocuments');
+    let docsList: Document[] = [];
+    if (this.useMemory) {
+      docsList = memoryDb.getDocuments(tenantId);
+    } else {
+      try {
+        await ensureSeeded();
+        if (this.useMemory) {
+          docsList = memoryDb.getDocuments(tenantId);
+        } else {
+          docsList = await getPostgresDocuments(tenantId);
+        }
+      } catch (e) {
+        this.handleDatabaseError(e, 'getDocuments');
+        docsList = memoryDb.getDocuments(tenantId);
+      }
     }
-    return memoryDb.getDocuments(tenantId);
+
+    if (docsList.length === 0) {
+      const defaultDocs = INITIAL_DOCUMENTS.map((d) => ({
+        ...d,
+        id: `${d.id}-${tenantId}`,
+        tenantId,
+      }));
+      for (const d of defaultDocs) {
+        await this.addDocument(d);
+      }
+
+      const defaultChunks = INITIAL_CHUNKS.map((c) => ({
+        ...c,
+        id: `${c.id}-${tenantId}`,
+        documentId: `${c.documentId}-${tenantId}`,
+        tenantId,
+      }));
+      for (const ch of defaultChunks) {
+        await this.addChunk(ch);
+      }
+
+      return defaultDocs;
+    }
+
+    return docsList;
   }
 
   async getDocumentById(id: string, tenantId: string): Promise<Document | undefined> {
@@ -686,15 +760,37 @@ class OmniRAGDatabase {
 
   // Chunks
   async getChunks(tenantId: string): Promise<DocumentChunk[]> {
-    if (this.useMemory) return memoryDb.getChunks(tenantId);
-    try {
-      await ensureSeeded();
-      if (this.useMemory) return memoryDb.getChunks(tenantId);
-      return await getPostgresChunks(tenantId);
-    } catch (e) {
-      this.handleDatabaseError(e, 'getChunks');
+    let chunksList: DocumentChunk[] = [];
+    if (this.useMemory) {
+      chunksList = memoryDb.getChunks(tenantId);
+    } else {
+      try {
+        await ensureSeeded();
+        if (this.useMemory) {
+          chunksList = memoryDb.getChunks(tenantId);
+        } else {
+          chunksList = await getPostgresChunks(tenantId);
+        }
+      } catch (e) {
+        this.handleDatabaseError(e, 'getChunks');
+        chunksList = memoryDb.getChunks(tenantId);
+      }
     }
-    return memoryDb.getChunks(tenantId);
+
+    if (chunksList.length === 0) {
+      const defaultChunks = INITIAL_CHUNKS.map((c) => ({
+        ...c,
+        id: `${c.id}-${tenantId}`,
+        documentId: `${c.documentId}-${tenantId}`,
+        tenantId,
+      }));
+      for (const ch of defaultChunks) {
+        await this.addChunk(ch);
+      }
+      return defaultChunks;
+    }
+
+    return chunksList;
   }
 
   async addChunk(chunk: DocumentChunk): Promise<void> {
@@ -751,15 +847,36 @@ class OmniRAGDatabase {
 
   // Collections
   async getCollections(tenantId: string): Promise<Collection[]> {
-    if (this.useMemory) return memoryDb.getCollections(tenantId);
-    try {
-      await ensureSeeded();
-      if (this.useMemory) return memoryDb.getCollections(tenantId);
-      return await getPostgresCollections(tenantId);
-    } catch (e) {
-      this.handleDatabaseError(e, 'getCollections');
+    let collectionsList: Collection[] = [];
+    if (this.useMemory) {
+      collectionsList = memoryDb.getCollections(tenantId);
+    } else {
+      try {
+        await ensureSeeded();
+        if (this.useMemory) {
+          collectionsList = memoryDb.getCollections(tenantId);
+        } else {
+          collectionsList = await getPostgresCollections(tenantId);
+        }
+      } catch (e) {
+        this.handleDatabaseError(e, 'getCollections');
+        collectionsList = memoryDb.getCollections(tenantId);
+      }
     }
-    return memoryDb.getCollections(tenantId);
+
+    if (collectionsList.length === 0) {
+      const defaultCols = INITIAL_COLLECTIONS.map((c) => ({
+        ...c,
+        id: `${c.id}-${tenantId}`,
+        tenantId,
+      }));
+      for (const c of defaultCols) {
+        await this.addCollection(c);
+      }
+      return defaultCols;
+    }
+
+    return collectionsList;
   }
 
   async addCollection(col: Collection): Promise<void> {
@@ -838,15 +955,36 @@ class OmniRAGDatabase {
 
   // Audit Logs
   async getAuditLogs(tenantId: string): Promise<AuditLogEntry[]> {
-    if (this.useMemory) return memoryDb.getAuditLogs(tenantId);
-    try {
-      await ensureSeeded();
-      if (this.useMemory) return memoryDb.getAuditLogs(tenantId);
-      return await getPostgresAuditLogs(tenantId);
-    } catch (e) {
-      this.handleDatabaseError(e, 'getAuditLogs');
+    let auditList: AuditLogEntry[] = [];
+    if (this.useMemory) {
+      auditList = memoryDb.getAuditLogs(tenantId);
+    } else {
+      try {
+        await ensureSeeded();
+        if (this.useMemory) {
+          auditList = memoryDb.getAuditLogs(tenantId);
+        } else {
+          auditList = await getPostgresAuditLogs(tenantId);
+        }
+      } catch (e) {
+        this.handleDatabaseError(e, 'getAuditLogs');
+        auditList = memoryDb.getAuditLogs(tenantId);
+      }
     }
-    return memoryDb.getAuditLogs(tenantId);
+
+    if (auditList.length === 0) {
+      const defaultAudit = INITIAL_AUDIT_LOGS.map((a) => ({
+        ...a,
+        id: `${a.id}-${tenantId}`,
+        tenantId,
+      }));
+      for (const a of defaultAudit) {
+        await this.addAuditLog(a);
+      }
+      return defaultAudit;
+    }
+
+    return auditList;
   }
 
   async addAuditLog(entry: AuditLogEntry): Promise<void> {

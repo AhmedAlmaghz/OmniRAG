@@ -481,7 +481,7 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
   const client = await p.connect();
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
-    const res = await client.query('SELECT * FROM documents ORDER BY created_at DESC');
+    const res = await client.query('SELECT * FROM documents WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
     return res.rows.map((row: any) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -511,7 +511,7 @@ export async function getPostgresDocumentById(id: string, tenantId: string): Pro
   const client = await p.connect();
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
-    const res = await client.query('SELECT * FROM documents WHERE id = $1', [id]);
+    const res = await client.query('SELECT * FROM documents WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
     if (res.rows.length === 0) return undefined;
     const row = res.rows[0];
     return {
@@ -617,7 +617,7 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
   const client = await p.connect();
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
-    const res = await client.query('SELECT * FROM chunks');
+    const res = await client.query('SELECT * FROM chunks WHERE tenant_id = $1', [tenantId]);
     return res.rows.map((row: any) => ({
       id: row.id,
       tenantId: row.tenant_id,
