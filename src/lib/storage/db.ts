@@ -182,6 +182,21 @@ class MemoryDatabase {
     this.collections.push(col);
   }
 
+  /**
+   * Recompute documentCount for all collections belonging to a tenant
+   * by counting documents whose collectionIds array contains each collection.
+   */
+  recalculateCollectionCounts(tenantId: string): void {
+    const docs = this.documents.filter((d) => d.tenantId === tenantId);
+    this.collections
+      .filter((c) => c.tenantId === tenantId)
+      .forEach((c) => {
+        c.documentCount = docs.filter(
+          (d) => Array.isArray(d.collectionIds) && d.collectionIds.includes(c.id)
+        ).length;
+      });
+  }
+
   getMcpServers(tenantId: string): MCPServerConfig[] {
     const servers = this.mcpServers.filter((s) => s.tenantId === tenantId);
     if (servers.length === 0) {
@@ -546,7 +561,7 @@ class OmniRAGDatabase {
         tenantId,
         title: newDocTitle,
         content: newDocContent,
-        sourceType: source.type === 'file' ? 'file' : 'integration',
+        sourceType: source.type,
         language: 'ar',
         status: 'indexed',
         chunkCount: 0,
@@ -736,6 +751,9 @@ class OmniRAGDatabase {
     } catch (e) {
       this.handleDatabaseError(e, 'addDocument');
     }
+
+    // Recompute collection counts after adding a document
+    await this.recalculateCollectionCounts(docObj.tenantId);
   }
 
   async updateDocument(id: string, updates: Partial<Document>, tenantId: string): Promise<Document | undefined> {
@@ -746,7 +764,7 @@ class OmniRAGDatabase {
       if (!this.useMemory) {
         try {
           await insertPostgresDocument(updated);
-          
+
           if (updates.collectionIds) {
             await updateQdrantDocumentPayload(id, tenantId, { collectionIds: updates.collectionIds });
           }
@@ -754,6 +772,12 @@ class OmniRAGDatabase {
           this.handleDatabaseError(e, 'updateDocument');
         }
       }
+
+      // Recompute collection counts when collectionIds change
+      if (updates.collectionIds) {
+        await this.recalculateCollectionCounts(tenantId);
+      }
+
       return updated;
     }
     return undefined;
@@ -768,6 +792,9 @@ class OmniRAGDatabase {
     } catch (extErr) {
       this.handleDatabaseError(extErr, 'deleteDocument');
     }
+
+    // Recompute collection counts after deletion
+    await this.recalculateCollectionCounts(tenantId);
   }
 
   // Chunks
@@ -901,6 +928,50 @@ class OmniRAGDatabase {
       await insertPostgresCollection(col);
     } catch (e) {
       this.handleDatabaseError(e, 'addCollection');
+    }
+  }
+
+  /**
+   * Recompute and persist documentCount for all collections of a tenant.
+   * Called automatically after addDocument/deleteDocument and on collectionIds updates.
+   */
+  async recalculateCollectionCounts(tenantId: string): Promise<void> {
+    // Always update the in-memory copy so reads are consistent
+    memoryDb.recalculateCollectionCounts(tenantId);
+
+    if (this.useMemory) return;
+
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      const pool = (await import('./postgres')).getPostgresPool();
+      if (!pool) return;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // Recompute counts by joining documents->collection_ids JSONB
+        await client.query(
+          `
+          UPDATE collections c
+          SET document_count = COALESCE((
+            SELECT COUNT(*)
+            FROM documents d
+            WHERE d.tenant_id = c.tenant_id
+              AND d.collection_ids ? c.id
+          ), 0)
+          WHERE c.tenant_id = $1
+          `,
+          [tenantId]
+        );
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    } catch (e) {
+      this.handleDatabaseError(e, 'recalculateCollectionCounts');
     }
   }
 

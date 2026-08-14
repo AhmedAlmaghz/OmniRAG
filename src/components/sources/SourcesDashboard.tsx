@@ -41,6 +41,10 @@ import {
   ArrowUpRight,
   LayoutGrid,
   List,
+  Rss,
+  BookOpen,
+  MessageSquare,
+  Mail,
 } from 'lucide-react';
 
 interface SourcesDashboardProps {
@@ -293,13 +297,19 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     switch (type) {
       case 'file': return <FileText className="w-5 h-5 text-indigo-600" />;
       case 'pdf': return <FileText className="w-5 h-5 text-rose-600" />;
-      case 'text': return <FileCheck className="w-5 h-5 text-emerald-600" />;
-      case 'sample': return <Sparkles className="w-5 h-5 text-indigo-500" />;
-      case 'url': return <Globe className="w-5 h-5 text-blue-600" />;
+      case 'url':
+      case 'web': return <Globe className="w-5 h-5 text-blue-600" />;
+      case 'rss': return <Rss className="w-5 h-5 text-orange-500" />;
       case 'youtube': return <Youtube className="w-5 h-5 text-rose-600" />;
       case 'github': return <Github className="w-5 h-5 text-slate-800" />;
       case 'database': return <Database className="w-5 h-5 text-amber-600" />;
       case 'gdrive': return <FolderPlus className="w-5 h-5 text-emerald-600" />;
+      case 'notion': return <BookOpen className="w-5 h-5 text-slate-700" />;
+      case 'confluence': return <BookOpen className="w-5 h-5 text-blue-700" />;
+      case 'slack': return <MessageSquare className="w-5 h-5 text-violet-600" />;
+      case 'email': return <Mail className="w-5 h-5 text-sky-600" />;
+      case 's3': return <Folder className="w-5 h-5 text-amber-700" />;
+      case 'api': return <Server className="w-5 h-5 text-slate-600" />;
       case 'custom_mcp': return <Zap className="w-5 h-5 text-amber-500" />;
       default: return <Server className="w-5 h-5 text-violet-600" />;
     }
@@ -983,7 +993,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                           </div>
 
                           <h4 className="text-xs font-extrabold text-slate-900 pt-1 leading-tight">{col.name}</h4>
-                          <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">{col.description}</p>
+                          <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">{col.description || (isRtl ? 'مجموعة معرفية بدون وصف' : 'Untitled knowledge collection')}</p>
                         </div>
 
                         <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">

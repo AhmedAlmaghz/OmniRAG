@@ -671,7 +671,7 @@ export function DocumentIngestionStudio({
     }, 100);
 
     try {
-      let determinedSourceType: string = 'file';
+      let determinedSourceType: 'file' | 'pdf' | 'youtube' = 'file';
       let sourceConfig: Record<string, any> = {};
 
       if (inputTab === 'youtube') {
@@ -685,10 +685,6 @@ export function DocumentIngestionStudio({
       } else if (selectedFileName?.toLowerCase().endsWith('.pdf')) {
         determinedSourceType = 'pdf';
         sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };
-      } else if (inputTab === 'text') {
-        determinedSourceType = 'text';
-      } else if (inputTab === 'sample') {
-        determinedSourceType = 'sample';
       } else if (selectedFileName) {
         determinedSourceType = 'file';
         sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };

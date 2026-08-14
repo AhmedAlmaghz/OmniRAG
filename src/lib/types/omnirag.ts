@@ -28,7 +28,24 @@ export interface Document {
   tenantId: TenantId;
   title: string;
   content: string;
-  sourceType: 'file' | 'url' | 'api' | 'integration';
+  sourceType:
+    | 'file'
+    | 'pdf'
+    | 'url'
+    | 'web'
+    | 'rss'
+    | 'youtube'
+    | 'github'
+    | 'notion'
+    | 'gdrive'
+    | 'confluence'
+    | 'slack'
+    | 'email'
+    | 'database'
+    | 's3'
+    | 'api'
+    | 'integration'
+    | 'custom_mcp';
   language: 'ar' | 'en' | 'auto';
   status: 'pending' | 'processing' | 'indexed' | 'failed';
   chunkCount: number;
@@ -48,7 +65,7 @@ export interface DocumentChunk {
   score?: number;
   semanticScore?: number;
   lexicalScore?: number;
-  language: 'ar' | 'en';
+  language: 'ar' | 'en' | 'auto';
   metadata?: Record<string, any>;
 }
 
@@ -56,7 +73,7 @@ export interface Collection {
   id: string;
   tenantId: TenantId;
   name: string;
-  description: string;
+  description?: string;
   documentCount: number;
   createdAt: string;
 }
@@ -162,7 +179,9 @@ export interface AuditLogEntry {
 
 export type SourceType =
   | 'file'
+  | 'pdf'
   | 'url'
+  | 'web'
   | 'rss'
   | 'youtube'
   | 'github'
@@ -172,7 +191,9 @@ export type SourceType =
   | 'slack'
   | 'email'
   | 'database'
-  | 'api';
+  | 's3'
+  | 'api'
+  | 'custom_mcp';
 
 export type SourceStatus = 'healthy' | 'syncing' | 'degraded' | 'error' | 'paused';
 
