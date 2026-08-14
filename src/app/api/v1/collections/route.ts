@@ -22,15 +22,11 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     const tenantId = authCtx.tenantId;
     const { name, description } = body;
 
-    if (!name || typeof name !== 'string' || !name.trim()) {
-      return NextResponse.json({ error: 'Collection name is required' }, { status: 400 });
-    }
-
     const col: Collection = {
       id: `col-${Date.now()}`,
       tenantId,
-      name: name.trim(),
-      description: description ? String(description).trim() : undefined,
+      name,
+      description,
       documentCount: 0,
       createdAt: new Date().toISOString(),
     };

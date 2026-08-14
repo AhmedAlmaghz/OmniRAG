@@ -3,7 +3,7 @@ import { Terminal, Send, CheckCircle2, Play, Loader2, Code2, Server } from 'luci
 import { API_ENDPOINTS_DEMO } from '../data/sdlcData';
 import { CodeBlock } from '../components/ui/CodeBlock';
 import { Language } from '../types';
-import { resolveUrl } from '@/lib/auth/fetchWithAuth';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
 interface ApiDemoPageProps {
   lang: Language;
@@ -43,7 +43,7 @@ export const ApiDemoPage: React.FC<ApiDemoPageProps> = ({ lang }) => {
         options.body = requestPayload;
       }
 
-      const res = await fetch(resolveUrl(selectedEndpoint.path), options);
+      const res = await fetchWithAuth(selectedEndpoint.path, options);
       const endTime = performance.now();
       
       setStatusCode(res.status);

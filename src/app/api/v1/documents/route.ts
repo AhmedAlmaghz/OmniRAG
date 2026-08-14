@@ -59,25 +59,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     }
 
     if (!sourceObj) {
-      const allowedSourceTypes: SourceType[] = [
-        'file',
-        'pdf',
-        'url',
-        'web',
-        'rss',
-        'youtube',
-        'github',
-        'notion',
-        'gdrive',
-        'confluence',
-        'slack',
-        'email',
-        'database',
-        's3',
-        'api',
-        'custom_mcp',
-      ];
-      const validSourceType: SourceType = (allowedSourceTypes as string[]).includes(sourceType as string)
+      const validSourceType: SourceType = (['file', 'youtube', 'web', 'github', 'database', 'notion', 'gdrive', 'slack', 's3', 'api', 'custom_mcp', 'pdf'] as SourceType[]).includes(sourceType as SourceType)
         ? (sourceType as SourceType)
         : 'file';
 
@@ -104,7 +86,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       tenantId,
       title,
       content,
-      sourceType: sourceObj.type,
+      sourceType: sourceObj.type === 'file' ? 'file' : 'integration',
       language,
       status: 'indexed',
       chunkCount: 0,

@@ -81,9 +81,7 @@ export async function migrateAndSeedWithDrizzle() {
         config JSONB DEFAULT '{}'::jsonb,
         sync_schedule VARCHAR(100),
         last_sync_at VARCHAR(100),
-        next_sync_at VARCHAR(100),
         document_count INT DEFAULT 0,
-        total_bytes BIGINT DEFAULT 0,
         last_error TEXT,
         created_at VARCHAR(100) NOT NULL,
         collection_ids JSONB DEFAULT '[]'::jsonb
@@ -184,8 +182,6 @@ export async function migrateAndSeedWithDrizzle() {
     await client.query(`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS created_at VARCHAR(100) DEFAULT '';`);
     await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS collection_ids JSONB DEFAULT '[]'::jsonb;`);
     await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
-    await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS next_sync_at VARCHAR(100);`);
-    await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS total_bytes BIGINT DEFAULT 0;`);
     await client.query(`ALTER TABLE collections ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
 
     await client.query('COMMIT');
@@ -282,9 +278,7 @@ export async function migrateAndSeedWithDrizzle() {
         config: s.config || {},
         syncSchedule: s.syncSchedule || '',
         lastSyncAt: s.lastSyncAt || '',
-        nextSyncAt: s.nextSyncAt || null,
         documentCount: s.documentCount || 0,
-        totalBytes: s.totalBytes || 0,
         lastError: s.lastError || '',
         createdAt: s.createdAt,
         collectionIds: s.collectionIds || [],

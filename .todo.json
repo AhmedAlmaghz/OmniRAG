@@ -1,0 +1,37 @@
+[
+  {
+    "content": "Explore project structure and understand the codebase",
+    "active_form": "Exploring project structure",
+    "status": "in_progress"
+  },
+  {
+    "content": "Identify database schema and field names",
+    "active_form": "Identifying database schema and field names",
+    "status": "pending"
+  },
+  {
+    "content": "Find frontend components that display data",
+    "active_form": "Finding frontend display components",
+    "status": "pending"
+  },
+  {
+    "content": "Find backend API endpoints that fetch data",
+    "active_form": "Finding backend API endpoints",
+    "status": "pending"
+  },
+  {
+    "content": "Compare field names between DB, API, and frontend",
+    "active_form": "Comparing field names across layers",
+    "status": "pending"
+  },
+  {
+    "content": "Fix mismatches and issues found",
+    "active_form": "Fixing mismatches and issues",
+    "status": "pending"
+  },
+  {
+    "content": "Test and verify the fixes",
+    "active_form": "Testing and verifying fixes",
+    "status": "pending"
+  }
+]

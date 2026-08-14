@@ -1,3 +1,5 @@
+'use client';
+
 import {
   LineChart,
   Line,
@@ -8,8 +10,6 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
-'use client';
-
 import React, { useState, useEffect } from 'react';
 import ChunksDistributionChart from './analytics/ChunksDistributionChart';
 import {

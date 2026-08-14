@@ -1,6 +1,6 @@
-import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 'use client';
 
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 import React, { useState, useEffect } from 'react';
 import {
   Cpu,

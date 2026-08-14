@@ -1,6 +1,6 @@
-import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 'use client';
 
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 import { useState } from 'react';
 import { Terminal, Play, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 

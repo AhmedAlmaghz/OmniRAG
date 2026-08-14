@@ -17,7 +17,7 @@ import {
 import { SDLC_PHASES } from '../data/sdlcData';
 import { CodeBlock } from '../components/ui/CodeBlock';
 import { CodeAnalysisResult, Language } from '../types';
-import { resolveUrl } from '@/lib/auth/fetchWithAuth';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
 interface SdlcPageProps {
   lang: Language;
@@ -89,7 +89,7 @@ export default function UserCard({ userData }: { userData: any }) {
     setAuditLoading(true);
     setAuditResult(null);
     try {
-      const res = await fetch(resolveUrl('/api/sdlc-analyze'), {
+      const res = await fetchWithAuth('/api/sdlc-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: codeToAudit, focus: 'security-and-types' }),

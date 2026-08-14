@@ -1,36 +1,13 @@
 import { auth } from './firebaseAuth';
 
 export function resolveUrl(url: string): string {
-  if (!url.startsWith('/')) {
+  if (!url || !url.startsWith('/')) {
     return url;
   }
 
+  // In the browser, relative URLs starting with '/' are resolved natively by the browser
+  // against the active origin and iframe context without protocol or hostname mismatch.
   if (typeof window !== 'undefined') {
-    // 1. Try window.__APP_ORIGIN__ injected in layout.tsx
-    // @ts-ignore
-    const appOrigin = window.__APP_ORIGIN__;
-    if (appOrigin && typeof appOrigin === 'string' && appOrigin !== 'null' && appOrigin.startsWith('http')) {
-      const cleanOrigin = appOrigin.endsWith('/') ? appOrigin.slice(0, -1) : appOrigin;
-      return `${cleanOrigin}${url}`;
-    }
-
-    // 2. Try window.location.origin
-    if (window.location && window.location.origin && window.location.origin !== 'null' && window.location.origin !== 'http://null' && window.location.origin.startsWith('http')) {
-      const cleanOrigin = window.location.origin.endsWith('/') ? window.location.origin.slice(0, -1) : window.location.origin;
-      return `${cleanOrigin}${url}`;
-    }
-
-    // 3. Try window.location.href
-    if (window.location && window.location.href && window.location.href.startsWith('http')) {
-      try {
-        const parsed = new URL(window.location.href);
-        if (parsed.origin && parsed.origin !== 'null' && parsed.origin.startsWith('http')) {
-          const cleanOrigin = parsed.origin.endsWith('/') ? parsed.origin.slice(0, -1) : parsed.origin;
-          return `${cleanOrigin}${url}`;
-        }
-      } catch (e) {}
-    }
-
     return url;
   }
 
@@ -44,6 +21,53 @@ export function resolveUrl(url: string): string {
   }
 
   return `${origin}${url}`;
+}
+
+function wrapResponseWithSafeJson(res: Response): Response {
+  const originalJson = res.json.bind(res);
+
+  // Override res.json to safely handle HTML / invalid JSON responses
+  res.json = async () => {
+    try {
+      // Clone response to be able to read text safely if json() fails
+      const clone = res.clone();
+      try {
+        return await originalJson();
+      } catch (jsonErr) {
+        const text = await clone.text().catch(() => '');
+        console.warn('Endpoint returned non-JSON response (status: ' + res.status + '):', text.slice(0, 120));
+        
+        // Return structured fallback object instead of crashing UI
+        return {
+          ok: false,
+          error: `Non-JSON response from server (status ${res.status})`,
+          sources: [],
+          collections: [],
+          documents: [],
+          messages: [],
+          conversations: [],
+          servers: [],
+          syncLogs: [],
+          mcpResources: [],
+          status: res.status,
+          raw: text.slice(0, 300)
+        };
+      }
+    } catch (fallbackErr) {
+      return {
+        ok: false,
+        error: 'Failed to read response body',
+        sources: [],
+        collections: [],
+        documents: [],
+        messages: [],
+        conversations: [],
+        servers: []
+      };
+    }
+  };
+
+  return res;
 }
 
 export async function fetchWithAuth(url: string | URL | Request, options: RequestInit = {}): Promise<Response> {
@@ -104,10 +128,11 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
   const resolvedUrl = resolveUrl(rawUrl);
 
   try {
-    return await fetch(resolvedUrl, {
+    const response = await fetch(resolvedUrl, {
       ...options,
       headers,
     });
+    return wrapResponseWithSafeJson(response);
   } catch (primaryError) {
     console.warn(`Primary fetch to ${resolvedUrl} failed, trying relative/fallback URL:`, primaryError);
     
@@ -117,27 +142,33 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
 
     if (fallbackUrl !== resolvedUrl) {
       try {
-        return await fetch(fallbackUrl, {
+        const response = await fetch(fallbackUrl, {
           ...options,
           headers,
         });
+        return wrapResponseWithSafeJson(response);
       } catch (fallbackError) {
         console.warn(`Fallback fetch to ${fallbackUrl} also failed:`, fallbackError);
       }
     }
 
-    return new Response(JSON.stringify({ 
+    const fallbackResponse = new Response(JSON.stringify({ 
       error: 'Network request failed',
       sources: [],
       collections: [],
       documents: [],
       syncLogs: [],
-      mcpResources: []
+      mcpResources: [],
+      conversations: [],
+      messages: [],
+      servers: []
     }), {
       status: 503,
       statusText: 'Service Unavailable',
       headers: { 'Content-Type': 'application/json' },
     });
+
+    return wrapResponseWithSafeJson(fallbackResponse);
   }
 }
 

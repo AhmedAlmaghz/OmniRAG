@@ -1,6 +1,6 @@
-import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 'use client';
 
+import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Collection } from '@/lib/types/omnirag';
 import {
@@ -671,7 +671,7 @@ export function DocumentIngestionStudio({
     }, 100);
 
     try {
-      let determinedSourceType: 'file' | 'pdf' | 'youtube' = 'file';
+      let determinedSourceType: string = 'file';
       let sourceConfig: Record<string, any> = {};
 
       if (inputTab === 'youtube') {
@@ -685,6 +685,10 @@ export function DocumentIngestionStudio({
       } else if (selectedFileName?.toLowerCase().endsWith('.pdf')) {
         determinedSourceType = 'pdf';
         sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };
+      } else if (inputTab === 'text') {
+        determinedSourceType = 'text';
+      } else if (inputTab === 'sample') {
+        determinedSourceType = 'sample';
       } else if (selectedFileName) {
         determinedSourceType = 'file';
         sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };

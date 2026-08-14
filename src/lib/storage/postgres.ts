@@ -27,10 +27,6 @@ import { getEnv } from '../env/runtimeEnv';
 
 let pool: any = null;
 let initialized = false;
-let poolCreatedAt = 0;
-
-// Maximum pool age before recreation (5 minutes) - helps with serverless stale connections
-const MAX_POOL_AGE_MS = 5 * 60 * 1000;
 
 export function resetPostgresPool() {
   if (pool) {
@@ -38,7 +34,6 @@ export function resetPostgresPool() {
   }
   pool = null;
   initialized = false;
-  poolCreatedAt = 0;
   try {
     resetDrizzle();
   } catch (e) {}
@@ -46,24 +41,11 @@ export function resetPostgresPool() {
 
 export function getPostgresPool(req?: any): any {
   if (typeof window !== 'undefined') return null; // Safe guard for client-side compilation
-
-  // Check if pool exists and is not too old (for serverless environments)
-  const now = Date.now();
-  if (pool && (now - poolCreatedAt) < MAX_POOL_AGE_MS) {
-    return pool;
-  }
-
-  // Pool is stale or doesn't exist, create new one
-  if (pool) {
-    try { pool.end(); } catch (e) {}
-    pool = null;
-    initialized = false;
-    poolCreatedAt = 0;
-  }
+  if (pool) return pool;
 
   const connectionString = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
   if (!connectionString) {
-    console.warn('[OmniRAG Postgres] Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.');
+    console.warn('PostgreSQL Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.');
     return null;
   }
 
@@ -80,15 +62,10 @@ export function getPostgresPool(req?: any): any {
           },
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000, // 10 second connection timeout
     });
-    poolCreatedAt = now;
-    console.log('[OmniRAG Postgres] New connection pool created');
     return pool;
   } catch (error) {
-    console.error('[OmniRAG Postgres] Failed to initialize PostgreSQL connection pool:', error);
-    pool = null;
-    poolCreatedAt = 0;
+    console.error('Failed to initialize PostgreSQL connection pool:', error);
     return null;
   }
 }
@@ -153,9 +130,7 @@ export async function ensurePostgresTables() {
           config JSONB DEFAULT '{}'::jsonb,
           sync_schedule VARCHAR(100),
           last_sync_at VARCHAR(100),
-          next_sync_at VARCHAR(100),
           document_count INT DEFAULT 0,
-          total_bytes INT DEFAULT 0,
           last_error TEXT,
           created_at VARCHAR(100) NOT NULL,
           collection_ids JSONB DEFAULT '[]'::jsonb
@@ -224,8 +199,6 @@ export async function ensurePostgresTables() {
         await client.query(`ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS created_at VARCHAR(100) DEFAULT '';`);
         await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS collection_ids JSONB DEFAULT '[]'::jsonb;`);
         await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
-        await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS next_sync_at VARCHAR(100);`);
-        await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS total_bytes BIGINT DEFAULT 0;`);
         await client.query(`ALTER TABLE collections ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
       } catch (migrateErr) {
         console.warn('Postgres ALTER COLUMN migration skipped or failed:', migrateErr);
@@ -431,8 +404,8 @@ async function seedPostgresData(client: any) {
       console.log('Seeding initial sources into Postgres...');
       for (const s of INITIAL_SOURCES) {
         await client.query(
-          `INSERT INTO sources (id, tenant_id, name, type, status, config, sync_schedule, last_sync_at, next_sync_at, document_count, total_bytes, last_error, created_at, collection_ids)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          `INSERT INTO sources (id, tenant_id, name, type, status, config, sync_schedule, last_sync_at, document_count, last_error, created_at, collection_ids)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
           [
             s.id,
             s.tenantId,
@@ -442,9 +415,7 @@ async function seedPostgresData(client: any) {
             JSON.stringify(s.config || {}),
             s.syncSchedule || '',
             s.lastSyncAt || '',
-            s.nextSyncAt || '',
             s.documentCount || 0,
-            s.totalBytes || 0,
             s.lastError || '',
             s.createdAt,
             JSON.stringify(s.collectionIds || []),
@@ -717,9 +688,7 @@ export async function getPostgresSources(tenantId: string): Promise<SourceConnec
       config: row.config || {},
       syncSchedule: row.sync_schedule || '',
       lastSyncAt: row.last_sync_at || '',
-      nextSyncAt: row.next_sync_at || undefined,
       documentCount: row.document_count || 0,
-      totalBytes: row.total_bytes != null ? Number(row.total_bytes) : undefined,
       lastError: row.last_error || undefined,
       createdAt: row.created_at,
       collectionIds: row.collection_ids || [],
@@ -751,9 +720,7 @@ export async function getPostgresSourceById(id: string, tenantId: string): Promi
       config: row.config || {},
       syncSchedule: row.sync_schedule || '',
       lastSyncAt: row.last_sync_at || '',
-      nextSyncAt: row.next_sync_at || undefined,
       documentCount: row.document_count || 0,
-      totalBytes: row.total_bytes != null ? Number(row.total_bytes) : undefined,
       lastError: row.last_error || undefined,
       createdAt: row.created_at,
       collectionIds: row.collection_ids || [],
@@ -774,14 +741,13 @@ export async function insertPostgresSource(source: SourceConnector) {
   const client = await p.connect();
   try {
     await client.query(
-      `INSERT INTO sources (id, tenant_id, name, type, status, config, sync_schedule, last_sync_at, next_sync_at, document_count, total_bytes, last_error, created_at, collection_ids)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `INSERT INTO sources (id, tenant_id, name, type, status, config, sync_schedule, last_sync_at, document_count, last_error, created_at, collection_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (id) DO UPDATE 
        SET name = EXCLUDED.name, type = EXCLUDED.type, status = EXCLUDED.status, config = EXCLUDED.config,
            sync_schedule = EXCLUDED.sync_schedule, last_sync_at = EXCLUDED.last_sync_at,
-           next_sync_at = EXCLUDED.next_sync_at,
-           document_count = EXCLUDED.document_count, total_bytes = EXCLUDED.total_bytes,
-           last_error = EXCLUDED.last_error, collection_ids = EXCLUDED.collection_ids;`,
+           document_count = EXCLUDED.document_count, last_error = EXCLUDED.last_error,
+           collection_ids = EXCLUDED.collection_ids;`,
       [
         source.id,
         source.tenantId,
@@ -791,9 +757,7 @@ export async function insertPostgresSource(source: SourceConnector) {
         JSON.stringify(source.config || {}),
         source.syncSchedule || '',
         source.lastSyncAt || '',
-        source.nextSyncAt || null,
         source.documentCount || 0,
-        source.totalBytes || 0,
         source.lastError || '',
         source.createdAt,
         JSON.stringify(source.collectionIds || []),
@@ -1293,13 +1257,7 @@ export async function insertPostgresMessage(msg: Message) {
       `INSERT INTO messages (id, tenant_id, conversation_id, role, content, citations, model_used, tokens_used, feedback, tool_calls, has_pii_redacted, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (id) DO UPDATE 
-       SET feedback = EXCLUDED.feedback,
-           content = EXCLUDED.content,
-           citations = EXCLUDED.citations,
-           model_used = EXCLUDED.model_used,
-           tokens_used = EXCLUDED.tokens_used,
-           tool_calls = EXCLUDED.tool_calls,
-           has_pii_redacted = EXCLUDED.has_pii_redacted;`,
+       SET feedback = EXCLUDED.feedback, content = EXCLUDED.content;`,
       [
         msg.id,
         msg.tenantId,

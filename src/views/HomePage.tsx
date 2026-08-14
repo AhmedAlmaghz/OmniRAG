@@ -17,7 +17,7 @@ import {
 import { NEXT_16_FEATURES } from '../data/next16Features';
 import { CodeBlock } from '../components/ui/CodeBlock';
 import { Language } from '../types';
-import { resolveUrl } from '@/lib/auth/fetchWithAuth';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
 interface HomePageProps {
   lang: Language;
@@ -43,7 +43,7 @@ export const HomePage: React.FC<HomePageProps> = ({ lang }) => {
     setAiLoading(true);
     setAiResult('');
     try {
-      const res = await fetch(resolveUrl('/api/genai'), {
+      const res = await fetchWithAuth('/api/genai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: aiPrompt, locale: lang }),

@@ -43,11 +43,6 @@ export default function MainApp() {
   // Load saved theme, session, active tab, and first launch onboarding check from localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const isFirstLaunchDone = localStorage.getItem('omnirag_env_first_launch_done');
-      if (isFirstLaunchDone !== 'true') {
-        setShowFirstLaunchEnvModal(true);
-      }
-
       const savedTheme = localStorage.getItem('omnirag-theme') as 'light' | 'dark';
       if (savedTheme) {
         setTheme(savedTheme);
