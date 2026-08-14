@@ -317,7 +317,7 @@ async function ensureSeeded(): Promise<void> {
   seedingPromise = (async () => {
     try {
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 15000)
+        setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 4000)
       );
       await Promise.race([ensurePostgresTables(), timeoutPromise]);
       isSeeded = true;
