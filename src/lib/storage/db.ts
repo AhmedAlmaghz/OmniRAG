@@ -14,6 +14,7 @@ import {
 } from '../types/omnirag';
 import {
   ensurePostgresTables,
+  getPostgresPool,
   getPostgresDocuments,
   getPostgresDocumentById,
   insertPostgresDocument,
@@ -324,19 +325,23 @@ export const memoryDb = new MemoryDatabase();
 
 let seedingPromise: Promise<void> | null = null;
 
+// Configurable timeout for database initialization (longer for serverless cold starts)
+const DB_INIT_TIMEOUT_MS = Number(process.env.DB_INIT_TIMEOUT_MS) || 45000;
+
 async function ensureSeeded(): Promise<void> {
   if (isSeeded) return;
   if (seedingPromise) return seedingPromise;
 
   seedingPromise = (async () => {
     try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 15000)
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('PostgreSQL connection timeout')), DB_INIT_TIMEOUT_MS)
       );
       await Promise.race([ensurePostgresTables(), timeoutPromise]);
       isSeeded = true;
     } catch (error) {
-      console.log('PostgreSQL database initialization offline fallback triggered:', (error as Error)?.message);
+      const errMsg = (error as Error)?.message || String(error);
+      console.warn('[OmniRAG Storage] PostgreSQL initialization failed, enabling memory fallback:', errMsg);
       db.enableMemoryFallback();
       isSeeded = true;
     } finally {
@@ -374,12 +379,42 @@ class OmniRAGDatabase {
     if (!this.useMemory) {
       this.useMemory = true;
       const errMsg = (error as Error)?.message || String(error);
-      console.info(`[OmniRAG Storage] Postgres fallback activated (${actionName}): ${errMsg}`);
+      console.warn(`[OmniRAG Storage] Postgres fallback activated (${actionName}): ${errMsg}`);
+    }
+  }
+
+  /**
+   * Check if PostgreSQL is available and configured.
+   * If not, enable memory fallback mode to ensure the app works without a database.
+   */
+  private async ensureDatabaseMode(): Promise<void> {
+    if (this.useMemory) return;
+
+    try {
+      const pool = getPostgresPool();
+      if (!pool) {
+        console.warn('[OmniRAG Storage] No PostgreSQL connection string configured. Enabling memory-only mode.');
+        this.enableMemoryFallback();
+        return;
+      }
+      // Test the connection with a simple query
+      const client = await pool.connect();
+      try {
+        await client.query('SELECT 1');
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      const errMsg = (error as Error)?.message || String(error);
+      console.warn('[OmniRAG Storage] PostgreSQL unavailable, enabling memory fallback:', errMsg);
+      this.enableMemoryFallback();
     }
   }
 
   // Sources
   async getSources(tenantId: string): Promise<SourceConnector[]> {
+    await this.ensureDatabaseMode();
+
     let sourcesList: SourceConnector[] = [];
     if (this.useMemory) {
       sourcesList = memoryDb.getSources(tenantId);
@@ -426,6 +461,7 @@ class OmniRAGDatabase {
   }
 
   async addSource(source: SourceConnector): Promise<void> {
+    console.log(`[OmniRAG Storage] Adding source: ${source.id} (${source.name}) for tenant ${source.tenantId}`);
     memoryDb.addSource(source);
     if (this.useMemory) return;
 
@@ -433,6 +469,7 @@ class OmniRAGDatabase {
       await ensureSeeded();
       if (this.useMemory) return;
       await insertPostgresSource(source);
+      console.log(`[OmniRAG Storage] Source ${source.id} persisted to PostgreSQL`);
       await this.addSyncLog({
         id: `log-${Date.now()}`,
         tenantId: source.tenantId,
@@ -445,6 +482,7 @@ class OmniRAGDatabase {
         timestamp: new Date().toISOString(),
       });
     } catch (e) {
+      console.error(`[OmniRAG Storage] Failed to persist source ${source.id} to PostgreSQL:`, e);
       this.handleDatabaseError(e, 'addSource');
     }
   }
@@ -508,9 +546,13 @@ class OmniRAGDatabase {
   }
 
   async syncSource(id: string, tenantId: string): Promise<{ success: boolean; itemsProcessed: number; durationMs: number }> {
+    console.log(`[OmniRAG Storage] Syncing source: ${id} for tenant ${tenantId}`);
     try {
       const source = await this.getSourceById(id, tenantId);
-      if (!source) return { success: false, itemsProcessed: 0, durationMs: 0 };
+      if (!source) {
+        console.warn(`[OmniRAG Storage] Source ${id} not found for sync`);
+        return { success: false, itemsProcessed: 0, durationMs: 0 };
+      }
 
       const duration = Math.floor(Math.random() * 3000) + 1200;
       const items = Math.floor(Math.random() * 5) + 1;
@@ -524,6 +566,7 @@ class OmniRAGDatabase {
       if (!this.useMemory) {
         try {
           await insertPostgresSource(source);
+          console.log(`[OmniRAG Storage] Source ${id} sync status updated in PostgreSQL`);
         } catch (e) {
           this.handleDatabaseError(e, 'syncSource-setStatus');
         }
@@ -618,6 +661,8 @@ class OmniRAGDatabase {
 
   // Sync Logs
   async getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
+    await this.ensureDatabaseMode();
+
     let logsList: SyncLogEntry[] = [];
     if (this.useMemory) {
       logsList = memoryDb.getSyncLogs(tenantId, sourceId);
@@ -684,6 +729,8 @@ class OmniRAGDatabase {
 
   // Documents
   async getDocuments(tenantId: string): Promise<Document[]> {
+    await this.ensureDatabaseMode();
+
     let docsList: Document[] = [];
     if (this.useMemory) {
       docsList = memoryDb.getDocuments(tenantId);
@@ -741,6 +788,7 @@ class OmniRAGDatabase {
   }
 
   async addDocument(docObj: Document): Promise<void> {
+    console.log(`[OmniRAG Storage] Adding document: ${docObj.id} for tenant ${docObj.tenantId}`);
     memoryDb.addDocument(docObj);
     if (this.useMemory) return;
 
@@ -748,7 +796,9 @@ class OmniRAGDatabase {
       await ensureSeeded();
       if (this.useMemory) return;
       await insertPostgresDocument(docObj);
+      console.log(`[OmniRAG Storage] Document ${docObj.id} persisted to PostgreSQL`);
     } catch (e) {
+      console.error(`[OmniRAG Storage] Failed to persist document ${docObj.id} to PostgreSQL:`, e);
       this.handleDatabaseError(e, 'addDocument');
     }
 
@@ -799,6 +849,8 @@ class OmniRAGDatabase {
 
   // Chunks
   async getChunks(tenantId: string): Promise<DocumentChunk[]> {
+    await this.ensureDatabaseMode();
+
     let chunksList: DocumentChunk[] = [];
     if (this.useMemory) {
       chunksList = memoryDb.getChunks(tenantId);
@@ -886,6 +938,8 @@ class OmniRAGDatabase {
 
   // Collections
   async getCollections(tenantId: string): Promise<Collection[]> {
+    await this.ensureDatabaseMode();
+
     let collectionsList: Collection[] = [];
     if (this.useMemory) {
       collectionsList = memoryDb.getCollections(tenantId);
@@ -919,6 +973,7 @@ class OmniRAGDatabase {
   }
 
   async addCollection(col: Collection): Promise<void> {
+    console.log(`[OmniRAG Storage] Adding collection: ${col.id} for tenant ${col.tenantId}`);
     memoryDb.addCollection(col);
     if (this.useMemory) return;
 
@@ -926,7 +981,9 @@ class OmniRAGDatabase {
       await ensureSeeded();
       if (this.useMemory) return;
       await insertPostgresCollection(col);
+      console.log(`[OmniRAG Storage] Collection ${col.id} persisted to PostgreSQL`);
     } catch (e) {
+      console.error(`[OmniRAG Storage] Failed to persist collection ${col.id} to PostgreSQL:`, e);
       this.handleDatabaseError(e, 'addCollection');
     }
   }
@@ -977,6 +1034,8 @@ class OmniRAGDatabase {
 
   // MCP Servers
   async getMcpServers(tenantId: string): Promise<MCPServerConfig[]> {
+    await this.ensureDatabaseMode();
+
     if (this.useMemory) return memoryDb.getMcpServers(tenantId);
     try {
       await ensureSeeded();
@@ -1038,6 +1097,8 @@ class OmniRAGDatabase {
 
   // Audit Logs
   async getAuditLogs(tenantId: string): Promise<AuditLogEntry[]> {
+    await this.ensureDatabaseMode();
+
     let auditList: AuditLogEntry[] = [];
     if (this.useMemory) {
       auditList = memoryDb.getAuditLogs(tenantId);
@@ -1085,6 +1146,8 @@ class OmniRAGDatabase {
 
   // Tool Calls
   async getToolCalls(tenantId: string): Promise<MCPToolCall[]> {
+    await this.ensureDatabaseMode();
+
     if (this.useMemory) return memoryDb.getToolCalls(tenantId);
     try {
       await ensureSeeded();
@@ -1111,6 +1174,8 @@ class OmniRAGDatabase {
 
   // Conversations & Messages
   async getConversations(tenantId: string): Promise<Conversation[]> {
+    await this.ensureDatabaseMode();
+
     if (this.useMemory) return memoryDb.getConversations(tenantId);
     try {
       await ensureSeeded();
@@ -1151,6 +1216,8 @@ class OmniRAGDatabase {
   }
 
   async getConversationById(id: string, tenantId: string): Promise<Conversation | null> {
+    await this.ensureDatabaseMode();
+
     if (this.useMemory) return memoryDb.getConversationById(id, tenantId);
     try {
       await ensureSeeded();
@@ -1189,6 +1256,8 @@ class OmniRAGDatabase {
   }
 
   async getMessages(conversationId: string, tenantId: string): Promise<Message[]> {
+    await this.ensureDatabaseMode();
+
     if (this.useMemory) return memoryDb.getMessages(conversationId, tenantId);
     try {
       await ensureSeeded();

@@ -27,6 +27,10 @@ import { getEnv } from '../env/runtimeEnv';
 
 let pool: any = null;
 let initialized = false;
+let poolCreatedAt = 0;
+
+// Maximum pool age before recreation (5 minutes) - helps with serverless stale connections
+const MAX_POOL_AGE_MS = 5 * 60 * 1000;
 
 export function resetPostgresPool() {
   if (pool) {
@@ -34,6 +38,7 @@ export function resetPostgresPool() {
   }
   pool = null;
   initialized = false;
+  poolCreatedAt = 0;
   try {
     resetDrizzle();
   } catch (e) {}
@@ -41,11 +46,24 @@ export function resetPostgresPool() {
 
 export function getPostgresPool(req?: any): any {
   if (typeof window !== 'undefined') return null; // Safe guard for client-side compilation
-  if (pool) return pool;
+
+  // Check if pool exists and is not too old (for serverless environments)
+  const now = Date.now();
+  if (pool && (now - poolCreatedAt) < MAX_POOL_AGE_MS) {
+    return pool;
+  }
+
+  // Pool is stale or doesn't exist, create new one
+  if (pool) {
+    try { pool.end(); } catch (e) {}
+    pool = null;
+    initialized = false;
+    poolCreatedAt = 0;
+  }
 
   const connectionString = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
   if (!connectionString) {
-    console.warn('PostgreSQL Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.');
+    console.warn('[OmniRAG Postgres] Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.');
     return null;
   }
 
@@ -62,10 +80,15 @@ export function getPostgresPool(req?: any): any {
           },
       max: 10,
       idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000, // 10 second connection timeout
     });
+    poolCreatedAt = now;
+    console.log('[OmniRAG Postgres] New connection pool created');
     return pool;
   } catch (error) {
-    console.error('Failed to initialize PostgreSQL connection pool:', error);
+    console.error('[OmniRAG Postgres] Failed to initialize PostgreSQL connection pool:', error);
+    pool = null;
+    poolCreatedAt = 0;
     return null;
   }
 }
