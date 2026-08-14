@@ -9,7 +9,7 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import firebaseConfig from '../../../firebase-applet-config.json';
+import { firebaseConfig } from '../firebaseConfig';
 import { Tenant } from '../types/omnirag';
 import { seedNewTenant } from '../../actions/seedTenantAction';
 

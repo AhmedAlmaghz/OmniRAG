@@ -94,9 +94,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     if (isPdf) {
       // Step 1: Try fast native node-pdf extraction via pdf-parse
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const pdfParse = require('pdf-parse');
-        const parsedPdf = await pdfParse(fileBuffer);
+        const pdfModule = await import('pdf-parse');
+        const parsePdfFunc = (pdfModule as any).default || pdfModule;
+        const parsedPdf = await parsePdfFunc(fileBuffer);
         if (parsedPdf && parsedPdf.text && parsedPdf.text.trim().length > 30) {
           extractedText = parsedPdf.text.trim();
           console.log(`[PDF Parser] Successfully extracted ${extractedText.length} chars from PDF using native pdf-parse`);

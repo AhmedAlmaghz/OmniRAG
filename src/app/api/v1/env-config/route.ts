@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getEnv, setServerEnv, setServerEnvs } from '@/lib/env/runtimeEnv';
 import { resetPostgresPool } from '@/lib/storage/postgres';
 import { resetQdrantClient } from '@/lib/storage/qdrant';
+import pg from 'pg';
+const { Client } = pg;
 
 export const dynamic = 'force-dynamic';
 
@@ -223,7 +225,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
 
       if (key === 'DATABASE_URL') {
         try {
-          const { Client } = require('pg');
           const isLocal = valToTest.includes('localhost') || valToTest.includes('127.0.0.1');
           const client = new Client({
             connectionString: valToTest,

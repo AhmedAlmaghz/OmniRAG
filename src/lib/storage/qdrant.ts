@@ -1,4 +1,5 @@
 import { getEnv } from '../env/runtimeEnv';
+import { QdrantClient } from '@qdrant/js-client-rest';
 
 let client: any = null;
 let collectionVerified = false;
@@ -22,7 +23,6 @@ export function getQdrantClient(req?: any): any {
   }
 
   try {
-    const { QdrantClient } = require('@qdrant/js-client-rest');
     client = new QdrantClient({
       url,
       apiKey: apiKey || undefined,

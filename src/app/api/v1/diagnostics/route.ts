@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { getPostgresPool } from '@/lib/storage/postgres';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { QdrantClient } from '@qdrant/js-client-rest';
 
 export const dynamic = 'force-dynamic';
 
@@ -139,7 +140,6 @@ async function runQdrantDiagnostic(req?: any) {
   }
 
   try {
-    const { QdrantClient } = require('@qdrant/js-client-rest');
     const qClient = new QdrantClient({
       url,
       apiKey: apiKey || undefined,
@@ -156,9 +156,9 @@ async function runQdrantDiagnostic(req?: any) {
         collectionInfo = {
           name: 'omnirag_chunks',
           status: detailRes.status || 'green',
-          pointsCount: detailRes.points_count || detailRes.vectors_count || 0,
-          vectorSize: detailRes.config?.params?.vectors?.size || 3072,
-          distance: detailRes.config?.params?.vectors?.distance || 'Cosine',
+          pointsCount: detailRes.points_count || (detailRes as any).vectors_count || 0,
+          vectorSize: (detailRes.config?.params?.vectors as any)?.size || 3072,
+          distance: (detailRes.config?.params?.vectors as any)?.distance || 'Cosine',
         };
       } catch (colErr) {
         collectionInfo = { name: 'omnirag_chunks', status: 'exists' };

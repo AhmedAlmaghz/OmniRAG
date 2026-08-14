@@ -22,6 +22,8 @@ import {
 } from './constants';
 import { migrateAndSeedWithDrizzle } from '../db/migrateAndSeedDrizzle';
 import { resetDrizzle } from '../../db';
+import pg from 'pg';
+const { Pool } = pg;
 
 import { getEnv } from '../env/runtimeEnv';
 
@@ -50,8 +52,6 @@ export function getPostgresPool(req?: any): any {
   }
 
   try {
-    const pg = require('pg');
-    const { Pool } = pg;
     const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
     pool = new Pool({
       connectionString,
