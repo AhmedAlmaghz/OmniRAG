@@ -79,7 +79,13 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
       const timeoutPromise = new Promise<string>((_, reject) => 
         setTimeout(() => reject(new Error('Auth token timeout')), 1500)
       );
-      const token = await Promise.race([tokenPromise, timeoutPromise]);
+      const token = await Promise.race([
+        tokenPromise.catch(err => {
+          console.warn('Background token retrieval failed:', err);
+          return null; // Return null to not crash, though the race is already won by timeout if it took this long
+        }), 
+        timeoutPromise
+      ]);
       headers.set('Authorization', `Bearer ${token}`);
     } catch (e) {
       console.warn('Firebase ID token retrieval bypassed, using fallback tenant auth:', e);
