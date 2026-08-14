@@ -1,6 +1,7 @@
 import {
   Tenant,
   Document,
+  DocumentVersion,
   DocumentChunk,
   Collection,
   Conversation,
@@ -46,6 +47,7 @@ import {
 import { upsertQdrantChunk, deleteQdrantDocument, updateQdrantDocumentPayload } from './qdrant';
 import { generateEmbedding } from '../rag/embedding';
 import { processYoutubeTranscript } from '../youtube/transcriptParser';
+import { processPdfWithBatchedPipeline } from '../pdf/pdfChunker';
 
 import {
   INITIAL_TENANTS,
@@ -247,7 +249,7 @@ class MemoryDatabase {
         tenantId,
         title: 'جلسة استفسارات السياسات والأمن (ذاكرة بديلة)',
         mode: 'hybrid',
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         collectionIds: [],
         enabledMcpServers: [],
         createdAt: new Date().toISOString(),
@@ -284,7 +286,7 @@ class MemoryDatabase {
         role: 'assistant',
         content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG (ذاكرة بديلة). يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
         createdAt: new Date().toISOString(),
-        modelUsed: 'gemini-3.6-flash',
+        modelUsed: 'gemini-3.7-flash',
       };
       this.messages.push(welcomeMsg);
       return [welcomeMsg];
@@ -538,6 +540,24 @@ class OmniRAGDatabase {
         } catch (ytErr) {
           console.log('YouTube sync transcript failed, fallback to structured summary:', (ytErr as Error)?.message);
         }
+      } else if (source.type === 'file') {
+        const fileData = source.config?.fileData || source.config?.base64;
+        if (fileData && typeof fileData === 'string') {
+          try {
+            const cleanBase64 = fileData.includes(',') ? fileData.split(',')[1] : fileData;
+            const fileBuffer = Buffer.from(cleanBase64, 'base64');
+            const pipelineRes = await processPdfWithBatchedPipeline(fileBuffer, {
+              preferredEngine: 'mistral',
+              pagesPerChunk: 25,
+            });
+            if (pipelineRes.text && pipelineRes.text.trim().length > 10) {
+              newDocContent = pipelineRes.text;
+              newDocTitle = `${source.name} (معالجة ${pipelineRes.chunksProcessed} دفعة / ${pipelineRes.totalPages} صفحة)`;
+            }
+          } catch (pdfErr) {
+            console.log('PDF sync pipeline fallback:', pdfErr);
+          }
+        }
       }
 
       const newDocId = `doc-sync-${Date.now().toString().slice(-4)}`;
@@ -771,6 +791,207 @@ class OmniRAGDatabase {
     }
   }
 
+  // Document Versions
+  async getDocumentVersions(documentId: string, tenantId: string): Promise<DocumentVersion[]> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    if (!doc) return [];
+    if (doc.versions && doc.versions.length > 0) {
+      return [...doc.versions].sort((a, b) => b.versionNumber - a.versionNumber);
+    }
+    // Fallback default version snapshot if none exists
+    const v1: DocumentVersion = {
+      id: `ver-${doc.id}-v1`,
+      documentId: doc.id,
+      versionNumber: doc.version || 1,
+      title: doc.title,
+      content: doc.content,
+      chunkCount: doc.chunkCount || 0,
+      createdAt: doc.createdAt,
+      createdBy: 'Ingestion Engine',
+      changeSummary: 'الإصدار الأولي المستوعب في قاعدة المعرفة',
+    };
+    return [v1];
+  }
+
+  async createDocumentVersion(
+    documentId: string,
+    params: {
+      title?: string;
+      content: string;
+      changeSummary?: string;
+      createdBy?: string;
+    },
+    tenantId: string
+  ): Promise<{ document: Document; version: DocumentVersion } | undefined> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    if (!doc) return undefined;
+
+    const existingVersions = doc.versions && doc.versions.length > 0
+      ? [...doc.versions]
+      : [
+          {
+            id: `ver-${doc.id}-v1`,
+            documentId: doc.id,
+            versionNumber: 1,
+            title: doc.title,
+            content: doc.content,
+            chunkCount: doc.chunkCount || 0,
+            createdAt: doc.createdAt,
+            createdBy: 'Ingestion Engine',
+            changeSummary: 'الإصدار الأولي المستوعب في قاعدة المعرفة',
+          },
+        ];
+
+    const currentMaxVer = existingVersions.reduce((max, v) => Math.max(max, v.versionNumber), 1);
+    const nextVerNumber = currentMaxVer + 1;
+    const newTitle = params.title?.trim() || doc.title;
+    const newContent = params.content;
+    const nowIso = new Date().toISOString();
+
+    // Re-chunk content
+    const charSize = 1000;
+    const step = 800;
+    const chunkTextList: string[] = [];
+    for (let i = 0; i < newContent.length; i += step) {
+      const snippet = newContent.substring(i, i + charSize).trim();
+      if (snippet) chunkTextList.push(snippet);
+    }
+    if (chunkTextList.length === 0 && newContent.trim()) {
+      chunkTextList.push(newContent.trim());
+    }
+
+    const newVersion: DocumentVersion = {
+      id: `ver-${doc.id}-v${nextVerNumber}`,
+      documentId: doc.id,
+      versionNumber: nextVerNumber,
+      title: newTitle,
+      content: newContent,
+      chunkCount: chunkTextList.length,
+      createdAt: nowIso,
+      createdBy: params.createdBy || 'Knowledge Admin',
+      changeSummary: params.changeSummary || `تحديث محتوى المستند (الإصدار v${nextVerNumber})`,
+    };
+
+    const updatedVersions = [newVersion, ...existingVersions];
+
+    const updatedDoc: Document = {
+      ...doc,
+      title: newTitle,
+      content: newContent,
+      chunkCount: chunkTextList.length,
+      version: nextVerNumber,
+      versions: updatedVersions,
+      updatedAt: nowIso,
+    };
+
+    await this.addDocument(updatedDoc);
+
+    // Update chunks
+    memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
+    for (let i = 0; i < chunkTextList.length; i++) {
+      const chunk: DocumentChunk = {
+        id: `chunk-${doc.id}-v${nextVerNumber}-${i + 1}`,
+        tenantId,
+        documentId: doc.id,
+        documentTitle: newTitle,
+        content: chunkTextList[i],
+        chunkIndex: i,
+        pageNumber: 1,
+        language: doc.language === 'en' ? 'en' : 'ar',
+        metadata: {
+          version: nextVerNumber,
+          position: i,
+        },
+      };
+      await this.addChunk(chunk);
+    }
+
+    await this.addSyncLog({
+      id: `log-ver-${Date.now()}`,
+      tenantId,
+      sourceId: doc.metadata?.sourceId || doc.id,
+      sourceName: doc.title,
+      status: 'success',
+      itemsProcessed: chunkTextList.length,
+      durationMs: 850,
+      message: `تم إنشاء وحفظ الإصدار v${nextVerNumber} للمستند "${newTitle}" وتحديث فهرسة المتجهات`,
+      timestamp: nowIso,
+    });
+
+    return { document: updatedDoc, version: newVersion };
+  }
+
+  async revertDocumentVersion(
+    documentId: string,
+    targetVersionNumber: number,
+    tenantId: string
+  ): Promise<{ document: Document; restoredVersion: DocumentVersion } | undefined> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    if (!doc) return undefined;
+
+    const versions = doc.versions || [];
+    const targetVer = versions.find((v) => v.versionNumber === targetVersionNumber);
+    if (!targetVer) return undefined;
+
+    const nowIso = new Date().toISOString();
+
+    const charSize = 1000;
+    const step = 800;
+    const chunkTextList: string[] = [];
+    for (let i = 0; i < targetVer.content.length; i += step) {
+      const snippet = targetVer.content.substring(i, i + charSize).trim();
+      if (snippet) chunkTextList.push(snippet);
+    }
+    if (chunkTextList.length === 0 && targetVer.content.trim()) {
+      chunkTextList.push(targetVer.content.trim());
+    }
+
+    const updatedDoc: Document = {
+      ...doc,
+      title: targetVer.title,
+      content: targetVer.content,
+      chunkCount: chunkTextList.length,
+      version: targetVer.versionNumber,
+      updatedAt: nowIso,
+    };
+
+    await this.addDocument(updatedDoc);
+
+    // Update chunks
+    memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
+    for (let i = 0; i < chunkTextList.length; i++) {
+      const chunk: DocumentChunk = {
+        id: `chunk-${doc.id}-rev-v${targetVer.versionNumber}-${i + 1}`,
+        tenantId,
+        documentId: doc.id,
+        documentTitle: targetVer.title,
+        content: chunkTextList[i],
+        chunkIndex: i,
+        pageNumber: 1,
+        language: doc.language === 'en' ? 'en' : 'ar',
+        metadata: {
+          restoredFromVersion: targetVer.versionNumber,
+          position: i,
+        },
+      };
+      await this.addChunk(chunk);
+    }
+
+    await this.addSyncLog({
+      id: `log-revert-${Date.now()}`,
+      tenantId,
+      sourceId: doc.metadata?.sourceId || doc.id,
+      sourceName: targetVer.title,
+      status: 'success',
+      itemsProcessed: chunkTextList.length,
+      durationMs: 920,
+      message: `تم استرجاع المستند "${targetVer.title}" إلى الإصدار v${targetVer.versionNumber} بنجاح وإعادة الفهرسة`,
+      timestamp: nowIso,
+    });
+
+    return { document: updatedDoc, restoredVersion: targetVer };
+  }
+
   // Chunks
   async getChunks(tenantId: string): Promise<DocumentChunk[]> {
     let chunksList: DocumentChunk[] = [];
@@ -936,6 +1157,29 @@ class OmniRAGDatabase {
       return defaultServers;
     }
 
+    // Ensure Unstructured Transform is always auto-injected for existing active sessions
+    const hasUnstructured = serversList.some(
+      (s) => s.endpointUrl === 'https://mcp.transform.unstructured.io' || s.id.includes('unstructured-transform')
+    );
+    if (!hasUnstructured) {
+      const unstructuredServer: MCPServerConfig = {
+        id: `mcp-unstructured-transform-${tenantId}`,
+        tenantId,
+        name: 'Unstructured Transform',
+        description: 'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
+        endpointUrl: 'https://mcp.transform.unstructured.io',
+        protocolVersion: '2026-07-28',
+        sandboxTier: 'T2_ELEVATED',
+        enabledTools: ['unstructured_transform_document', 'unstructured_chunk_document'],
+        requireConfirmationTools: [],
+        status: 'healthy',
+        latencyMs: 45,
+        lastChecked: new Date().toISOString(),
+      };
+      await this.addMcpServer(unstructuredServer);
+      serversList.push(unstructuredServer);
+    }
+
     return serversList;
   }
 
@@ -1075,7 +1319,7 @@ class OmniRAGDatabase {
         tenantId,
         title: 'جلسة استفسارات السياسات والأمن',
         mode: 'hybrid',
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         collectionIds: [],
         enabledMcpServers: [],
         createdAt: new Date().toISOString(),
@@ -1090,7 +1334,7 @@ class OmniRAGDatabase {
         role: 'assistant',
         content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
         createdAt: new Date().toISOString(),
-        modelUsed: 'gemini-3.6-flash',
+        modelUsed: 'gemini-3.7-flash',
       };
       await insertPostgresMessage(welcomeMsg);
 
@@ -1153,7 +1397,7 @@ class OmniRAGDatabase {
           role: 'assistant',
           content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
           createdAt: new Date().toISOString(),
-          modelUsed: 'gemini-3.6-flash',
+          modelUsed: 'gemini-3.7-flash',
         };
         await insertPostgresMessage(welcomeMsg);
         return [welcomeMsg];

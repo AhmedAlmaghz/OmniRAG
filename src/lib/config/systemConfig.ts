@@ -8,7 +8,7 @@ export const APP_VERSION = pkg.version || '0.2.0';
 
 export const SYSTEM_CONFIG = {
   DEFAULT_TENANT_ID: 'tenant-acme-01',
-  DEFAULT_MODEL: 'gemini-3.6-flash',
+  DEFAULT_MODEL: 'gemini-3.7-flash',
   
   // Search and RAG Configuration
   RAG: {

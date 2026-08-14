@@ -469,19 +469,25 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     const res = await client.query('SELECT * FROM documents WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
-    return res.rows.map((row: any) => ({
-      id: row.id,
-      tenantId: row.tenant_id,
-      title: row.title,
-      content: row.content,
-      sourceType: row.source_type,
-      language: row.language,
-      status: row.status,
-      chunkCount: row.chunk_count,
-      createdAt: row.created_at,
-      metadata: row.metadata || {},
-      collectionIds: row.collection_ids || [],
-    }));
+    return res.rows.map((row: any) => {
+      const meta = row.metadata || {};
+      return {
+        id: row.id,
+        tenantId: row.tenant_id,
+        title: row.title,
+        content: row.content,
+        sourceType: row.source_type,
+        language: row.language,
+        status: row.status,
+        chunkCount: row.chunk_count,
+        createdAt: row.created_at,
+        updatedAt: meta.updatedAt || row.created_at,
+        version: meta.version || row.version || 1,
+        versions: meta.versions || [],
+        metadata: meta,
+        collectionIds: row.collection_ids || [],
+      };
+    });
   } catch (error) {
     console.error('Failed to get Postgres documents:', error);
     throw error;
@@ -501,6 +507,7 @@ export async function getPostgresDocumentById(id: string, tenantId: string): Pro
     const res = await client.query('SELECT * FROM documents WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
     if (res.rows.length === 0) return undefined;
     const row = res.rows[0];
+    const meta = row.metadata || {};
     return {
       id: row.id,
       tenantId: row.tenant_id,
@@ -511,7 +518,10 @@ export async function getPostgresDocumentById(id: string, tenantId: string): Pro
       status: row.status,
       chunkCount: row.chunk_count,
       createdAt: row.created_at,
-      metadata: row.metadata || {},
+      updatedAt: meta.updatedAt || row.created_at,
+      version: meta.version || row.version || 1,
+      versions: meta.versions || [],
+      metadata: meta,
       collectionIds: row.collection_ids || [],
     };
   } catch (error) {
@@ -532,6 +542,9 @@ export async function insertPostgresDocument(doc: {
   status: string;
   chunkCount?: number;
   createdAt: string;
+  updatedAt?: string;
+  version?: number;
+  versions?: any[];
   metadata?: any;
   collectionIds?: string[];
 }) {
@@ -543,6 +556,12 @@ export async function insertPostgresDocument(doc: {
   try {
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [doc.tenantId]);
+    const enrichedMetadata = {
+      ...(doc.metadata || {}),
+      version: doc.version || 1,
+      versions: doc.versions || [],
+      updatedAt: doc.updatedAt || doc.createdAt,
+    };
     await client.query(
       `INSERT INTO documents (id, tenant_id, title, content, source_type, language, status, chunk_count, created_at, metadata, collection_ids)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -560,7 +579,7 @@ export async function insertPostgresDocument(doc: {
         doc.status,
         doc.chunkCount || 0,
         doc.createdAt,
-        JSON.stringify(doc.metadata || {}),
+        JSON.stringify(enrichedMetadata),
         JSON.stringify(doc.collectionIds || []),
       ]
     );

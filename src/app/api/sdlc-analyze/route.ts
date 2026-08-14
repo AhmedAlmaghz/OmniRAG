@@ -1,5 +1,5 @@
-import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
+import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,10 +18,9 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey });
         const prompt = `Analyze the following TypeScript / React code snippet against enterprise SDLC standards, security (no leaked secrets, no dangerous innerHTML), type-safety (no implicit any), and React best practices.
 Code:
 \`\`\`typescript
@@ -38,17 +37,21 @@ Return a strictly valid JSON response without markdown formatting with this sche
     { "type": "security" | "type-safety" | "performance", "messageAr": string, "messageEn": string }
   ]
 }`;
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+        const response = await generateContentWithResilience({
+          model: 'gemini-3.7-flash',
+          fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'],
           contents: prompt,
+          maxRetriesPerModel: 2,
         });
 
-        const text = response.text || '';
-        const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-        return NextResponse.json(parsed);
+        const text = response?.text || '';
+        if (text) {
+          const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(cleaned);
+          return NextResponse.json(parsed);
+        }
       } catch (aiErr) {
-        console.warn('AI analysis fallback to static heuristic:', aiErr);
+        console.warn('AI analysis fallback to static heuristic');
       }
     }
 

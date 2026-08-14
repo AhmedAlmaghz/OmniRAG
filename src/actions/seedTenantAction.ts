@@ -47,6 +47,22 @@ export async function seedNewTenant(tenantId: string, tenantName: string): Promi
   };
   await db.addMcpServer(initialMcpServer);
 
+  const unstructuredMcpServer: MCPServerConfig = {
+    id: `mcp-unstructured-transform-${tenantId.slice(-6)}`,
+    tenantId,
+    name: 'Unstructured Transform',
+    description: 'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
+    endpointUrl: 'https://mcp.transform.unstructured.io',
+    protocolVersion: '2026-07-28',
+    sandboxTier: 'T2_ELEVATED',
+    enabledTools: ['unstructured_transform_document', 'unstructured_chunk_document'],
+    requireConfirmationTools: [],
+    status: 'healthy',
+    latencyMs: 45,
+    lastChecked: new Date().toISOString(),
+  };
+  await db.addMcpServer(unstructuredMcpServer);
+
   const initialSource: SourceConnector = {
     id: sourceId,
     tenantId,

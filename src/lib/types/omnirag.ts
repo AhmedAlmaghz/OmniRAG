@@ -23,6 +23,19 @@ export interface TenantSettings {
 
 export type ChatMode = 'private' | 'hybrid' | 'general' | 'analysis';
 
+export interface DocumentVersion {
+  id: string;
+  documentId: string;
+  versionNumber: number;
+  title: string;
+  content: string;
+  chunkCount: number;
+  createdAt: string;
+  createdBy?: string;
+  changeSummary?: string;
+  metadata?: Record<string, any>;
+}
+
 export interface Document {
   id: string;
   tenantId: TenantId;
@@ -33,8 +46,11 @@ export interface Document {
   status: 'pending' | 'processing' | 'indexed' | 'failed';
   chunkCount: number;
   createdAt: string;
+  updatedAt?: string;
   metadata: Record<string, any>;
   collectionIds?: string[];
+  version?: number;
+  versions?: DocumentVersion[];
 }
 
 export interface DocumentChunk {

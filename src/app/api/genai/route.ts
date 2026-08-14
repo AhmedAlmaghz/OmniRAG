@@ -1,5 +1,5 @@
-import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
+import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     if (!apiKey) {
       // Fallback deterministic response if API key is not yet set
       return NextResponse.json({
@@ -23,15 +23,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const response = await generateContentWithResilience({
+      model: 'gemini-3.7-flash',
+      fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'],
       contents: `You are an expert Next.js and TypeScript architect. The user prompt is: "${prompt}". Provide a concise, high quality response in ${locale === 'ar' ? 'Arabic' : 'English'} with clean TypeScript / React code snippets.`,
+      maxRetriesPerModel: 2,
     });
 
     return NextResponse.json({
       status: 'success',
-      result: response.text || 'No response generated',
+      result: response?.text || 'No response generated',
     });
   } catch (error: any) {
     console.error('GenAI route error:', error);

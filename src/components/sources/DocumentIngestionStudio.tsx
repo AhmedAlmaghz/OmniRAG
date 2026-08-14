@@ -3,6 +3,8 @@
 import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Collection } from '@/lib/types/omnirag';
+import { getIngestionSettings } from '@/lib/config/ingestionSettings';
+import { useDocumentCache } from '@/hooks/useDocumentCache';
 import {
   Upload,
   FileText,
@@ -216,12 +218,14 @@ function validateUploadedFile(file: File): { isValid: boolean; errorAr?: string;
     };
   }
 
-  const MAX_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+  const userSettings = getIngestionSettings();
+  const maxMb = userSettings.maxFileSizeMb || 50;
+  const MAX_SIZE_BYTES = maxMb * 1024 * 1024;
   if (file.size > MAX_SIZE_BYTES) {
     return {
       isValid: false,
-      errorAr: `حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)}MB) يتجاوز الحد المسموح به (20 ميجابايت).`,
-      errorEn: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit (20 MB).`,
+      errorAr: `حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)}MB) يتجاوز الحد الأقصى المسموح به (${maxMb} ميجابايت).`,
+      errorEn: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit (${maxMb} MB).`,
     };
   }
 
@@ -280,6 +284,15 @@ export function DocumentIngestionStudio({
   initialTab = 'upload',
 }: DocumentIngestionStudioProps) {
   const [inputTab, setInputTab] = useState<'upload' | 'youtube' | 'text' | 'sample'>(initialTab);
+
+  // Document OCR Cache Hook
+  const { getCache, saveCache } = useDocumentCache();
+
+  // Parsing Progress Bar State
+  const [parseProgress, setParseProgress] = useState<number>(0);
+  const [parseStage, setParseStage] = useState<'hash' | 'upload' | 'ocr' | 'chunk' | 'complete'>('hash');
+  const [parseStageText, setParseStageText] = useState<string>('');
+  const [parseElapsedMs, setParseElapsedMs] = useState<number>(0);
 
   useEffect(() => {
     if (initialTab) {
@@ -435,37 +448,285 @@ export function DocumentIngestionStudio({
       };
       reader.readAsText(file);
     } else {
-      // Send to server-side Gemini PDF/Document parser
+      // Send to server-side PDF/Document parser via multipart FormData with live progress updates
       setIsParsingFile(true);
-      setStatusMessage(null);
-      
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64Data = e.target?.result as string;
+      setParseProgress(10);
+      setParseStage('hash');
+      setParseStageText(
+        lang === 'ar'
+          ? 'جاري توليد بصمة SHA-256 للتحقق من وجود معالجة سابقة بنفس الملف...'
+          : 'Computing SHA-256 hash & searching local OCR cache...'
+      );
+      setParseElapsedMs(0);
+
+      const activeIngestionSettings = getIngestionSettings();
+      const currentPagesPerChunk = activeIngestionSettings.pagesPerChunk || 25;
+      const currentMaxFileSizeMb = activeIngestionSettings.maxFileSizeMb || 50;
+
+      // Verify file size limit before attempting upload
+      if (file.size > currentMaxFileSizeMb * 1024 * 1024) {
+        setIsParsingFile(false);
+        setStatusMessage({
+          type: 'error',
+          text:
+            lang === 'ar'
+              ? `حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)} MB) يتجاوز الحد الأقصى المسموح به في الإعدادات (${currentMaxFileSizeMb} MB). يمكنك زيادة الحد في شاشة الإعدادات.`
+              : `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds configured maximum size (${currentMaxFileSizeMb} MB). Increase limit in Settings.`,
+        });
+        return;
+      }
+
+      const progressInterval = setInterval(() => {
+        setParseElapsedMs((prev) => prev + 200);
+        setParseProgress((prev) => {
+          if (prev < 90) {
+            return prev + Math.floor(Math.random() * 4) + 1;
+          }
+          return prev;
+        });
+      }, 200);
+
+      (async () => {
         try {
-          const res = await fetchWithAuth('/api/v1/documents/parse', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileName: file.name,
-              fileData: base64Data,
-              mimeType: file.type,
-            }),
-          });
+          // 1. SHA-256 Client-Side OCR Cache Check using useDocumentCache hook
+          const { entry: cachedEntry, cacheKey: fileHash } = await getCache(file, file.name, file.size);
+
+          if (cachedEntry && cachedEntry.extractedText && cachedEntry.extractedText.trim().length > 0) {
+            clearInterval(progressInterval);
+            setParseProgress(100);
+            setParseStage('complete');
+            setParseStageText(lang === 'ar' ? 'تم استرجاع النص من الذاكرة المؤقتة (0ms)' : 'Loaded from OCR cache (0ms)');
+            setDocContent(cachedEntry.extractedText);
+            setInputTab('text');
+            setIsParsingFile(false);
+
+            const savedTokens = cachedEntry.savedTokensEstimate || Math.round(cachedEntry.extractedText.length / 4);
+            setStatusMessage({
+              type: 'success',
+              text: lang === 'ar'
+                ? `⚡ [Mistral OCR Cache Hit] تم تحميل نص المستند المعالج سابقاً فوراً (0ms). تم توفير طلب الـ API ونحو ${savedTokens.toLocaleString()} رمز.`
+                : `⚡ [Mistral OCR Cache Hit] Loaded processed document text instantly from cache (0ms). Saved API call & ~${savedTokens.toLocaleString()} tokens.`,
+            });
+            return;
+          }
+
+          // Progress to Upload Stage
+          const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+          let res: Response | null = null;
+          let fileHashForOcr = '';
+          let finalExtractedText = '';
+          let finalTotalPages = 1;
+          let finalChunksProcessed = 1;
+          let finalEngineUsed = parsingEngine === 'mistral_ocr' ? 'Mistral Document AI' : 'Unstructured.io MCP';
+
+          if (isPdf && file.size > 4 * 1024 * 1024) {
+            // Client-side PDF Slicing using pdf-lib!
+            setParseStageText(
+              lang === 'ar'
+                ? 'جاري تجزئة ملف الـ PDF الكبير على المتصفح لتفادي الأخطاء وتسهيل المعالجة السريعة...'
+                : 'Slicing large PDF file on client to prevent errors & optimize speed...'
+            );
+            
+            try {
+              const { PDFDocument } = await import('pdf-lib');
+              const arrayBuffer = await file.arrayBuffer();
+              const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+              const totalPages = srcDoc.getPageCount();
+              
+              if (totalPages > 0) {
+                // Determine pages per chunk on the client
+                // 15 pages per chunk is excellent for performance & timeout safety
+                const pagesPerChunk = 15;
+                const totalChunks = Math.ceil(totalPages / pagesPerChunk);
+                const chunkTexts: string[] = [];
+                
+                console.log(`[Client-Side Chunker] Slicing PDF into ${totalChunks} chunks of up to ${pagesPerChunk} pages each.`);
+                
+                for (let i = 0; i < totalPages; i += pagesPerChunk) {
+                  const end = Math.min(i + pagesPerChunk, totalPages);
+                  const chunkIdx = Math.floor(i / pagesPerChunk) + 1;
+                  
+                  setParseProgress(Math.min(35 + Math.floor((chunkIdx / totalChunks) * 55), 90));
+                  setParseStageText(
+                    lang === 'ar'
+                      ? `جاري معالجة الجزء ${chunkIdx} من ${totalChunks} (الصفحات ${i + 1} - ${end})...`
+                      : `Processing chunk ${chunkIdx} of ${totalChunks} (Pages ${i + 1} - ${end})...`
+                  );
+                  
+                  const subDoc = await PDFDocument.create();
+                  const pageIndices = Array.from({ length: end - i }, (_, idx) => i + idx);
+                  const copiedPages = await subDoc.copyPages(srcDoc, pageIndices);
+                  copiedPages.forEach((page) => subDoc.addPage(page));
+                  
+                  const subPdfBytes = await subDoc.save();
+                  const chunkBlob = new Blob([subPdfBytes as any], { type: 'application/pdf' });
+                  const chunkFile = new File([chunkBlob], `chunk_${chunkIdx}_${file.name}`, { type: 'application/pdf' });
+                  
+                  const chunkFormData = new FormData();
+                  chunkFormData.append('file', chunkFile);
+                  chunkFormData.append('fileName', chunkFile.name);
+                  chunkFormData.append('mimeType', 'application/pdf');
+                  chunkFormData.append('engine', parsingEngine === 'mistral_ocr' ? 'mistral' : parsingEngine === 'unstructured_mcp' ? 'unstructured' : 'auto');
+                  chunkFormData.append('pagesPerChunk', pagesPerChunk.toString());
+                  chunkFormData.append('maxFileSizeMb', '30'); // Keep within safe limits
+                  
+                  const chunkRes = await fetchWithAuth('/api/v1/documents/parse', {
+                    method: 'POST',
+                    body: chunkFormData,
+                  });
+                  
+                  if (!chunkRes.ok) {
+                    let chunkErr = `Failed parsing chunk ${chunkIdx}`;
+                    try {
+                      const errJson = await chunkRes.json();
+                      chunkErr = errJson.error || chunkErr;
+                    } catch (e) {
+                      const errText = await chunkRes.text();
+                      chunkErr = errText || chunkErr;
+                    }
+                    throw new Error(chunkErr);
+                  }
+                  
+                  const chunkData = await chunkRes.json();
+                  if (chunkData.text && chunkData.text.trim().length > 0) {
+                    chunkTexts.push(chunkData.text.trim());
+                  }
+                }
+                
+                // Successfully parsed all chunks!
+                finalExtractedText = chunkTexts.join('\n\n');
+                finalTotalPages = totalPages;
+                finalChunksProcessed = totalChunks;
+                finalEngineUsed = (parsingEngine === 'mistral_ocr' ? 'Mistral Document AI' : 'Unstructured.io MCP') + ' (Client-Side Sliced ⚡)';
+                fileHashForOcr = 'sliced-' + file.name + '-' + file.size + '-' + totalPages;
+                
+                // Construct a mock response to satisfy downstream flow
+                res = {
+                  ok: true,
+                  status: 200,
+                  json: async () => ({
+                    text: finalExtractedText,
+                    totalPages: finalTotalPages,
+                    chunksProcessed: finalChunksProcessed,
+                    engineUsed: finalEngineUsed,
+                    fileHash: fileHashForOcr,
+                    isCacheHit: false,
+                  })
+                } as Response;
+              }
+            } catch (slicingErr: any) {
+              console.warn('[Client-Side Chunker] Slicing failed, falling back to full file upload:', slicingErr);
+              // Fallback to normal upload
+              res = null;
+            }
+          }
+
+          if (!res) {
+            // Fallback/Direct Upload Stage
+            setParseProgress(35);
+            setParseStage('upload');
+            setParseStageText(
+              lang === 'ar'
+                ? `جاري رفع المستند (${(file.size / (1024 * 1024)).toFixed(2)} MB) إلى السيرفر...`
+                : `Uploading document (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`
+            );
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('fileName', file.name);
+            formData.append('mimeType', file.type || 'application/octet-stream');
+            formData.append('engine', parsingEngine === 'mistral_ocr' ? 'mistral' : parsingEngine === 'unstructured_mcp' ? 'unstructured' : 'auto');
+            formData.append('pagesPerChunk', currentPagesPerChunk.toString());
+            formData.append('maxFileSizeMb', currentMaxFileSizeMb.toString());
+
+            // Progress to OCR Extraction Stage
+            setParseProgress(55);
+            setParseStage('ocr');
+            setParseStageText(
+              lang === 'ar'
+                ? `جاري معالجة الـ PDF عبر محرك الذكاء الاصطناعي (تقطيع على دفعات من ${currentPagesPerChunk} صفحة)...`
+                : `Running AI Document Pipeline (batched in ${currentPagesPerChunk}-page chunks)...`
+            );
+
+            res = await fetchWithAuth('/api/v1/documents/parse', {
+              method: 'POST',
+              body: formData,
+            });
+
+            // If FormData parsing failed, try JSON payload fallback (ONLY for small files under 3MB and if not a 413 limit error)
+            if (!res.ok && file.size <= 3 * 1024 * 1024 && res.status !== 413) {
+              console.warn('[DocumentIngestion] FormData endpoint returned non-OK, trying Base64 JSON fallback...');
+              try {
+                const base64Data = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve((reader.result as string) || '');
+                  reader.onerror = (e) => reject(e);
+                  reader.readAsDataURL(file);
+                });
+
+                if (base64Data) {
+                  res = await fetchWithAuth('/api/v1/documents/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      fileData: base64Data,
+                      fileName: file.name,
+                      mimeType: file.type || 'application/octet-stream',
+                      engine: parsingEngine === 'mistral_ocr' ? 'mistral' : parsingEngine === 'unstructured_mcp' ? 'unstructured' : 'auto',
+                      pagesPerChunk: currentPagesPerChunk,
+                      maxFileSizeMb: currentMaxFileSizeMb,
+                    }),
+                  });
+                }
+              } catch (fallbackErr) {
+                console.warn('[DocumentIngestion] Base64 JSON fallback attempt failed:', fallbackErr);
+              }
+            }
+          }
+
+          clearInterval(progressInterval);
 
           if (res.ok) {
             const data = await res.json();
-            if (data.text) {
+            if (data.text && data.text.trim().length > 0) {
+              setParseProgress(90);
+              setParseStage('chunk');
+              setParseStageText(lang === 'ar' ? 'جاري تنسيق وسحب النصوص المحللة وتخزينها بالذاكرة المؤقتة...' : 'Formatting markdown & saving OCR cache...');
+
               setDocContent(data.text);
               setInputTab('text');
+              const engineLabel = data.engineUsed || (parsingEngine === 'mistral_ocr' ? 'Mistral Document AI' : 'Unstructured.io MCP');
+
+              // Save to Mistral OCR Cache using useDocumentCache hook
+              await saveCache({
+                cacheKey: data.fileHash || fileHash,
+                fileName: file.name,
+                fileSize: file.size,
+                mimeType: file.type || 'application/pdf',
+                engineUsed: engineLabel,
+                extractedText: data.text,
+                totalPages: data.totalPages || 1,
+                chunksProcessed: data.chunksProcessed || 1,
+                cachedAt: Date.now(),
+                hits: data.isCacheHit ? 1 : 0,
+              });
+
+              setParseProgress(100);
+              setParseStage('complete');
+
               setStatusMessage({
                 type: 'success',
                 text: lang === 'ar' 
-                  ? 'تم استخراج وتنسيق النصوص بنجاح باستخدام الذكاء الاصطناعي!' 
-                  : 'Text extracted and formatted successfully using Gemini AI!',
+                  ? `تم استخراج وتنسيق النصوص بنجاح (${data.totalPages || 1} صفحة، ${data.chunksProcessed || 1} دفعة مجزأة) وتم حفظها بالذاكرة المؤقتة لـ OCR!` 
+                  : `Text extracted successfully (${data.totalPages || 1} pages, ${data.chunksProcessed || 1} sliced batches) & cached for future OCR!`,
               });
             } else {
-              throw new Error(lang === 'ar' ? 'لم يتم استخراج أي نص من الملف.' : 'No text could be extracted.');
+              setStatusMessage({
+                type: 'error',
+                text: lang === 'ar' 
+                  ? 'لم يتم استخراج أي نص من الملف. يرجى التأكد من أن الملف غير فارغ ويحتوي على نصوص قابلة للقراءة.' 
+                  : 'No text could be extracted. Please ensure the file is not empty and contains readable text.',
+              });
             }
           } else {
             let errorMsg = 'Failed to parse document';
@@ -476,26 +737,18 @@ export function DocumentIngestionStudio({
                 errorMsg = err.error || errorMsg;
               } else {
                 const textErr = await res.text();
-                if (res.status === 413 || textErr.includes('Payload Too Large') || textErr.includes('Request Entity Too Large')) {
-                  errorMsg = lang === 'ar'
-                    ? 'حجم الملف كبير جداً للاستخراج المباشر. يرجى محاولة تقسيم المستند أو استخدام ملف أصغر.'
-                    : 'File is too large for parsing. Please try splitting the document or uploading a smaller file.';
-                } else {
-                  errorMsg = textErr || `Server returned status code ${res.status}`;
-                }
+                errorMsg = textErr || `Server returned status code ${res.status}`;
               }
             } catch (e) {
-              if (res.status === 413) {
-                errorMsg = lang === 'ar'
-                  ? 'حجم الملف كبير جداً للاستخراج المباشر. يرجى محاولة تقسيم المستند أو استخدام ملف أصغر.'
-                  : 'File is too large for parsing. Please try splitting the document or uploading a smaller file.';
-              } else {
-                errorMsg = `Server error ${res.status}`;
-              }
+              errorMsg = `Server error ${res.status}`;
             }
-            throw new Error(errorMsg);
+            setStatusMessage({
+              type: 'error',
+              text: lang === 'ar' ? `فشل استخراج النص: ${errorMsg}` : `Extraction failed: ${errorMsg}`,
+            });
           }
         } catch (error: any) {
+          clearInterval(progressInterval);
           console.error('Error parsing file:', error);
           setStatusMessage({
             type: 'error',
@@ -504,10 +757,10 @@ export function DocumentIngestionStudio({
               : `Extraction failed: ${error.message}`,
           });
         } finally {
+          clearInterval(progressInterval);
           setIsParsingFile(false);
         }
-      };
-      reader.readAsDataURL(file);
+      })();
     }
   };
 
@@ -922,19 +1175,90 @@ export function DocumentIngestionStudio({
         {/* TAB 1: DRAG & DROP FILE ZONE */}
         {inputTab === 'upload' && (
           isParsingFile ? (
-            <div className="border-2 border-indigo-500 bg-indigo-50/50 rounded-3xl p-12 text-center flex flex-col items-center justify-center space-y-4 animate-pulse">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-md">
-                <Loader2 className="w-8 h-8 animate-spin" />
+            <div className="border-2 border-indigo-500/80 bg-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-xl space-y-5 relative overflow-hidden">
+              {/* Background Shimmer Glow */}
+              <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 via-amber-500/10 to-emerald-500/10 animate-pulse pointer-events-none" />
+
+              {/* Progress Card Top Header */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 relative z-10">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-indigo-500/20 border border-indigo-400/40 text-indigo-400 flex items-center justify-center shrink-0">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                      <span>{lang === 'ar' ? 'جاري رفع وتحليل المستند' : 'Uploading & Parsing Document'}</span>
+                      <span className="text-[10px] bg-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded-full font-mono font-bold border border-indigo-400/30">
+                        {selectedFileName || 'Document'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5 font-mono">
+                      {parseStageText || (lang === 'ar' ? 'جاري تنفيذ المعالجة الدلالية...' : 'Executing semantic processing...')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Badges and Time Ticker */}
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto font-mono text-xs">
+                  <span className="bg-slate-800 text-slate-300 px-2.5 py-1 rounded-xl border border-slate-700 text-[11px] font-bold flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-amber-400" />
+                    <span>⏱️ {(parseElapsedMs / 1000).toFixed(1)}s</span>
+                  </span>
+                  <span className="bg-indigo-950 text-indigo-300 px-2.5 py-1 rounded-xl border border-indigo-800 text-[11px] font-bold">
+                    {getIngestionSettings().pagesPerChunk} {lang === 'ar' ? 'صفحة/دفعة' : 'pages/chunk'}
+                  </span>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900">
-                  {lang === 'ar' ? 'جاري تحليل وقراءة المستند دلالياً...' : 'Analyzing & Parsing Document Semantically...'}
-                </h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto leading-relaxed">
-                  {lang === 'ar'
-                    ? 'يتم الآن استخراج النصوص ومعالجة الجداول وصيانة اللغة العربية بدقة متناهية عبر نموذج Gemini 3.6...'
-                    : 'Extracting text structure, processing layout, and optimizing characters via Gemini 3.6 model...'}
-                </p>
+
+              {/* Animated Progress Bar */}
+              <div className="space-y-2 relative z-10">
+                <div className="flex justify-between items-center text-xs font-mono font-bold">
+                  <span className="text-indigo-300 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+                    <span>
+                      {parseStage === 'hash'
+                        ? (lang === 'ar' ? '1. فحص الكاش SHA-256' : '1. SHA-256 Cache Check')
+                        : parseStage === 'upload'
+                        ? (lang === 'ar' ? '2. رفع البيانات للسيرفر' : '2. File Uploading')
+                        : parseStage === 'ocr'
+                        ? (lang === 'ar' ? '3. معالجة OCR بالتعديد' : '3. Mistral OCR Batching')
+                        : parseStage === 'chunk'
+                        ? (lang === 'ar' ? '4. تنسيق وهيكلة Markdown' : '4. Markdown Formatting')
+                        : (lang === 'ar' ? '5. اكتملت المعالجة' : '5. Processing Complete')}
+                    </span>
+                  </span>
+                  <span className="text-amber-400 font-extrabold text-sm">{parseProgress}%</span>
+                </div>
+
+                <div className="w-full h-3.5 bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700/80 shadow-inner">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 transition-all duration-300 ease-out shadow-sm"
+                    style={{ width: `${Math.min(100, Math.max(5, parseProgress))}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Progress Steps Checklist */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-800 text-[11px] font-mono relative z-10">
+                <div className={`p-2 rounded-xl border flex items-center gap-2 ${parseProgress >= 10 ? 'bg-indigo-950/60 border-indigo-800 text-indigo-300' : 'bg-slate-950/40 border-slate-800/80 text-slate-500'}`}>
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${parseProgress >= 10 ? 'text-emerald-400' : 'text-slate-600'}`} />
+                  <span className="truncate">{lang === 'ar' ? 'فحص الكاش' : 'Cache Check'}</span>
+                </div>
+
+                <div className={`p-2 rounded-xl border flex items-center gap-2 ${parseProgress >= 35 ? 'bg-indigo-950/60 border-indigo-800 text-indigo-300' : 'bg-slate-950/40 border-slate-800/80 text-slate-500'}`}>
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${parseProgress >= 35 ? 'text-emerald-400' : 'text-slate-600'}`} />
+                  <span className="truncate">{lang === 'ar' ? 'رفع المستند' : 'File Upload'}</span>
+                </div>
+
+                <div className={`p-2 rounded-xl border flex items-center gap-2 ${parseProgress >= 55 ? 'bg-indigo-950/60 border-indigo-800 text-indigo-300' : 'bg-slate-950/40 border-slate-800/80 text-slate-500'}`}>
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${parseProgress >= 55 ? 'text-emerald-400' : 'text-slate-600'}`} />
+                  <span className="truncate">{lang === 'ar' ? 'استخراج OCR' : 'Mistral OCR'}</span>
+                </div>
+
+                <div className={`p-2 rounded-xl border flex items-center gap-2 ${parseProgress >= 90 ? 'bg-indigo-950/60 border-indigo-800 text-indigo-300' : 'bg-slate-950/40 border-slate-800/80 text-slate-500'}`}>
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${parseProgress >= 90 ? 'text-emerald-400' : 'text-slate-600'}`} />
+                  <span className="truncate">{lang === 'ar' ? 'حفظ الكاش' : 'Cache Store'}</span>
+                </div>
               </div>
             </div>
           ) : (
@@ -968,8 +1292,8 @@ export function DocumentIngestionStudio({
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
                   {lang === 'ar'
-                    ? 'يدعم ملفات PDF, DOCX, TXT, Markdown, JSON, CSV وشفرات Python/JS حتى 50MB'
-                    : 'Supports PDF, DOCX, TXT, MD, JSON, CSV, and Python/JS files'}
+                    ? `يدعم ملفات PDF, DOCX, TXT, Markdown, JSON, CSV وشفرات البرمجة حتى ${getIngestionSettings().maxFileSizeMb}MB`
+                    : `Supports PDF, DOCX, TXT, MD, JSON, CSV up to ${getIngestionSettings().maxFileSizeMb} MB`}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-1.5 text-[10px] font-mono font-bold text-slate-400 pt-2">

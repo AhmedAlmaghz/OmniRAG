@@ -353,7 +353,7 @@ export default function ModelSettingsView() {
                       type="text"
                       value={customModelNames[op.key] ?? currentVal}
                       onChange={(e) => handleCustomNameChange(op.key, e.target.value)}
-                      placeholder="أدخل اسم النموذج المخصص (مثلاً: gemini-3.6-flash)"
+                      placeholder="أدخل اسم النموذج المخصص (مثلاً: gemini-3.7-flash)"
                       className="w-full bg-slate-950 border border-indigo-500/50 rounded-xl px-3.5 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                     <p className="text-[11px] text-slate-500">

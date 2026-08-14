@@ -88,7 +88,7 @@ Supported rich formatting capabilities:
 - 🎬 **Embedded Media:** Direct playback for photos, video clips, and audio tracks.
 - 🔊 **Text-To-Speech (TTS), Font Sizing, and Markdown Exports.**`,
       createdAt: new Date().toISOString(),
-      modelUsed: 'gemini-3.6-flash',
+      modelUsed: 'gemini-3.7-flash',
     },
   ]);
 
@@ -402,7 +402,7 @@ Supported rich formatting capabilities:
             ? 'تمت إعادة ضبط المحادثة. كيف يمكنني مساعدتك اليوم؟'
             : 'Conversation reset. How can I assist you today?',
         createdAt: new Date().toISOString(),
-        modelUsed: 'gemini-3.6-flash',
+        modelUsed: 'gemini-3.7-flash',
       },
     ]);
     setActiveCitation(null);

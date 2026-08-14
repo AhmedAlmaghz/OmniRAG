@@ -27,8 +27,10 @@ import {
   Sliders,
   Type,
   LayoutGrid,
-  Activity
+  Activity,
+  HardDrive
 } from 'lucide-react';
+import IngestionSettingsView from './IngestionSettingsView';
 import ModelSettingsView from './ModelSettingsView';
 import DiagnosticUtility from './diagnostics/DiagnosticUtility';
 import EnvVariablesManager from './env/EnvVariablesManager';
@@ -41,7 +43,7 @@ interface SettingsViewProps {
   onLogOut?: () => void;
 }
 
-type TabType = 'account' | 'notifications' | 'security' | 'appearance' | 'aiModels' | 'diagnostics' | 'envVars';
+type TabType = 'account' | 'notifications' | 'security' | 'appearance' | 'aiModels' | 'ingestion' | 'diagnostics' | 'envVars';
 
 export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<TabType>('account');
@@ -166,6 +168,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       tabSecurity: 'الأمان والوصول',
       tabAppearance: 'المظهر والخطوط',
       tabAiModels: 'إعدادات الذكاء الاصطناعي',
+      tabIngestion: 'معالجة المستندات والبنية التحتية',
       tabEnvVars: 'متغيرات البيئة والربط',
       tabDiagnostics: 'فحص الاتصال والتشخيص',
       profileDetails: 'بيانات الملف الشخصي',
@@ -222,6 +225,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       tabSecurity: 'Security & API Keys',
       tabAppearance: 'Appearance & Font',
       tabAiModels: 'AI Engine Settings',
+      tabIngestion: 'Document Ingestion & Infra',
       tabEnvVars: 'Environment Variables',
       tabDiagnostics: 'System Diagnostics',
       profileDetails: 'Profile Details',
@@ -409,6 +413,22 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               {t.tabAiModels}
             </span>
             <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'aiModels' ? 'opacity-100' : 'opacity-40'}`} />
+          </button>
+
+          <button
+            id="tab-btn-ingestion"
+            onClick={() => setActiveTab('ingestion')}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium text-xs transition duration-200 cursor-pointer ${
+              activeTab === 'ingestion'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10 border-l-4 border-l-indigo-400'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 bg-white border border-slate-200'
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <HardDrive className="w-4 h-4" />
+              {t.tabIngestion}
+            </span>
+            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'ingestion' ? 'opacity-100' : 'opacity-40'}`} />
           </button>
 
           <button
@@ -954,6 +974,12 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               {activeTab === 'aiModels' && (
                 <div id="section-aimodels">
                   <ModelSettingsView />
+                </div>
+              )}
+
+              {activeTab === 'ingestion' && (
+                <div id="section-ingestion">
+                  <IngestionSettingsView lang={lang} />
                 </div>
               )}
 

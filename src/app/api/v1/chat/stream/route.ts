@@ -25,7 +25,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       }
     }
     if (!targetModel) {
-      targetModel = 'gemini-3.6-flash';
+      targetModel = 'gemini-3.7-flash';
     }
 
     // Stage 1: Auth check

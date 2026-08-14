@@ -20,7 +20,7 @@ export const INITIAL_TENANTS: Tenant[] = [
       chunkSize: 500,
       chunkOverlap: 50,
       hybridWeights: { semantic: 0.7, lexical: 0.3 },
-      defaultModel: 'gemini-3.6-flash',
+      defaultModel: 'gemini-3.7-flash',
       dataRetentionDays: 90,
       enablePiiRedaction: true,
       enablePromptSanitizer: true,
@@ -88,9 +88,60 @@ export const INITIAL_DOCUMENTS: Document[] = [
     language: 'ar',
     status: 'indexed',
     chunkCount: 3,
+    version: 3,
     createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
     metadata: { author: 'Legal Team', classification: 'Confidential' },
     collectionIds: ['col-legal-01'],
+    versions: [
+      {
+        id: 'ver-doc-001-v1',
+        documentId: 'doc-001',
+        versionNumber: 1,
+        title: 'مسودة اتفاقية السرية NDA (2026)',
+        content: `اتفاقية عدم الإفصاح والسرية (NDA) - مسودة أولية
+المادة 1: التعريفات والالتزامات
+يتعهد الطرفان بالحفاظ على سرية المعلومات العامة والتقنية المتبادلة.
+المادة 2: مدة الاتفاقية
+تستمر هذه الاتفاقية لمدة سنتين من تاريخ التوقيع.`,
+        chunkCount: 1,
+        createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
+        createdBy: 'Sara Ahmed (Legal Associate)',
+        changeSummary: 'المسودة التأسيسية الأولى لبنود السرية التعاقدية',
+      },
+      {
+        id: 'ver-doc-001-v2',
+        documentId: 'doc-001',
+        versionNumber: 2,
+        title: 'اتفاقية عدم الإفصاح والسرية NDA (مراجعة المستشار القانوني)',
+        content: `اتفاقية عدم الإفصاح والسرية (NDA) - شركة أكمي العالمية
+المادة 1: التعريفات والالتزامات
+يتعهد الطرفان بالحفاظ على سرية جميع البيانات التقنية والمالية والتجارية المتبادلة. يمنع منعاً باتاً نقل أي بيانات خارج نطاق المستأجر المعين (Tenant Isolation).
+المادة 2: مدة الاتفاقية والنطاق
+تستمر هذه الاتفاقية لمدة 5 سنوات من تاريخ التوقيع. في حال حدوث أي تسريب غير مصرح به، يحق للطرف المتضرر المطالبة بتعويضات فورية.`,
+        chunkCount: 2,
+        createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+        createdBy: 'Omar Al-Hassan (Senior Counsel)',
+        changeSummary: 'تمديد فترة السريان إلى 5 سنوات وإضافة إلزامية عزل بيانات المستأجرين',
+      },
+      {
+        id: 'ver-doc-001-v3',
+        documentId: 'doc-001',
+        versionNumber: 3,
+        title: 'اتفاقية عدم الإفصاح والسرية NDA (2026)',
+        content: `اتفاقية عدم الإفصاح والسرية (NDA) - شركة أكمي العالمية
+المادة 1: التعريفات والالتزامات
+يتعهد الطرفان بالحفاظ على سرية جميع البيانات التقنية والمالية والتجارية المتبادلة. يمنع منعاً باتاً نقل أي بيانات خارج نطاق المستأجر المعين (Tenant Isolation).
+المادة 2: مدة الاتفاقية والنطاق
+تستمر هذه الاتفاقية لمدة 5 سنوات من تاريخ التوقيع. في حال حدوث أي تسريب غير مصرح به، يحق للطرف المتضرر المطالبة بتعويضات فورية وتقديم بلاغ للجهات المختصة.
+المادة 3: حماية البيانات في بيئة Cloud
+تلتزم جميع الأنظمة المستضافة بالتشفير الكامل بأسلوب AES-256 أثناء التخزين وببروتوكول TLS 1.3 أثناء النقل، مع تفعيل سياسات التحكم بالوصول على مستوى الصفوف (Row Level Security).`,
+        chunkCount: 3,
+        createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+        createdBy: 'Security & Compliance Board',
+        changeSummary: 'إضافة المادة 3 لمعايير التشفير السحابي AES-256 و TLS 1.3 و RLS',
+      },
+    ],
   },
   {
     id: 'doc-002',
@@ -107,9 +158,45 @@ export const INITIAL_DOCUMENTS: Document[] = [
     language: 'ar',
     status: 'indexed',
     chunkCount: 3,
+    version: 2,
     createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+    updatedAt: new Date(Date.now() - 86400000 * 1).toISOString(),
     metadata: { department: 'CyberSecurity', isoVersion: '2026.1' },
     collectionIds: ['col-tech-02'],
+    versions: [
+      {
+        id: 'ver-doc-002-v1',
+        documentId: 'doc-002',
+        versionNumber: 1,
+        title: 'سياسة أمن المعلومات الأولية ISO27001',
+        content: `سياسة أمن واستجابة الحوادث - قسم تكنولوجيا المعلومات
+1. كشف الاختراقات وهجمات الحقن:
+يتم فحص جميع المدخلات للذكاء الاصطناعي لمنع محاولات تجاوز التعليمات.
+2. التشفير وإسقاط الهويات:
+يُحظر بث أي معلومات تعريف شخصية في استجابات النموذج.`,
+        chunkCount: 2,
+        createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+        createdBy: 'DevSecOps Team',
+        changeSummary: 'الإصدار الأساسي لسياسات ISO27001',
+      },
+      {
+        id: 'ver-doc-002-v2',
+        documentId: 'doc-002',
+        versionNumber: 2,
+        title: 'سياسة أمن واستجابة الحوادث السيبرانية ISO27001',
+        content: `سياسة أمن واستجابة الحوادث - قسم تكنولوجيا المعلومات
+1. كشف الاختراقات وهجمات الحقن (Prompt Injection Defense):
+يتم فحص جميع المدخلات الموجهة لوكلاء الذكاء الاصطناعي عبر محرك حتمي (HookHarness) لمنع محاولات تجاوز تعليمات النظام أو استخراج المفاتيح والرموز الحساسة.
+2. إدارة أدوات MCP بروتوكول سياق النموذج:
+جميع أدوات MCP المصنفة تحت مستوى Sandbox T2 و T3 (التي تحدث آثاراً جانبية مثل إرسال بريد أو تعديل قواعد البيانات) تتطلب موافقة بشرية صريحة من المستخدم قبل التنفيذ.
+3. التشفير وإسقاط الهويات PII Redaction:
+يُحظر بث أي معلومات تعريف شخصية (بريد إلكتروني، رقم هاتف، بطاقة ائتمان) في استجابات النموذج، ويتم استبدالها حتمياً بوسوم [REDACTED].`,
+        chunkCount: 3,
+        createdAt: new Date(Date.now() - 86400000 * 1).toISOString(),
+        createdBy: 'CISO Office',
+        changeSummary: 'إضافة ضوابط أمان بروتوكول سياق النموذج (MCP Sandbox T2/T3) والموافقة البشرية',
+      },
+    ],
   },
   {
     id: 'doc-003',
@@ -237,6 +324,20 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
 
 // Initial MCP Servers
 export const INITIAL_MCP_SERVERS: MCPServerConfig[] = [
+  {
+    id: 'mcp-unstructured-transform',
+    tenantId: 'tenant-acme-01',
+    name: 'Unstructured Transform',
+    description: 'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
+    endpointUrl: 'https://mcp.transform.unstructured.io',
+    protocolVersion: '2026-07-28',
+    sandboxTier: 'T2_ELEVATED',
+    enabledTools: ['unstructured_transform_document', 'unstructured_chunk_document'],
+    requireConfirmationTools: [],
+    status: 'healthy',
+    latencyMs: 45,
+    lastChecked: '2026-08-14T12:00:00.000Z',
+  },
   {
     id: 'mcp-slack-01',
     tenantId: 'tenant-acme-01',

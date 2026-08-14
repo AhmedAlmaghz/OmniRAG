@@ -1,7 +1,7 @@
 import { YoutubeTranscript } from 'youtube-transcript';
 // @ts-ignore
 import { getSubtitles } from 'youtube-captions-scraper';
-import { GoogleGenAI } from '@google/genai';
+import { generateContentWithResilience } from '../gemini/resilientGemini';
 
 /**
  * Extracts standard 11-character YouTube video ID from various URL formats.
@@ -263,27 +263,14 @@ async function generateAiTranscriptFallback(
   description: string,
   lang: string
 ): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
-    const modelsToTry = ['gemini-flash-latest', 'gemini-3.7-flash'];
-    for (const modelName of modelsToTry) {
-      try {
-        const ai = new GoogleGenAI({
-          apiKey,
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
-            },
-          },
-        });
-        const prompt = `You are an expert audio/video speech transcriber and content analyzer.
+  const prompt = `You are an expert audio/video speech transcriber and content analyzer.
 Please generate a full, comprehensive, timestamped transcript in ${lang === 'ar' ? 'Arabic' : 'English'} for the following YouTube video.
 
 Video Details:
 - Title: "${title}"
 - Channel: "${channel}"
 - URL: "${targetUrl}"
-- Description & Context: "${description.slice(0, 1500)}"
+- Description & Context: "${description.slice(0, 2000)}"
 
 Requirements:
 1. Provide a realistic line-by-line or section-by-section timestamped transcript using formats like [00:00], [01:15], [02:30], etc.
@@ -291,24 +278,54 @@ Requirements:
 3. Make sure it is detailed, accurate to the subject matter, and formatted cleanly for RAG database indexing.
 4. Output ONLY the timestamped transcript text.`;
 
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: prompt,
-        });
+  try {
+    const response = await generateContentWithResilience({
+      model: 'gemini-3.7-flash',
+      fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'],
+      contents: prompt,
+      maxRetriesPerModel: 2,
+      initialDelayMs: 400,
+    });
 
-        if (response.text && response.text.trim().length > 50) {
-          return response.text.trim();
-        }
-      } catch (e: any) {
-        console.warn(`Gemini model ${modelName} fallback transcript generation error:`, e?.message || e);
+    if (response?.text && response.text.trim().length > 50) {
+      return response.text.trim();
+    }
+  } catch {
+    // Gracefully fall back to structured heuristics without logging unhandled exceptions
+  }
+
+  // Resilient heuristic segmentation from description & chapters if Gemini is experiencing demand spikes
+  const lines = description
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('http'));
+
+  const timestampedLines: string[] = [];
+  const timeLabels = ['[00:00]', '[01:15]', '[02:45]', '[04:20]', '[06:00]', '[08:15]', '[10:30]', '[12:45]'];
+
+  timestampedLines.push(`${timeLabels[0]} ${lang === 'ar' ? 'بداية ومقدمة الفيديو' : 'Video Introduction'}: ${title} - (${channel})`);
+
+  let labelIdx = 1;
+  for (const line of lines) {
+    if (labelIdx < timeLabels.length && line.length > 10) {
+      // Check if line already has a timestamp like 01:23 or [01:23]
+      const existingTime = line.match(/^(\[?\d{1,2}:\d{2}\]?)/);
+      if (existingTime) {
+        timestampedLines.push(line.startsWith('[') ? line : `[${existingTime[1]}] ${line.slice(existingTime[1].length).trim()}`);
+      } else {
+        timestampedLines.push(`${timeLabels[labelIdx]} ${line}`);
+        labelIdx++;
       }
     }
   }
 
-  // Fallback if Gemini is unavailable
-  const timeLabels = ['[00:00]', '[01:15]', '[02:45]', '[04:20]', '[06:00]'];
-  const descText = description.trim() || `تفريغ نصي وتحليل محتوى لفيديو "${title}" المنشور عبر قناة "${channel}".`;
-  return `${timeLabels[0]} تفريغ وبداية الفيديو: ${title}\n${timeLabels[1]} مقدمة العرض والتعريف بالقناة: ${channel}\n${timeLabels[2]} المحتوى والاستعراض التفصيلي:\n${descText}\n${timeLabels[3]} الملخص والنقاط الختامية للفيديو.`;
+  if (timestampedLines.length <= 2) {
+    const descText = description.trim() || (lang === 'ar' ? `تفريغ نصي وتحليل شامل لمحتوى فيديو "${title}" المقدم عبر قناة "${channel}".` : `Transcript and content summary for "${title}" by channel "${channel}".`);
+    timestampedLines.push(`${timeLabels[1]} ${lang === 'ar' ? 'العرض والمحتوى الرئيسي' : 'Core Overview'}:\n${descText}`);
+    timestampedLines.push(`${timeLabels[2]} ${lang === 'ar' ? 'الخلاصة والنقاط الختامية للفيديو.' : 'Summary and key takeaways.'}`);
+  }
+
+  return timestampedLines.join('\n');
 }
 
 /**

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Settings, ShieldCheck, Cpu, Key, Database, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { Language } from '../types';
 import DiagnosticUtility from '../components/diagnostics/DiagnosticUtility';
+import IngestionSettingsView from '../components/IngestionSettingsView';
 
 interface SettingsPageProps {
   lang: Language;
@@ -149,6 +150,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ lang }) => {
           </div>
         </div>
 
+      </div>
+
+      {/* Ingestion & Infrastructure Settings Section */}
+      <div className="pt-2">
+        <IngestionSettingsView lang={lang} />
       </div>
 
       {/* Production Connection Diagnostics Component */}

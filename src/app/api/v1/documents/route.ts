@@ -81,6 +81,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     }
 
     const docId = `doc-${Date.now()}`;
+    const nowIso = new Date().toISOString();
     const newDoc: Document = {
       id: docId,
       tenantId,
@@ -90,7 +91,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       language,
       status: 'indexed',
       chunkCount: 0,
-      createdAt: new Date().toISOString(),
+      version: 1,
+      createdAt: nowIso,
+      updatedAt: nowIso,
       metadata: {
         sourceId: sourceObj.id,
         sourceName: sourceObj.name,
@@ -98,6 +101,19 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         chunkingConfig,
       },
       collectionIds,
+      versions: [
+        {
+          id: `ver-${docId}-v1`,
+          documentId: docId,
+          versionNumber: 1,
+          title,
+          content,
+          chunkCount: 0,
+          createdAt: nowIso,
+          createdBy: 'Ingestion Pipeline',
+          changeSummary: 'الإصدار الأصلي المستوعب في قاعدة المعرفة',
+        },
+      ],
     };
 
     // Advanced dynamic chunking logic

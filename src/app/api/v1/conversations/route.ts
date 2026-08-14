@@ -37,7 +37,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         tenantId,
         title: body.title || 'محادثة جديدة',
         mode: body.mode || 'hybrid',
-        model: body.model || 'gemini-3.6-flash',
+        model: body.model || 'gemini-3.7-flash',
         collectionIds: body.collectionIds || [],
         enabledMcpServers: body.enabledMcpServers || [],
         createdAt: new Date().toISOString(),
