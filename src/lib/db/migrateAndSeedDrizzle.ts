@@ -194,24 +194,26 @@ export async function migrateAndSeedWithDrizzle() {
     client.release();
   }
 
+
   // 2. Drizzle ORM Seeding Implementation
   try {
     const db = getDrizzle();
+    
     console.log('[Drizzle] Seeding initial collections...');
-    for (const col of INITIAL_COLLECTIONS) {
-      await db.insert(collections).values({
+    if (INITIAL_COLLECTIONS.length > 0) {
+      await db.insert(collections).values(INITIAL_COLLECTIONS.map(col => ({
         id: col.id,
         tenantId: col.tenantId,
         name: col.name,
         description: col.description || '',
         documentCount: col.documentCount || 0,
         createdAt: col.createdAt,
-      }).onConflictDoNothing();
+      }))).onConflictDoNothing();
     }
 
     console.log('[Drizzle] Seeding initial documents...');
-    for (const docObj of INITIAL_DOCUMENTS) {
-      await db.insert(documents).values({
+    if (INITIAL_DOCUMENTS.length > 0) {
+      await db.insert(documents).values(INITIAL_DOCUMENTS.map(docObj => ({
         id: docObj.id,
         tenantId: docObj.tenantId,
         title: docObj.title,
@@ -223,12 +225,12 @@ export async function migrateAndSeedWithDrizzle() {
         createdAt: docObj.createdAt,
         metadata: docObj.metadata || {},
         collectionIds: docObj.collectionIds || [],
-      }).onConflictDoNothing();
+      }))).onConflictDoNothing();
     }
 
     console.log('[Drizzle] Seeding initial chunks...');
-    for (const chunk of INITIAL_CHUNKS) {
-      await db.insert(chunks).values({
+    if (INITIAL_CHUNKS.length > 0) {
+      await db.insert(chunks).values(INITIAL_CHUNKS.map(chunk => ({
         id: chunk.id,
         tenantId: chunk.tenantId,
         documentId: chunk.documentId,
@@ -238,12 +240,12 @@ export async function migrateAndSeedWithDrizzle() {
         pageNumber: chunk.pageNumber || 1,
         language: chunk.language,
         metadata: chunk.metadata || {},
-      }).onConflictDoNothing();
+      }))).onConflictDoNothing();
     }
 
     console.log('[Drizzle] Seeding initial MCP servers...');
-    for (const s of INITIAL_MCP_SERVERS) {
-      await db.insert(mcpServers).values({
+    if (INITIAL_MCP_SERVERS.length > 0) {
+      await db.insert(mcpServers).values(INITIAL_MCP_SERVERS.map(s => ({
         id: s.id,
         tenantId: s.tenantId,
         name: s.name,
@@ -264,12 +266,12 @@ export async function migrateAndSeedWithDrizzle() {
         config: s.config || {},
         customToolSchemas: s.customToolSchemas || {},
         createdAt: '',
-      }).onConflictDoNothing();
+      }))).onConflictDoNothing();
     }
 
     console.log('[Drizzle] Seeding initial sources...');
-    for (const s of INITIAL_SOURCES) {
-      await db.insert(sources).values({
+    if (INITIAL_SOURCES.length > 0) {
+      await db.insert(sources).values(INITIAL_SOURCES.map(s => ({
         id: s.id,
         tenantId: s.tenantId,
         name: s.name,
@@ -282,12 +284,12 @@ export async function migrateAndSeedWithDrizzle() {
         lastError: s.lastError || '',
         createdAt: s.createdAt,
         collectionIds: s.collectionIds || [],
-      }).onConflictDoNothing();
+      }))).onConflictDoNothing();
     }
 
     console.log('[Drizzle] Seeding initial audit logs...');
-    for (const log of INITIAL_AUDIT_LOGS) {
-      await db.insert(auditLogs).values({
+    if (INITIAL_AUDIT_LOGS.length > 0) {
+      await db.insert(auditLogs).values(INITIAL_AUDIT_LOGS.map(log => ({
         id: log.id,
         tenantId: log.tenantId,
         actorId: log.actorId,
@@ -297,7 +299,7 @@ export async function migrateAndSeedWithDrizzle() {
         status: log.status,
         details: log.details || '',
         timestamp: log.timestamp,
-      }).onConflictDoNothing();
+      }))).onConflictDoNothing();
     }
 
     console.log('[Drizzle] Database seeding and schema migrations complete.');

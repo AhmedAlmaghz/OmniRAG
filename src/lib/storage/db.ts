@@ -315,22 +315,25 @@ async function ensureSeeded(): Promise<void> {
   if (seedingPromise) return seedingPromise;
 
   seedingPromise = (async () => {
+    let timeoutId: NodeJS.Timeout;
     try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 8000)
-      );
-      await Promise.race([
-        ensurePostgresTables().catch((err) => {
-          console.error('Background ensurePostgresTables error caught to prevent unhandled rejection:', err);
-        }),
-        timeoutPromise,
-      ]);
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 8000);
+      });
+      
+      const dbPromise = ensurePostgresTables().catch((err) => {
+        if (!isSeeded) throw err; // if race is still ongoing, pass error to Promise.race
+        console.error('Background ensurePostgresTables late error caught to prevent unhandled rejection:', err);
+      });
+
+      await Promise.race([dbPromise, timeoutPromise]);
       isSeeded = true;
     } catch (error) {
       console.log('PostgreSQL database initialization offline fallback triggered:', (error as Error)?.message);
       db.enableMemoryFallback();
       isSeeded = true;
     } finally {
+      clearTimeout(timeoutId!);
       seedingPromise = null;
     }
   })();
