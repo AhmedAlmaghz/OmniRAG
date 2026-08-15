@@ -1,8 +1,18 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
+import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   const { id } = await params;
   const tenantId = authCtx.tenantId;
 
@@ -22,6 +32,15 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, { params }: { param
 });
 
 export const PUT = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   const { id } = await params;
   const body = await req.json();
   const tenantId = authCtx.tenantId;
@@ -35,6 +54,15 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx, { params }: { param
 });
 
 export const DELETE = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   const { id } = await params;
   const tenantId = authCtx.tenantId;
 

@@ -298,9 +298,20 @@ export async function processPdfWithBatchedPipeline(
     unstructuredApiKey,
   } = options;
 
-  // 1. Slice PDF into 25-page chunks
-  const { totalPages, chunks } = await slicePdfIntoChunks(pdfBuffer, pagesPerChunk);
-  console.log(`[Knowledge Pipeline] Processing PDF (${totalPages} pages) sliced into ${chunks.length} sequential chunks (25 pages/chunk)...`);
+  // 1. Adaptive pages per chunk based on PDF file size to prevent 413 Request Entity Too Large errors
+  let resolvedPagesPerChunk = pagesPerChunk;
+  const fileMb = pdfBuffer.length / (1024 * 1024);
+  if (fileMb > 15) {
+    resolvedPagesPerChunk = Math.min(pagesPerChunk, 5); // 5 pages per chunk for huge files (>15MB)
+    console.log(`[Knowledge Pipeline] Huge PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 5 to avoid 413 errors.`);
+  } else if (fileMb > 5) {
+    resolvedPagesPerChunk = Math.min(pagesPerChunk, 10); // 10 pages per chunk for medium-large files (>5MB)
+    console.log(`[Knowledge Pipeline] Medium-large PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 10 to avoid 413 errors.`);
+  }
+
+  // 2. Slice PDF into optimized chunks
+  const { totalPages, chunks } = await slicePdfIntoChunks(pdfBuffer, resolvedPagesPerChunk);
+  console.log(`[Knowledge Pipeline] Processing PDF (${totalPages} pages) sliced into ${chunks.length} sequential chunks (${resolvedPagesPerChunk} pages/chunk)...`);
 
   const accumulatedTexts: string[] = [];
   let primaryEngineUsed = 'native-pdf-parse';

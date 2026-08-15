@@ -200,9 +200,12 @@ async def process_document_ingestion(req: ChunkingRequest):
 
 // Validation Helper Functions
 const SUPPORTED_EXTENSIONS = new Set([
-  'pdf', 'docx', 'doc', 'txt', 'md', 'markdown', 'json', 'csv',
+  'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'txt', 'md', 'markdown', 'json', 'csv',
   'py', 'js', 'jsx', 'ts', 'tsx', 'go', 'html', 'css', 'xml',
-  'yaml', 'yml', 'sql', 'c', 'cpp', 'h'
+  'yaml', 'yml', 'sql', 'c', 'cpp', 'h',
+  'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp',
+  'mp3', 'wav', 'webm', 'ogg', 'aac', 'flac',
+  'mp4', 'mov', 'avi'
 ]);
 
 function validateUploadedFile(file: File): { isValid: boolean; errorAr?: string; errorEn?: string } {
@@ -559,20 +562,30 @@ export function DocumentIngestionStudio({
                   copiedPages.forEach((page) => subDoc.addPage(page));
                   
                   const subPdfBytes = await subDoc.save();
-                  const chunkBlob = new Blob([subPdfBytes as any], { type: 'application/pdf' });
-                  const chunkFile = new File([chunkBlob], `chunk_${chunkIdx}_${file.name}`, { type: 'application/pdf' });
                   
-                  const chunkFormData = new FormData();
-                  chunkFormData.append('file', chunkFile);
-                  chunkFormData.append('fileName', chunkFile.name);
-                  chunkFormData.append('mimeType', 'application/pdf');
-                  chunkFormData.append('engine', parsingEngine === 'mistral_ocr' ? 'mistral' : parsingEngine === 'unstructured_mcp' ? 'unstructured' : 'auto');
-                  chunkFormData.append('pagesPerChunk', pagesPerChunk.toString());
-                  chunkFormData.append('maxFileSizeMb', '30'); // Keep within safe limits
+                  // Convert subPdfBytes (Uint8Array) to base64 using native FileReader
+                  const base64Data = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                      const result = reader.result as string || '';
+                      const base64 = result.includes(',') ? result.split(',')[1] : result;
+                      resolve(base64);
+                    };
+                    reader.onerror = () => reject(new Error('Failed to read sliced PDF chunk'));
+                    reader.readAsDataURL(new Blob([subPdfBytes as any], { type: 'application/pdf' }));
+                  });
                   
                   const chunkRes = await fetchWithAuth('/api/v1/documents/parse', {
                     method: 'POST',
-                    body: chunkFormData,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      fileData: base64Data,
+                      fileName: `chunk_${chunkIdx}_${file.name}`,
+                      mimeType: 'application/pdf',
+                      engine: parsingEngine === 'mistral_ocr' ? 'mistral' : parsingEngine === 'unstructured_mcp' ? 'unstructured' : 'auto',
+                      pagesPerChunk: pagesPerChunk,
+                      maxFileSizeMb: 30,
+                    }),
                   });
                   
                   if (!chunkRes.ok) {
@@ -653,8 +666,8 @@ export function DocumentIngestionStudio({
               body: formData,
             });
 
-            // If FormData parsing failed, try JSON payload fallback (ONLY for small files under 3MB and if not a 413 limit error)
-            if (!res.ok && file.size <= 3 * 1024 * 1024 && res.status !== 413) {
+            // If FormData parsing failed, try JSON payload fallback (up to 50MB and if not a 413 limit error)
+            if (!res.ok && file.size <= 50 * 1024 * 1024 && res.status !== 413) {
               console.warn('[DocumentIngestion] FormData endpoint returned non-OK, trying Base64 JSON fallback...');
               try {
                 const base64Data = await new Promise<string>((resolve, reject) => {
@@ -1280,7 +1293,7 @@ export function DocumentIngestionStudio({
                 type="file"
                 ref={fileInputRef}
                 onChange={(e) => e.target.files?.[0] && handleFileProcess(e.target.files[0])}
-                accept=".pdf,.docx,.txt,.md,.json,.csv,.py,.ts,.js,.html,.xml"
+                accept=".pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.txt,.md,.json,.csv,.py,.ts,.js,.html,.xml,.png,.jpg,.jpeg,.webp,.gif,.bmp,.mp3,.wav,.webm,.ogg,.aac,.flac,.mp4,.mov,.avi"
                 className="hidden"
               />
               <div className="w-14 h-14 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
@@ -1288,21 +1301,22 @@ export function DocumentIngestionStudio({
               </div>
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900">
-                  {lang === 'ar' ? 'اسحب واسقط المستند هنا أو انقر للاستعراض' : 'Drag & drop document here or click to browse'}
+                  {lang === 'ar' ? 'اسحب واسقط الملف هنا أو انقر للاستعراض' : 'Drag & drop file here or click to browse'}
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
                   {lang === 'ar'
-                    ? `يدعم ملفات PDF, DOCX, TXT, Markdown, JSON, CSV وشفرات البرمجة حتى ${getIngestionSettings().maxFileSizeMb}MB`
-                    : `Supports PDF, DOCX, TXT, MD, JSON, CSV up to ${getIngestionSettings().maxFileSizeMb} MB`}
+                    ? `يدعم مستندات PDF/Office، جداول وعروض PPTX/XLSX، الصور، الأصوات، والفيديو حتى ${getIngestionSettings().maxFileSizeMb}MB`
+                    : `Supports PDF, Office, PPTX, XLSX, Images, Audio, Video up to ${getIngestionSettings().maxFileSizeMb} MB`}
                 </p>
               </div>
-              <div className="flex flex-wrap justify-center gap-1.5 text-[10px] font-mono font-bold text-slate-400 pt-2">
+              <div className="flex flex-wrap justify-center gap-1.5 text-[10px] font-mono font-bold text-slate-400 pt-2 max-w-lg">
                 <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PDF</span>
                 <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.DOCX</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.MD</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.TXT</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.JSON</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PYTHON</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PPTX</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.XLSX</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">الصور</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">الأصوات</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">الفيديو</span>
               </div>
             </div>
           )

@@ -23,6 +23,11 @@ import {
   Hash,
   History,
   GitBranch,
+  Image as ImageIcon,
+  FileSpreadsheet,
+  Presentation,
+  Music,
+  Video,
 } from 'lucide-react';
 
 interface DocumentCardProps {
@@ -92,30 +97,125 @@ export function DocumentCard({
           badgeText: 'G-DRIVE',
           badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
         };
-      default:
-        // Check file extension if present in title
-        if (document.title.toLowerCase().endsWith('.pdf')) {
+      default: {
+        const titleLower = document.title.toLowerCase();
+        
+        // 1. PDF
+        if (titleLower.endsWith('.pdf')) {
           return {
             icon: <FileText className="w-4 h-4 text-rose-500" />,
             bg: 'bg-rose-50/60 border-rose-100',
-            badgeText: 'PDF DOC',
+            badgeText: lang === 'ar' ? 'ملف PDF' : 'PDF DOC',
             badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
           };
         }
-        if (document.title.toLowerCase().endsWith('.md') || document.title.toLowerCase().endsWith('.txt')) {
+        
+        // 2. Word (DOCX / DOC)
+        if (titleLower.endsWith('.docx') || titleLower.endsWith('.doc')) {
+          return {
+            icon: <FileText className="w-4 h-4 text-blue-500" />,
+            bg: 'bg-blue-50/60 border-blue-100',
+            badgeText: lang === 'ar' ? 'مستند وورد' : 'WORD DOC',
+            badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
+          };
+        }
+
+        // 3. PowerPoint (PPTX / PPT)
+        if (titleLower.endsWith('.pptx') || titleLower.endsWith('.ppt')) {
+          return {
+            icon: <Presentation className="w-4 h-4 text-amber-500" />,
+            bg: 'bg-amber-50/60 border-amber-100',
+            badgeText: lang === 'ar' ? 'عرض تقدمي' : 'PPT SLIDES',
+            badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
+          };
+        }
+
+        // 4. Excel (XLSX / XLS / CSV)
+        if (titleLower.endsWith('.xlsx') || titleLower.endsWith('.xls') || titleLower.endsWith('.csv')) {
+          return {
+            icon: <FileSpreadsheet className="w-4 h-4 text-emerald-500" />,
+            bg: 'bg-emerald-50/60 border-emerald-100',
+            badgeText: lang === 'ar' ? 'جدول بيانات' : 'EXCEL SHEET',
+            badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+          };
+        }
+
+        // 5. Images (PNG / JPG / JPEG / WEBP / GIF / BMP)
+        if (
+          titleLower.endsWith('.png') ||
+          titleLower.endsWith('.jpg') ||
+          titleLower.endsWith('.jpeg') ||
+          titleLower.endsWith('.webp') ||
+          titleLower.endsWith('.gif') ||
+          titleLower.endsWith('.bmp')
+        ) {
+          return {
+            icon: <ImageIcon className="w-4 h-4 text-cyan-500" />,
+            bg: 'bg-cyan-50/60 border-cyan-100',
+            badgeText: lang === 'ar' ? 'صورة' : 'IMAGE OCR',
+            badgeClass: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+          };
+        }
+
+        // 6. Audio (MP3 / WAV / FLAC / AAC / OGG / M4A)
+        if (
+          titleLower.endsWith('.mp3') ||
+          titleLower.endsWith('.wav') ||
+          titleLower.endsWith('.flac') ||
+          titleLower.endsWith('.aac') ||
+          titleLower.endsWith('.ogg') ||
+          titleLower.endsWith('.m4a')
+        ) {
+          return {
+            icon: <Music className="w-4 h-4 text-violet-500" />,
+            bg: 'bg-violet-50/60 border-violet-100',
+            badgeText: lang === 'ar' ? 'ملف صوتي' : 'AUDIO CAST',
+            badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
+          };
+        }
+
+        // 7. Video (MP4 / MOV / AVI / WEBM)
+        if (
+          titleLower.endsWith('.mp4') ||
+          titleLower.endsWith('.mov') ||
+          titleLower.endsWith('.avi') ||
+          titleLower.endsWith('.webm')
+        ) {
+          return {
+            icon: <Video className="w-4 h-4 text-purple-500" />,
+            bg: 'bg-purple-50/60 border-purple-100',
+            badgeText: lang === 'ar' ? 'فيديو' : 'VIDEO CAST',
+            badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
+          };
+        }
+
+        // 8. Markdown / Code / Text
+        if (
+          titleLower.endsWith('.md') ||
+          titleLower.endsWith('.txt') ||
+          titleLower.endsWith('.json') ||
+          titleLower.endsWith('.yaml') ||
+          titleLower.endsWith('.yml') ||
+          titleLower.endsWith('.py') ||
+          titleLower.endsWith('.js') ||
+          titleLower.endsWith('.ts')
+        ) {
           return {
             icon: <FileCode className="w-4 h-4 text-indigo-600" />,
             bg: 'bg-indigo-50 border-indigo-100',
-            badgeText: 'MARKDOWN',
+            badgeText: lang === 'ar' ? 'ملف نصي' : 'DOC/CODE',
             badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
           };
         }
+
+        // 9. Generic Fallback
         return {
           icon: <FileText className="w-4 h-4 text-indigo-600" />,
           bg: 'bg-indigo-50 border-indigo-100',
-          badgeText: 'FILE',
+          badgeText: lang === 'ar' ? 'ملف' : 'FILE',
           badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
         };
+      }
     }
   };
 

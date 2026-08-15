@@ -2,10 +2,20 @@ import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { SourceConnector } from '@/lib/types/omnirag';
+import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   let tenantId = 'tenant-acme-01';
   try {
     const { searchParams } = new URL(req.url);
@@ -47,6 +57,15 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
 });
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   try {
     const body = await req.json();
     const { tenantId = 'tenant-acme-01', name, type, config = {}, syncSchedule = 'manual', collectionIds = [] } = body;
@@ -85,6 +104,15 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 });
 
 export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   try {
     const body = await req.json();
     const { id, tenantId = 'tenant-acme-01', ...updates } = body;
@@ -105,6 +133,15 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
 });
 
 export const DELETE = withAuthAndRateLimit(async (req, authCtx, props) => {
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
   const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';

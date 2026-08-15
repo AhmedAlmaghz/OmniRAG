@@ -5,6 +5,8 @@ import { verifyApiAuth } from '@/lib/auth/apiAuth';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
 import { processPdfWithBatchedPipeline } from '@/lib/pdf/pdfChunker';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
+import { getEnv } from '@/lib/env/runtimeEnv';
+import { dispatchFile, archiveUploadedFile } from '@/lib/services/unstructuredService';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,20 +33,37 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
   'application/octet-stream',
   'image/png',
   'image/jpeg',
   'image/jpg',
   'image/webp',
   'image/gif',
+  'image/bmp',
+  'audio/mp3',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/webm',
+  'audio/ogg',
+  'audio/aac',
+  'audio/flac',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/ogg',
+  'video/avi',
 ]);
 
 const ALLOWED_EXTENSIONS = new Set([
   'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'txt', 'md', 'markdown', 'json', 'csv',
   'py', 'js', 'jsx', 'ts', 'tsx', 'go', 'html', 'css', 'xml',
   'yaml', 'yml', 'sql', 'c', 'cpp', 'h',
-  'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'
+  'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp',
+  'mp3', 'wav', 'webm', 'ogg', 'aac', 'flac',
+  'mp4', 'mov', 'avi'
 ]);
 
 function normalizeMimeType(fileName: string, mimeType: string): string {
@@ -54,9 +73,23 @@ function normalizeMimeType(fileName: string, mimeType: string): string {
   if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
   if (ext === 'webp') return 'image/webp';
   if (ext === 'gif') return 'image/gif';
+  if (ext === 'bmp') return 'image/bmp';
   if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (ext === 'doc') return 'application/msword';
   if (ext === 'pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (ext === 'ppt') return 'application/vnd.ms-powerpoint';
   if (ext === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (ext === 'xls') return 'application/vnd.ms-excel';
+  if (ext === 'mp3') return 'audio/mp3';
+  if (ext === 'wav') return 'audio/wav';
+  if (ext === 'flac') return 'audio/flac';
+  if (ext === 'aac') return 'audio/aac';
+  if (ext === 'mp4') return 'video/mp4';
+  if (ext === 'mov') return 'video/quicktime';
+  if (ext === 'webm') {
+    if (mimeType && mimeType.startsWith('audio/')) return 'audio/webm';
+    return 'video/webm';
+  }
   if (ext === 'txt') return 'text/plain';
   if (ext === 'csv') return 'text/csv';
   if (ext === 'json') return 'application/json';
@@ -81,6 +114,15 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     return auth.response;
   }
 
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+
   try {
     let fileName = 'document.txt';
     let fileBuffer: Buffer | null = null;
@@ -104,32 +146,64 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       requestedPagesPerChunk = Math.min(Math.max(Number(headerPagesPerChunk), 1), 200);
     }
 
-    if (contentType.includes('multipart/form-data')) {
-      let formDataParsed = false;
-      // Clone req BEFORE calling req.formData() so clonedReq remains an untouched stream if req.formData() fails
-      const clonedReq = req.clone();
-
+    if (contentType.includes('application/json')) {
+      try {
+        const jsonBody = await req.json();
+        if (jsonBody && jsonBody.fileData) {
+          fileName = jsonBody.fileName || 'document.txt';
+          mimeType = jsonBody.mimeType || 'text/plain';
+          cleanBase64 = jsonBody.fileData.includes(',') ? jsonBody.fileData.split(',')[1] : jsonBody.fileData;
+          fileBuffer = Buffer.from(cleanBase64, 'base64');
+          requestedEngine = jsonBody.engine || 'auto';
+          requestedModel = jsonBody.model || undefined;
+          mistralApiKey = jsonBody.mistralApiKey || undefined;
+          unstructuredApiKey = jsonBody.unstructuredApiKey || undefined;
+          
+          if (jsonBody.maxFileSizeMb && !isNaN(Number(jsonBody.maxFileSizeMb))) {
+            requestedMaxFileSizeMb = Math.min(Math.max(Number(jsonBody.maxFileSizeMb), 1), MAX_ALLOWED_FILE_SIZE_MB_CAP);
+          }
+          if (jsonBody.pagesPerChunk && !isNaN(Number(jsonBody.pagesPerChunk))) {
+            requestedPagesPerChunk = Math.min(Math.max(Number(jsonBody.pagesPerChunk), 1), 200);
+          }
+        }
+      } catch (jsonErr: any) {
+        console.error('[Document Ingestion API] Error parsing JSON body:', jsonErr);
+      }
+    } else if (contentType.includes('multipart/form-data')) {
       try {
         const formData = await req.formData();
         if (formData) {
-          formDataParsed = true;
           let fileObj = formData.get('file') || formData.get('document') || formData.get('upload');
           if (!fileObj) {
             for (const [key, val] of formData.entries()) {
-              if (val && typeof val === 'object' && 'arrayBuffer' in val) {
+              if (val && typeof val === 'object') {
                 fileObj = val;
                 break;
               }
             }
           }
 
-          if (fileObj && typeof fileObj === 'object' && 'arrayBuffer' in fileObj) {
-            const file = fileObj as File;
+          if (fileObj && typeof fileObj === 'object') {
+            const file = fileObj as any;
             fileName = (formData.get('fileName') as string) || file.name || 'document.txt';
             mimeType = (formData.get('mimeType') as string) || file.type || 'application/octet-stream';
-            const arrayBuf = await file.arrayBuffer();
-            fileBuffer = Buffer.from(arrayBuf);
-            cleanBase64 = fileBuffer.toString('base64');
+            
+            if (typeof file.arrayBuffer === 'function') {
+              const arrayBuf = await file.arrayBuffer();
+              fileBuffer = Buffer.from(arrayBuf);
+            } else if (typeof file.stream === 'function') {
+              const chunks = [];
+              for await (const chunk of file.stream()) {
+                chunks.push(chunk);
+              }
+              fileBuffer = Buffer.concat(chunks);
+            } else if (file._buffer) {
+              fileBuffer = file._buffer;
+            }
+            
+            if (fileBuffer) {
+              cleanBase64 = fileBuffer.toString('base64');
+            }
           } else {
             const fileDataStr = (formData.get('fileData') as string) || (formData.get('file_data') as string);
             if (fileDataStr) {
@@ -155,61 +229,24 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           }
         }
       } catch (formErr: any) {
-        // req.formData() failed (e.g. boundary issue or stream error), safely proceed to clonedReq fallback
-      }
-
-      if (!fileBuffer) {
-        // Try fallback reading clonedReq as JSON if client sent JSON body despite header
-        try {
-          const jsonBody = await clonedReq.json();
-          if (jsonBody && jsonBody.fileData) {
-            fileName = jsonBody.fileName || 'document.txt';
-            mimeType = jsonBody.mimeType || 'text/plain';
-            cleanBase64 = jsonBody.fileData.includes(',') ? jsonBody.fileData.split(',')[1] : jsonBody.fileData;
-            fileBuffer = Buffer.from(cleanBase64, 'base64');
-            requestedEngine = jsonBody.engine || 'auto';
-          }
-        } catch (e) {}
-      }
-
-      if (!fileBuffer) {
-        return NextResponse.json(
-          { error: 'فشل تحليل الملف المرفوع. يرجى التأكد من اختيار ملف صحيح ونشط.', code: '400_BAD_FORM_DATA' },
-          { status: 400 }
-        );
+        console.error('[Document Ingestion API] Error parsing formData from request:', formErr);
       }
     } else {
-      let body: any = {};
+      // Fallback for raw stream text
       try {
-        body = await req.json();
-      } catch (jsonErr: any) {
-        return NextResponse.json(
-          {
-            error: 'تعذر تحليل محتوى ملف JSON. قد يكون حجم الملف كبيراً جداً وتجاوز الحد الأقصى للمحمول. يفضل استخدام الرفع المباشر عبر FormData.',
-            code: '400_MALFORMED_JSON',
-          },
-          { status: 400 }
-        );
-      }
+        const rawBody = await req.text();
+        if (rawBody && rawBody.trim().length > 0) {
+          fileBuffer = Buffer.from(rawBody);
+          cleanBase64 = fileBuffer.toString('base64');
+        }
+      } catch (e) {}
+    }
 
-      fileName = body.fileName || 'document.txt';
-      mimeType = body.mimeType || 'text/plain';
-      requestedModel = body.model;
-      requestedEngine = body.engine || 'auto';
-      mistralApiKey = body.mistralApiKey;
-      unstructuredApiKey = body.unstructuredApiKey;
-
-      if (body.maxFileSizeMb && !isNaN(Number(body.maxFileSizeMb))) {
-        requestedMaxFileSizeMb = Math.min(Math.max(Number(body.maxFileSizeMb), 1), MAX_ALLOWED_FILE_SIZE_MB_CAP);
-      }
-      if (body.pagesPerChunk && !isNaN(Number(body.pagesPerChunk))) {
-        requestedPagesPerChunk = Math.min(Math.max(Number(body.pagesPerChunk), 1), 200);
-      }
-
-      if (body.fileData && typeof body.fileData === 'string') {
-        cleanBase64 = body.fileData.includes(',') ? body.fileData.split(',')[1] : body.fileData;
-        fileBuffer = Buffer.from(cleanBase64, 'base64');
-      }
+    if (!fileBuffer) {
+      return NextResponse.json(
+        { error: 'فشل تحليل الملف المرفوع. يرجى التأكد من اختيار ملف صحيح ونشط.', code: '400_BAD_FORM_DATA' },
+        { status: 400 }
+      );
     }
 
     if (!fileBuffer || fileBuffer.length === 0) {
@@ -243,6 +280,11 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // Server-side SHA-256 OCR Cache Check
     const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
     const skipCache = req.headers.get('x-skip-cache') === 'true';
+
+    // Meticulously archive the raw uploaded file first
+    const tenantId = auth.tenantId || 'global-tenant';
+    const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantId, fileHash);
+    console.log(`[Document Ingestion] File meticulously archived to disk: ${archivedPath}`);
 
     if (!skipCache && SERVER_OCR_CACHE.has(fileHash)) {
       const cached = SERVER_OCR_CACHE.get(fileHash)!;
@@ -296,110 +338,18 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         );
       }
     } else {
-      const isText =
-        mimeType.startsWith('text/') ||
-        /\.(txt|md|markdown|json|csv|tsv|py|js|ts|tsx|jsx|html|xml|log|env|yaml|yml|sql|sh|c|cpp|java|go|rb|php|cs|ini|conf|rst|tex|srt|vtt|rtf|sub)$/i.test(
-          fileName
-        );
+      console.log(`[Document Ingestion] Processing non-PDF document (${fileName}) using Unstructured direct service dispatcher...`);
+      const dispatchResult = await dispatchFile(fileBuffer, fileName, mimeType, {
+        unstructuredApiKey: unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY,
+        mistralApiKey: mistralApiKey || process.env.MISTRAL_API_KEY,
+        geminiApiKey: process.env.GEMINI_API_KEY,
+        model: requestedModel,
+        preferredEngine: requestedEngine as any,
+        strategy: 'hi_res',
+      });
 
-      if (isText) {
-        extractedText = fileBuffer.toString('utf-8');
-        engineUsed = 'utf-8-text-reader';
-      } else {
-        // High-precision XML / Office (DOCX, PPTX, XLSX) tag extractor fallback
-        const lowerName = fileName.toLowerCase();
-        if (
-          lowerName.endsWith('.docx') ||
-          lowerName.endsWith('.pptx') ||
-          lowerName.endsWith('.xlsx') ||
-          mimeType.includes('officedocument')
-        ) {
-          try {
-            const rawXml = fileBuffer.toString('utf-8');
-            const matches = rawXml.match(/<[wva]:t[^>]*>([^<]+)<\/[wva]:t>/gi);
-            if (matches && matches.length > 0) {
-              const xmlTexts = matches
-                .map((m) => m.replace(/<[^>]+>/g, '').trim())
-                .filter(Boolean);
-              if (xmlTexts.length > 0) {
-                extractedText = xmlTexts.join(' ');
-                engineUsed = 'Office XML Native Parser';
-              }
-            }
-          } catch (e) {
-            // Ignore XML parse errors
-          }
-        }
-
-        // Try Unstructured.io MCP tool / API first for multi-format support
-        if (!extractedText) {
-          const unKey = unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY;
-          const unUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general';
-
-          if (unKey) {
-            try {
-              const formData = new FormData();
-              const blob = new Blob([new Uint8Array(fileBuffer)]);
-              formData.append('files', blob, fileName);
-              formData.append('strategy', 'hi_res');
-
-              const res = await fetch(unUrl, {
-                method: 'POST',
-                headers: { 'unstructured-api-key': unKey },
-                body: formData,
-              });
-
-              if (res.ok) {
-                const elements = await res.json();
-                if (Array.isArray(elements)) {
-                  extractedText = elements.map((e: any) => e.text).filter(Boolean).join('\n\n');
-                  engineUsed = 'Unstructured.io MCP Multi-Format Transform';
-                }
-              }
-            } catch (unErr) {
-              console.warn('[Unstructured API] Multi-format parse error:', unErr);
-            }
-          }
-        }
-
-        // Gemini AI fallback for complex formats (PDFs, images, Office documents)
-        if (!extractedText) {
-          try {
-            const resolvedMime = normalizeMimeType(fileName, mimeType);
-            const parseModel = requestedModel || 'gemini-3.7-flash';
-            const response = await generateContentWithResilience({
-              model: parseModel,
-              fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'],
-              contents: [
-                {
-                  inlineData: {
-                    mimeType: resolvedMime,
-                    data: cleanBase64,
-                  },
-                },
-                'Extract and transcribe all readable text, tables, and content from this document/image. Maintain accurate Arabic text if present. Output ONLY the extracted text directly.',
-              ],
-              maxRetriesPerModel: 2,
-            });
-            if (response?.text && response.text.trim().length > 0) {
-              extractedText = response.text.trim();
-              engineUsed = 'Gemini Multimodal Vision & OCR AI';
-            }
-          } catch (geminiErr) {
-            console.warn('[Gemini Multimodal Parser] Fallback to raw text extraction:', geminiErr);
-          }
-        }
-
-        // Final fallback: extract printable UTF-8/ASCII words from raw buffer
-        if (!extractedText) {
-          const rawStr = fileBuffer.toString('utf-8');
-          const printable = rawStr.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim();
-          if (printable.length > 20) {
-            extractedText = printable;
-            engineUsed = 'Raw Printable Buffer Extractor';
-          }
-        }
-      }
+      extractedText = dispatchResult.text;
+      engineUsed = dispatchResult.engineUsed;
     }
 
     // Sanitize extracted text (strip null bytes and bad control characters)

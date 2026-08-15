@@ -4,6 +4,7 @@ import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch, generateRagCompletion } from '@/lib/rag/engine';
 import { verifyApiAuth } from '@/lib/auth/apiAuth';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
+import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,15 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   if (!auth.authenticated && auth.response) {
     return auth.response;
   }
+
+  // Load client-supplied dynamic environment keys from headers into process.env / global store
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
 
   try {
     const body = await req.json();
