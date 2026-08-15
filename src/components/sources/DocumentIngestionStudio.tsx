@@ -654,12 +654,23 @@ export function DocumentIngestionStudio({
             formData.append('pagesPerChunk', currentPagesPerChunk.toString());
             formData.append('maxFileSizeMb', currentMaxFileSizeMb.toString());
 
-            // Progress to OCR Extraction Stage
+            // Progress to Extraction Stage
             setParseProgress(55);
             setParseStage('ocr');
+            const isWord = file.name.toLowerCase().endsWith('.docx') || file.name.toLowerCase().endsWith('.doc');
+            const isAudioOrVideo = file.type.startsWith('audio/') || file.type.startsWith('video/') || /\.(mp3|wav|m4a|flac|mp4|mov|webm)$/i.test(file.name);
+            
             setParseStageText(
               lang === 'ar'
-                ? `جاري معالجة الـ PDF عبر محرك الذكاء الاصطناعي (تقطيع على دفعات من ${currentPagesPerChunk} صفحة)...`
+                ? isWord 
+                  ? 'جاري استخراج وتنسيق محتوى ملف الوورد (DOCX) بأعلى دقة وترميز UTF-8 سليم...'
+                  : isAudioOrVideo
+                  ? 'جاري التفريغ الصوتي ومعالجة الوسائط عبر محرك Whisper...'
+                  : `جاري معالجة المستند عبر محرك الذكاء الاصطناعي (تقطيع على دفعات من ${currentPagesPerChunk} صفحة)...`
+                : isWord
+                ? 'Parsing & formatting Word document (DOCX) with clean UTF-8 Arabic encoding...'
+                : isAudioOrVideo
+                ? 'Transcribing audio/video stream via Whisper engine...'
                 : `Running AI Document Pipeline (batched in ${currentPagesPerChunk}-page chunks)...`
             );
 

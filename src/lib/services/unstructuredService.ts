@@ -22,11 +22,26 @@ export function detectFileType(fileName: string, mimeType: string = 'application
   const lowerName = fileName.toLowerCase();
   const lowerMime = mimeType.toLowerCase();
 
-  const isText =
-    lowerMime.startsWith('text/') ||
-    /\.(txt|md|markdown|json|csv|tsv|py|js|ts|tsx|jsx|html|xml|log|env|yaml|yml|sql|sh|c|cpp|java|go|rb|php|cs|ini|conf|rst|tex|srt|vtt|rtf|sub)$/i.test(
-      lowerName
-    );
+  const isWord =
+    /\.(docx|doc|dotx|dot)$/i.test(lowerName) ||
+    lowerMime.includes('wordprocessingml') ||
+    lowerMime.includes('msword') ||
+    lowerMime.includes('officedocument.word');
+
+  const isSpreadsheet =
+    /\.(xlsx|xls|csv|tsv)$/i.test(lowerName) ||
+    lowerMime.includes('spreadsheet') ||
+    lowerMime.includes('excel') ||
+    lowerMime === 'text/csv';
+
+  const isPowerPoint =
+    /\.(pptx|ppt)$/i.test(lowerName) ||
+    lowerMime.includes('presentationml') ||
+    lowerMime.includes('powerpoint');
+
+  const isPdf =
+    /\.pdf$/i.test(lowerName) ||
+    lowerMime === 'application/pdf';
 
   const isAudio =
     lowerMime.startsWith('audio/') ||
@@ -40,25 +55,20 @@ export function detectFileType(fileName: string, mimeType: string = 'application
     lowerMime.startsWith('image/') ||
     /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(lowerName);
 
-  const isSpreadsheet =
-    /\.(xlsx|xls|csv|tsv)$/i.test(lowerName) ||
-    lowerMime.includes('spreadsheet') ||
-    lowerMime.includes('excel') ||
-    lowerMime === 'text/csv';
-
-  const isWord =
-    /\.(docx|doc)$/i.test(lowerName) ||
-    lowerMime.includes('wordprocessingml') ||
-    lowerMime.includes('msword');
-
-  const isPowerPoint =
-    /\.(pptx|ppt)$/i.test(lowerName) ||
-    lowerMime.includes('presentationml') ||
-    lowerMime.includes('powerpoint');
-
-  const isPdf =
-    /\.pdf$/i.test(lowerName) ||
-    lowerMime === 'application/pdf';
+  // Text is only true if it's NOT a binary document format (not Word, not PDF, not PowerPoint, not Excel)
+  const isText =
+    !isWord &&
+    !isPdf &&
+    !isPowerPoint &&
+    !isAudio &&
+    !isVideo &&
+    !isImage &&
+    (
+      lowerMime.startsWith('text/') ||
+      /\.(txt|md|markdown|json|csv|tsv|py|js|ts|tsx|jsx|html|xml|log|env|yaml|yml|sql|sh|c|cpp|java|go|rb|php|cs|ini|conf|rst|tex|srt|vtt)$/i.test(
+        lowerName
+      )
+    );
 
   return {
     isText,
@@ -142,28 +152,70 @@ export function archiveUploadedFile(
 }
 
 /**
- * Local fast DOCX parser that converts Word documents to beautifully formatted Markdown
- * preserving Arabic UTF-8 characters exactly without any mojibake / encoding errors.
+ * Server-side high-precision Word document (.docx / .doc) parser using mammoth.js.
+ * Converts Word document structures to semantic Markdown, while preserving UTF-8 / Arabic
+ * character encoding, headings, bold/italic, lists, and tables without mojibake.
  */
 export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> {
   try {
     const mammothParser = mammoth as any;
+    
+    // 1. Primary Extraction: Convert to Markdown preserving structure
     const result = await mammothParser.convertToMarkdown({ buffer: fileBuffer });
     if (result.messages && result.messages.length > 0) {
       console.log('[Mammoth Parser] Messages:', result.messages.map((m: any) => m.message).join(', '));
     }
-    return result.value || '';
+    
+    let text = result.value || '';
+
+    // If Markdown result is non-empty, normalize and return
+    if (text && text.trim().length > 0) {
+      // Normalize Arabic UTF-8 characters and whitespace
+      text = normalizeArabicUtf8Text(text);
+      return text.trim();
+    }
+    
+    // 2. Secondary Extraction: extractRawText if Markdown conversion produced empty text
+    const rawResult = await mammothParser.extractRawText({ buffer: fileBuffer });
+    let rawText = rawResult.value || '';
+    if (rawText && rawText.trim().length > 0) {
+      rawText = normalizeArabicUtf8Text(rawText);
+      return rawText.trim();
+    }
+
+    return '';
   } catch (err: any) {
-    console.warn('[Mammoth Parser] convertToMarkdown failed, falling back to extractRawText:', err);
+    console.warn('[Mammoth Parser] Primary extraction failed, trying extractRawText fallback:', err);
     try {
       const mammothParser = mammoth as any;
       const rawResult = await mammothParser.extractRawText({ buffer: fileBuffer });
-      return rawResult.value || '';
+      let rawText = rawResult.value || '';
+      if (rawText && rawText.trim().length > 0) {
+        rawText = normalizeArabicUtf8Text(rawText);
+        return rawText.trim();
+      }
+      throw new Error('Mammoth returned empty content');
     } catch (rawErr: any) {
-      console.error('[Mammoth Parser] extractRawText failed:', rawErr);
+      console.error('[Mammoth Parser] Both convertToMarkdown and extractRawText failed:', rawErr);
       throw new Error(`Mammoth parsing error: ${err.message || err}`);
     }
   }
+}
+
+/**
+ * Cleans and normalizes Arabic and multilingual UTF-8 strings:
+ * - Removes non-printable control characters while preserving RTL Marks (RLM, LRM) and standard Arabic diacritics
+ * - Normalizes Unicode combining marks and whitespace
+ */
+export function normalizeArabicUtf8Text(input: string): string {
+  if (!input) return '';
+  return input
+    .normalize('NFC')
+    // Remove control characters (except newline, tab, carriage return)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    // Replace multiple empty lines with standard double newlines
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export interface DispatchOptions {
@@ -461,26 +513,7 @@ export async function dispatchFile(
   const resolvedMime = normalizeMimeType(fileName, mimeType);
   const enginePref = options.preferredEngine || 'auto';
 
-  // 1. Plain Text Fallback (direct extraction)
-  if (fileClassification.isText) {
-    try {
-      const text = fileBuffer.toString('utf-8');
-      return {
-        text,
-        engineUsed: 'Direct UTF-8 Text Reader',
-        success: true,
-      };
-    } catch (e: any) {
-      console.warn('[Unstructured Service] Failed to read as plain text:', e);
-    }
-  }
-
-  // 2. Audio & Video transcription workflow
-  if (fileClassification.isAudio || fileClassification.isVideo) {
-    return transcribeAudioVideo(fileBuffer, fileName, mimeType, options);
-  }
-
-  // 2.5 Word Document (.docx / .doc) local parsing with Mammoth first (ensures perfect Arabic UTF-8 encoding without mojibake/strange characters)
+  // 1. Word Document (.docx / .doc) local parsing with Mammoth first (ensures perfect Arabic UTF-8 encoding without mojibake/strange characters)
   if (fileClassification.isWord) {
     try {
       console.log(`[Document Ingestion] Parsing Word Document (${fileName}) locally using mammoth to preserve perfect Arabic UTF-8 encoding...`);
@@ -494,6 +527,25 @@ export async function dispatchFile(
       }
     } catch (e: any) {
       console.error('[Document Ingestion] Local Mammoth DOCX parser failed, falling back to other engines...', e);
+    }
+  }
+
+  // 2. Audio & Video transcription workflow
+  if (fileClassification.isAudio || fileClassification.isVideo) {
+    return transcribeAudioVideo(fileBuffer, fileName, mimeType, options);
+  }
+
+  // 3. Plain Text Fallback (direct extraction for actual plain text files)
+  if (fileClassification.isText) {
+    try {
+      const text = fileBuffer.toString('utf-8');
+      return {
+        text,
+        engineUsed: 'Direct UTF-8 Text Reader',
+        success: true,
+      };
+    } catch (e: any) {
+      console.warn('[Unstructured Service] Failed to read as plain text:', e);
     }
   }
 
