@@ -327,6 +327,7 @@ export function DocumentIngestionStudio({
     duration: string;
     thumbnail: string;
     wordCount: number;
+    method?: string;
   } | null>(null);
 
   // Extract YouTube Transcript Handler
@@ -363,13 +364,14 @@ export function DocumentIngestionStudio({
           duration: data.duration,
           thumbnail: data.thumbnail,
           wordCount: data.wordCount || 0,
+          method: data.method || 'Whisper AI / Multi-Engine',
         });
 
         setStatusMessage({
           type: 'success',
           text: lang === 'ar'
-            ? `تم التحقق واستخراج تفريغ الفيديو بنجاح (${data.wordCount} كلمة)! يمكنك الآن مراجعة النص وتقسيمه لمقاطع.`
-            : `YouTube URL validated & transcript extracted successfully (${data.wordCount} words)! Ready for chunking and vector indexing.`,
+            ? `تم التحقق واستخراج تفريغ الفيديو بنجاح بواسطة [${data.method || 'Whisper / AI'}] (${data.wordCount} كلمة)! جاهز للتقسيم والفهرسة.`
+            : `YouTube transcript extracted successfully via [${data.method || 'Whisper / AI'}] (${data.wordCount} words)! Ready for chunking and vector indexing.`,
         });
       } else {
         throw new Error(data.error || (lang === 'ar' ? 'فشل استخراج تفريغ الفيديو أو أن الفيديو غير متاح' : 'Failed to extract video transcript or video is inaccessible'));
@@ -1403,18 +1405,26 @@ export function DocumentIngestionStudio({
 
             {/* Video Preview Card if extracted */}
             {youtubeVideoMeta && (
-              <div className="p-3 bg-white rounded-2xl border border-slate-200 flex items-center gap-3.5 shadow-3xs">
+              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center gap-3.5 shadow-3xs">
                 <img
                   src={youtubeVideoMeta.thumbnail}
                   alt={youtubeVideoMeta.title}
-                  className="w-24 h-16 object-cover rounded-xl border border-slate-100 shrink-0"
+                  className="w-28 h-18 object-cover rounded-xl border border-slate-100 shrink-0"
                 />
-                <div className="min-w-0 flex-1">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 inline-block mb-1">
-                    {youtubeVideoMeta.channel}
-                  </span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 inline-block">
+                      {youtubeVideoMeta.channel}
+                    </span>
+                    {youtubeVideoMeta.method && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-100/80 inline-flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-violet-500" />
+                        <span>{youtubeVideoMeta.method}</span>
+                      </span>
+                    )}
+                  </div>
                   <h4 className="text-xs font-extrabold text-slate-900 truncate">{youtubeVideoMeta.title}</h4>
-                  <div className="flex items-center gap-3 text-[11px] text-slate-500 mt-1 font-mono">
+                  <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono">
                     <span>⏱ {youtubeVideoMeta.duration}</span>
                     <span>📝 {youtubeVideoMeta.wordCount} كلمة</span>
                   </div>

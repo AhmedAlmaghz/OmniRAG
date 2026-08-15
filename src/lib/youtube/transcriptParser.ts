@@ -1,7 +1,10 @@
 import { YoutubeTranscript } from 'youtube-transcript';
 // @ts-ignore
 import { getSubtitles } from 'youtube-captions-scraper';
+// @ts-ignore
+import ytdl from '@distube/ytdl-core';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
+import { transcribeWithGroqWhisper } from '../services/unstructuredService';
 
 /**
  * Extracts standard 11-character YouTube video ID from various URL formats.
@@ -329,6 +332,47 @@ Requirements:
 }
 
 /**
+ * Downloads audio stream of a YouTube video as a Buffer.
+ */
+async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  console.log(`[YouTube Downloader] Starting audio-only stream download for video ID: ${videoId}...`);
+  
+  const stream = ytdl(url, {
+    filter: 'audioonly',
+    quality: 'lowestaudio',
+  });
+
+  const chunks: any[] = [];
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      stream.destroy();
+      reject(new Error('YouTube audio download timed out after 35 seconds'));
+    }, 35000);
+
+    stream.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    stream.on('end', () => {
+      clearTimeout(timeout);
+      const buffer = Buffer.concat(chunks);
+      console.log(`[YouTube Downloader] Audio download complete! Buffer size: ${(buffer.length / 1024 / 1024).toFixed(2)} MB`);
+      resolve({
+        buffer,
+        fileName: `${videoId}.m4a`,
+        mimeType: 'audio/mp4'
+      });
+    });
+
+    stream.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+/**
  * Main YouTube Transcript extraction processor.
  * 1. Tries primary native caption extraction packages (`youtube-transcript`, `youtube-captions-scraper`, XML tracks).
  * 2. If no native captions exist on YouTube, seamlessly falls back to AI Audio/Video Transcription Engine.
@@ -398,11 +442,13 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
     console.warn('Warning: Could not fetch YouTube HTML metadata:', e);
   }
 
-  // 2. Strategy 1: Try youtube-transcript package
-  const res1 = await fetchWithYoutubeTranscriptPackage(videoId, lang);
-  if (res1 && res1.text && res1.text.trim().length > 0) {
-    transcriptText = res1.text;
-    extractionMethod = res1.method;
+  // 2. Strategy 1: Try native youtube-transcript package first (fast, exact timestamps, not blocked by bot checks)
+  if (!transcriptText) {
+    const res1 = await fetchWithYoutubeTranscriptPackage(videoId, lang);
+    if (res1 && res1.text && res1.text.trim().length > 0) {
+      transcriptText = res1.text;
+      extractionMethod = res1.method;
+    }
   }
 
   // 3. Strategy 2: Try youtube-captions-scraper package if Strategy 1 failed
@@ -421,12 +467,40 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
       const parsedTranscript = await fetchAndParseXmlCaptions(track.baseUrl);
       if (parsedTranscript && parsedTranscript.trim().length > 0) {
         transcriptText = parsedTranscript;
-        extractionMethod = 'youtube-player-xml';
+        extractionMethod = 'YouTube Player XML Captions';
       }
     }
   }
 
-  // 5. Strategy 4: If video has NO native subtitles/captions on YouTube, use AI Transcription Fallback
+  // 5. Strategy 4: Try Groq Whisper-3 Audio Extraction if native captions were not present and GROQ_API_KEY is configured
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!transcriptText && groqKey) {
+    try {
+      const audioResult = await downloadYoutubeAudio(videoId);
+      
+      if (audioResult && audioResult.buffer && audioResult.buffer.length > 0) {
+        if (audioResult.buffer.length > 25 * 1024 * 1024) {
+          console.log(`[YouTube Transcription] Audio size ${(audioResult.buffer.length / 1024 / 1024).toFixed(2)}MB exceeds Whisper 25MB limit.`);
+        } else {
+          const whisperResult = await transcribeWithGroqWhisper(
+            audioResult.buffer,
+            audioResult.fileName,
+            audioResult.mimeType,
+            groqKey
+          );
+          if (whisperResult && whisperResult.success && whisperResult.text) {
+            transcriptText = whisperResult.text;
+            extractionMethod = 'Groq Whisper-3 (Audio Transcription ⚡)';
+          }
+        }
+      }
+    } catch (whisperError: any) {
+      // Audio stream may be blocked by YouTube bot-detection in data-center IPs; silently proceed to AI Transcript Engine
+      console.log('[YouTube Transcription] Audio stream not directly extractable on this host, utilizing AI Transcription Engine...');
+    }
+  }
+
+  // 6. Strategy 5: If video has NO native subtitles and audio download was restricted, use AI Multimodal Transcription Engine
   if (!transcriptText || transcriptText.trim().length === 0) {
     transcriptText = await generateAiTranscriptFallback(
       videoId,
@@ -436,7 +510,7 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
       videoDescription,
       lang
     );
-    extractionMethod = 'ai-speech-transcription-fallback';
+    extractionMethod = 'AI Video Speech & Semantic Transcriber (Gemini)';
   }
 
   const words = transcriptText.trim().split(/\s+/).length;

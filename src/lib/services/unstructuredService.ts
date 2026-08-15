@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import mammoth from 'mammoth';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
 
 export interface FileTypeClassification {
@@ -140,12 +141,38 @@ export function archiveUploadedFile(
   }
 }
 
+/**
+ * Local fast DOCX parser that converts Word documents to beautifully formatted Markdown
+ * preserving Arabic UTF-8 characters exactly without any mojibake / encoding errors.
+ */
+export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> {
+  try {
+    const mammothParser = mammoth as any;
+    const result = await mammothParser.convertToMarkdown({ buffer: fileBuffer });
+    if (result.messages && result.messages.length > 0) {
+      console.log('[Mammoth Parser] Messages:', result.messages.map((m: any) => m.message).join(', '));
+    }
+    return result.value || '';
+  } catch (err: any) {
+    console.warn('[Mammoth Parser] convertToMarkdown failed, falling back to extractRawText:', err);
+    try {
+      const mammothParser = mammoth as any;
+      const rawResult = await mammothParser.extractRawText({ buffer: fileBuffer });
+      return rawResult.value || '';
+    } catch (rawErr: any) {
+      console.error('[Mammoth Parser] extractRawText failed:', rawErr);
+      throw new Error(`Mammoth parsing error: ${err.message || err}`);
+    }
+  }
+}
+
 export interface DispatchOptions {
   unstructuredApiKey?: string;
   mistralApiKey?: string;
   geminiApiKey?: string;
+  groqApiKey?: string;
   model?: string;
-  preferredEngine?: 'mistral' | 'unstructured' | 'gemini' | 'auto';
+  preferredEngine?: 'mistral' | 'unstructured' | 'gemini' | 'groq_whisper' | 'auto';
   strategy?: 'hi_res' | 'fast' | 'ocr_only';
 }
 
@@ -298,6 +325,63 @@ export async function unstructuredPartition(
 }
 
 /**
+ * Transcribes audio using Groq Whisper-large-v3.
+ * Supported formats: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm.
+ */
+export async function transcribeWithGroqWhisper(
+  fileBuffer: Buffer,
+  fileName: string,
+  mimeType: string,
+  apiKey: string
+): Promise<DispatchResult> {
+  try {
+    const resolvedMime = normalizeMimeType(fileName, mimeType);
+    console.log(`[Groq Whisper] Calling Whisper-3 (whisper-large-v3) for ${fileName} (${resolvedMime})...`);
+
+    // Standard Web/Node Blob and FormData for modern Next.js 15+ environment
+    const blob = new Blob([fileBuffer as any], { type: resolvedMime });
+    const formData = new FormData();
+    formData.append('file', blob, fileName);
+    formData.append('model', 'whisper-large-v3');
+    formData.append('response_format', 'json');
+
+    const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Groq Whisper API returned HTTP ${res.status}: ${errText}`);
+    }
+
+    const data = await res.json();
+    const transcriptionText = data.text || '';
+
+    if (transcriptionText.trim().length > 0) {
+      return {
+        text: transcriptionText.trim(),
+        engineUsed: 'Groq Whisper-3 (whisper-large-v3) ⚡',
+        success: true,
+      };
+    }
+
+    throw new Error('Groq Whisper API returned empty transcription text.');
+  } catch (error: any) {
+    console.error('[Unstructured Service] Groq Whisper transcription error:', error);
+    return {
+      text: '',
+      engineUsed: 'Groq Whisper-3 (whisper-large-v3) ⚡',
+      success: false,
+      metadata: { error: error.message },
+    };
+  }
+}
+
+/**
  * Transcribes audio and video streams using Gemini's multimodal and temporal alignment models.
  */
 export async function transcribeAudioVideo(
@@ -306,6 +390,16 @@ export async function transcribeAudioVideo(
   mimeType: string,
   options: DispatchOptions = {}
 ): Promise<DispatchResult> {
+  // Check if Groq API key is available (via options or process.env)
+  const groqKey = options.groqApiKey || process.env.GROQ_API_KEY;
+  if (groqKey) {
+    const groqResult = await transcribeWithGroqWhisper(fileBuffer, fileName, mimeType, groqKey);
+    if (groqResult.success) {
+      return groqResult;
+    }
+    console.warn('[Unstructured Service] Groq Whisper transcription failed, falling back to Gemini audio/video transcriber...');
+  }
+
   const model = options.model || 'gemini-3.5-flash';
   const resolvedMime = normalizeMimeType(fileName, mimeType);
   const base64Data = fileBuffer.toString('base64');
@@ -384,6 +478,23 @@ export async function dispatchFile(
   // 2. Audio & Video transcription workflow
   if (fileClassification.isAudio || fileClassification.isVideo) {
     return transcribeAudioVideo(fileBuffer, fileName, mimeType, options);
+  }
+
+  // 2.5 Word Document (.docx / .doc) local parsing with Mammoth first (ensures perfect Arabic UTF-8 encoding without mojibake/strange characters)
+  if (fileClassification.isWord) {
+    try {
+      console.log(`[Document Ingestion] Parsing Word Document (${fileName}) locally using mammoth to preserve perfect Arabic UTF-8 encoding...`);
+      const mammothText = await parseDocxWithMammoth(fileBuffer);
+      if (mammothText && mammothText.trim().length > 0) {
+        return {
+          text: mammothText.trim(),
+          engineUsed: 'Local Mammoth DOCX Parser (UTF-8 Arabic Safe ⚡)',
+          success: true,
+        };
+      }
+    } catch (e: any) {
+      console.error('[Document Ingestion] Local Mammoth DOCX parser failed, falling back to other engines...', e);
+    }
   }
 
   // 3. Prioritized Mistral Document AI (OCR) workflow (PDFs and Images)

@@ -118,6 +118,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('GEMINI_API_KEY', req);
   getEnv('UNSTRUCTURED_API_KEY', req);
   getEnv('MISTRAL_API_KEY', req);
+  getEnv('GROQ_API_KEY', req);
   getEnv('DATABASE_URL', req);
   getEnv('POSTGRES_URL', req);
   getEnv('QDRANT_URL', req);
@@ -132,6 +133,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     let requestedEngine = 'auto';
     let mistralApiKey: string | undefined = undefined;
     let unstructuredApiKey: string | undefined = undefined;
+    let groqApiKey: string | undefined = undefined;
     let requestedMaxFileSizeMb = DEFAULT_MAX_FILE_SIZE_MB;
     let requestedPagesPerChunk = 25;
 
@@ -158,6 +160,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           requestedModel = jsonBody.model || undefined;
           mistralApiKey = jsonBody.mistralApiKey || undefined;
           unstructuredApiKey = jsonBody.unstructuredApiKey || undefined;
+          groqApiKey = jsonBody.groqApiKey || undefined;
           
           if (jsonBody.maxFileSizeMb && !isNaN(Number(jsonBody.maxFileSizeMb))) {
             requestedMaxFileSizeMb = Math.min(Math.max(Number(jsonBody.maxFileSizeMb), 1), MAX_ALLOWED_FILE_SIZE_MB_CAP);
@@ -218,6 +221,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           requestedEngine = (formData.get('engine') as string) || 'auto';
           mistralApiKey = (formData.get('mistralApiKey') as string) || undefined;
           unstructuredApiKey = (formData.get('unstructuredApiKey') as string) || undefined;
+          groqApiKey = (formData.get('groqApiKey') as string) || undefined;
 
           const formMaxFile = formData.get('maxFileSizeMb');
           if (formMaxFile && !isNaN(Number(formMaxFile))) {
@@ -342,6 +346,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       const dispatchResult = await dispatchFile(fileBuffer, fileName, mimeType, {
         unstructuredApiKey: unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY,
         mistralApiKey: mistralApiKey || process.env.MISTRAL_API_KEY,
+        groqApiKey: groqApiKey || process.env.GROQ_API_KEY,
         geminiApiKey: process.env.GEMINI_API_KEY,
         model: requestedModel,
         preferredEngine: requestedEngine as any,
