@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { SourceConnector } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { encryptSourceConfig, redactSourceConfig } from '@/lib/storage/sourceConfigCrypto';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,10 +17,9 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_URL', req);
   getEnv('QDRANT_API_KEY', req);
 
-  let tenantId = 'tenant-acme-01';
+  const tenantId = authCtx.tenantId;
   try {
     const { searchParams } = new URL(req.url);
-    tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
     const typeFilter = searchParams.get('type');
     const statusFilter = searchParams.get('status');
 
@@ -36,23 +36,29 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     const syncLogs = await db.getSyncLogs(tenantId);
     const mcpResources = await db.getMcpResources(tenantId);
 
+    // Never expose connector secrets in API responses.
+    const redactedSources = sources.map((s) => ({ ...s, config: redactSourceConfig(s.config) }));
+
     return NextResponse.json({
       tenantId,
-      totalSources: sources.length,
-      sources,
+      totalSources: redactedSources.length,
+      sources: redactedSources,
       syncLogs,
       mcpResources,
     });
   } catch (error: any) {
     console.error('API Error in sources GET:', error);
-    return NextResponse.json({
-      tenantId,
-      totalSources: 0,
-      sources: [],
-      syncLogs: [],
-      mcpResources: [],
-      error: error.message || String(error),
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        tenantId,
+        totalSources: 0,
+        sources: [],
+        syncLogs: [],
+        mcpResources: [],
+        error: 'فشل تحميل مصادر البيانات (Failed to load sources)',
+      },
+      { status: 500 },
+    );
   }
 });
 
@@ -68,20 +74,25 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   try {
     const body = await req.json();
-    const { tenantId = 'tenant-acme-01', name, type, config = {}, syncSchedule = 'manual', collectionIds = [] } = body;
+    const { name, type, config = {}, syncSchedule = 'manual', collectionIds = [] } = body;
+    // Tenant identity is derived exclusively from the verified auth context
+    const tenantId = authCtx.tenantId;
 
     if (!name || !type) {
       return NextResponse.json({ error: 'Name and type are required fields' }, { status: 400 });
     }
 
     const id = `src-${type}-${Date.now().toString().slice(-6)}`;
+    // Encrypt any credential-bearing fields before persistence.
+    const encryptedConfig = encryptSourceConfig(config);
     const newSource: SourceConnector = {
       id,
       tenantId,
       name,
       type,
       status: 'healthy',
-      config,
+      config: encryptedConfig,
+      configEncrypted: true,
       syncSchedule,
       lastSyncAt: new Date().toISOString(),
       documentCount: 1,
@@ -94,12 +105,19 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // Also trigger initial ingestion for this source to populate documents
     await db.syncSource(id, tenantId);
 
-    return NextResponse.json({
-      message: 'Source connector registered and indexed successfully',
-      source: await db.getSourceById(id, tenantId),
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        message: 'Source connector registered and indexed successfully',
+        source: {
+          ...(await db.getSourceById(id, tenantId)),
+          config: redactSourceConfig((await db.getSourceById(id, tenantId))?.config || {}),
+        },
+      },
+      { status: 201 },
+    );
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'Failed to create source connector' }, { status: 500 });
+    console.error('API Error in sources POST:', error);
+    return NextResponse.json({ error: 'فشل إنشاء مصدر البيانات (Failed to create source connector)' }, { status: 500 });
   }
 });
 
@@ -115,10 +133,17 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   try {
     const body = await req.json();
-    const { id, tenantId = 'tenant-acme-01', ...updates } = body;
+    const { id, ...updates } = body;
+    const tenantId = authCtx.tenantId;
 
     if (!id) {
       return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
+    }
+
+    // Encrypt any credential-bearing fields supplied in the update payload.
+    if (updates.config && typeof updates.config === 'object') {
+      updates.config = encryptSourceConfig(updates.config);
+      updates.configEncrypted = true;
     }
 
     const updated = await db.updateSource(id, updates, tenantId);
@@ -126,9 +151,13 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
       return NextResponse.json({ error: 'Source not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ message: 'Source updated successfully', source: updated });
+    return NextResponse.json({
+      message: 'Source updated successfully',
+      source: { ...updated, config: redactSourceConfig(updated.config) },
+    });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'Failed to update source' }, { status: 500 });
+    console.error('API Error in sources PUT:', error);
+    return NextResponse.json({ error: 'فشل تحديث مصدر البيانات (Failed to update source)' }, { status: 500 });
   }
 });
 
@@ -144,7 +173,7 @@ export const DELETE = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
-  const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
+  const tenantId = authCtx.tenantId;
   const purgeDocs = searchParams.get('purgeDocs') !== 'false';
 
   if (!id) {

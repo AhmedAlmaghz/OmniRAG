@@ -1,6 +1,7 @@
 import { db } from '@/lib/storage/db';
 import { MCP_TOOLS_REGISTRY, getToolDefinition } from './registry/tools';
 import { MCPServerConfig, MCPToolCall } from '@/lib/types/omnirag';
+import { randomUUID } from 'crypto';
 
 export interface MCPRPCRequest {
   jsonrpc?: string;
@@ -25,7 +26,7 @@ export interface MCPRPCResponse {
  */
 export async function processMcpProtocolRequest(
   req: MCPRPCRequest,
-  ctx: { tenantId: string; userId?: string; serverId?: string }
+  ctx: { tenantId: string; userId?: string; serverId?: string },
 ): Promise<MCPRPCResponse> {
   const jsonrpc = '2.0';
   const reqId = req.id ?? 1;
@@ -178,7 +179,7 @@ export async function processMcpProtocolRequest(
 
         // Save tool execution audit log
         const toolCallRecord: MCPToolCall = {
-          id: `tc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          id: `tc-${Date.now()}-${randomUUID().slice(0, 8)}`,
           tenantId: ctx.tenantId,
           scopedToolName: toolName,
           inputParams: toolArgs,

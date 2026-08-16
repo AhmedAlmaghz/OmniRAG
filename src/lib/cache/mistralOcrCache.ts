@@ -28,7 +28,7 @@ const MEMORY_CACHE = new Map<string, OcrCacheEntry>();
 export async function generateFileHash(
   fileOrBuffer: File | Blob | ArrayBuffer | Buffer | string,
   fileName: string = '',
-  fileSize: number = 0
+  fileSize: number = 0,
 ): Promise<string> {
   try {
     let buffer: ArrayBuffer;
@@ -60,6 +60,7 @@ export async function generateFileHash(
     // Node.js crypto fallback
     if (typeof require !== 'undefined') {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const cryptoModule = require('crypto');
         return cryptoModule.createHash('sha256').update(Buffer.from(buffer)).digest('hex');
       } catch (e) {}
@@ -154,7 +155,7 @@ export function saveOcrCacheEntry(entry: OcrCacheEntry): void {
 
       cacheObj[entry.cacheKey] = fullEntry;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cacheObj));
-      
+
       // Dispatch custom browser event so KnowledgeBase UI updates live
       window.dispatchEvent(new CustomEvent('omnirag-ocr-cache-updated', { detail: fullEntry }));
     } catch (e) {

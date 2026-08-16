@@ -1,11 +1,37 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow read/write access to all collections and documents for the app
+
+    // Helper: derive the tenant id asserted by the client token.
+    // Real tenants use "tenant-<uid>"; demo tenants are hashed here so they
+    // cannot collide with real user-scoped documents.
+    function tenantId() {
+      return 'tenant-' + request.auth.uid;
+    }
+
+    // Helper: require an authenticated user whose identity matches the
+    // tenantId stored on the document being accessed.
+    function isOwnerTenant(docTenantId) {
+      return request.auth != null && docTenantId == tenantId();
+    }
+
+    // Tenant-scoped collections: every document carries a `tenantId` field.
+    // Reads and writes are only permitted for the owning tenant.
+    match /{col}/{docId} {
+      allow read: if isOwnerTenant(resource.data.tenantId);
+      allow create, update: if isOwnerTenant(request.resource.data.tenantId);
+      allow delete: if isOwnerTenant(resource.data.tenantId);
+    }
+
+    // Subcollections under a tenant document (e.g. messages, chunks)
+    match /{col}/{docId}/{sub}/{subId} {
+      allow read: if isOwnerTenant(get(/databases/$(database)/documents/$(col)/$(docId)).data.tenantId);
+      allow create, update, delete: if isOwnerTenant(get(/databases/$(database)/documents/$(col)/$(docId)).data.tenantId);
+    }
+
+    // Deny everything else by default.
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }
-
-

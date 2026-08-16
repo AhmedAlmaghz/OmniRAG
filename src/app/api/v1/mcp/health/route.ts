@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
 import { mcpClientPool } from '@/lib/mcp/client-pool';
 
-export async function GET(req: NextRequest) {
+export const dynamic = 'force-dynamic';
+
+export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
-    const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get('tenantId') || req.headers.get('x-tenant-id') || 'tenant-alpha-001';
+    const tenantId = authCtx.tenantId;
 
     const servers = await db.getMcpServers(tenantId);
 
@@ -21,7 +23,7 @@ export async function GET(req: NextRequest) {
           enabledToolsCount: server.enabledTools.length,
           lastPingAt: probeResult.lastPingAt,
         };
-      })
+      }),
     );
 
     const healthyCount = probes.filter((p) => p.status === 'healthy' || p.status === 'connected').length;
@@ -35,9 +37,7 @@ export async function GET(req: NextRequest) {
       servers: probes,
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message || 'فشل فحص الحالة المجمعة لخوادم MCP' },
-      { status: 500 }
-    );
+    console.error('[api/v1/mcp/health] GET error:', err);
+    return NextResponse.json({ success: false, error: 'فشل فحص الحالة المجمعة لخوادم MCP' }, { status: 500 });
   }
-}
+});

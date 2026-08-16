@@ -9,6 +9,7 @@ import { rerankChunks } from './reranker';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { getAiModel } from '../config/aiModels';
 import { getEnv } from '../env/runtimeEnv';
+import { randomUUID } from 'crypto';
 
 // Singleton AI Client instance for agentic MCP calls
 let globalAiClient: GoogleGenAI | null = null;
@@ -32,80 +33,83 @@ function getMcpAiClient(): GoogleGenAI {
 
 // Definitions of supported MCP tools and their parameter schemas for Gemini
 const MCP_TOOL_DEFINITIONS: Record<string, { description: string; properties: any; required: string[] }> = {
-  'slack_send_message': {
-    description: "Send a message to a slack channel for team communication/notification",
+  slack_send_message: {
+    description: 'Send a message to a slack channel for team communication/notification',
     properties: {
-      channel: { type: Type.STRING, description: "The target slack channel starting with #, e.g. #general, #security-alerts" },
-      message: { type: Type.STRING, description: "The message content to send" }
+      channel: {
+        type: Type.STRING,
+        description: 'The target slack channel starting with #, e.g. #general, #security-alerts',
+      },
+      message: { type: Type.STRING, description: 'The message content to send' },
     },
-    required: ["channel", "message"]
+    required: ['channel', 'message'],
   },
-  'slack_post_alert': {
-    description: "Post a high-priority security or system alert to slack",
+  slack_post_alert: {
+    description: 'Post a high-priority security or system alert to slack',
     properties: {
-      channel: { type: Type.STRING, description: "The target channel starting with #, e.g. #security-alerts" },
-      message: { type: Type.STRING, description: "The security/system alert description" }
+      channel: { type: Type.STRING, description: 'The target channel starting with #, e.g. #security-alerts' },
+      message: { type: Type.STRING, description: 'The security/system alert description' },
     },
-    required: ["channel", "message"]
+    required: ['channel', 'message'],
   },
-  'slack_read_channel': {
-    description: "Read recent chat history or message logs from a slack channel",
+  slack_read_channel: {
+    description: 'Read recent chat history or message logs from a slack channel',
     properties: {
-      channel: { type: Type.STRING, description: "The slack channel name to read, e.g. #general" }
+      channel: { type: Type.STRING, description: 'The slack channel name to read, e.g. #general' },
     },
-    required: ["channel"]
+    required: ['channel'],
   },
-  'github_search_code': {
-    description: "Search across the repository files for specific keywords, methods or classes",
+  github_search_code: {
+    description: 'Search across the repository files for specific keywords, methods or classes',
     properties: {
-      query: { type: Type.STRING, description: "The search query/keyword" }
+      query: { type: Type.STRING, description: 'The search query/keyword' },
     },
-    required: ["query"]
+    required: ['query'],
   },
-  'github_create_issue': {
-    description: "Create a new issue in the GitHub repository for tracking bug reports or security concerns",
+  github_create_issue: {
+    description: 'Create a new issue in the GitHub repository for tracking bug reports or security concerns',
     properties: {
-      repo: { type: Type.STRING, description: "The repository name, e.g. security-audit" },
-      title: { type: Type.STRING, description: "The issue title" },
-      body: { type: Type.STRING, description: "The issue body/description" }
+      repo: { type: Type.STRING, description: 'The repository name, e.g. security-audit' },
+      title: { type: Type.STRING, description: 'The issue title' },
+      body: { type: Type.STRING, description: 'The issue body/description' },
     },
-    required: ["repo", "title"]
+    required: ['repo', 'title'],
   },
-  'github_read_repo': {
-    description: "Retrieve summary and information about the target GitHub repository",
+  github_read_repo: {
+    description: 'Retrieve summary and information about the target GitHub repository',
     properties: {
-      repo: { type: Type.STRING, description: "The repository name to read" }
+      repo: { type: Type.STRING, description: 'The repository name to read' },
     },
-    required: ["repo"]
+    required: ['repo'],
   },
-  'web_live_search': {
-    description: "Execute a web search query to retrieve real-time external information or security policies",
+  web_live_search: {
+    description: 'Execute a web search query to retrieve real-time external information or security policies',
     properties: {
-      query: { type: Type.STRING, description: "The search query" }
+      query: { type: Type.STRING, description: 'The search query' },
     },
-    required: ["query"]
+    required: ['query'],
   },
-  'fetch_url_content': {
-    description: "Fetch and extract text content from a specific web URL",
+  fetch_url_content: {
+    description: 'Fetch and extract text content from a specific web URL',
     properties: {
-      url: { type: Type.STRING, description: "The exact URL to fetch" }
+      url: { type: Type.STRING, description: 'The exact URL to fetch' },
     },
-    required: ["url"]
+    required: ['url'],
   },
-  'external_postgres_query': {
-    description: "Execute a secure Postgres SQL query on the external registered database",
+  external_postgres_query: {
+    description: 'Execute a secure Postgres SQL query on the external registered database',
     properties: {
-      query: { type: Type.STRING, description: "The safe SQL statement to execute" }
+      query: { type: Type.STRING, description: 'The safe SQL statement to execute' },
     },
-    required: ["query"]
+    required: ['query'],
   },
-  'get_table_schema': {
-    description: "Describe the database schema/columns for a specific table",
+  get_table_schema: {
+    description: 'Describe the database schema/columns for a specific table',
     properties: {
-      tableName: { type: Type.STRING, description: "The name of the database table" }
+      tableName: { type: Type.STRING, description: 'The name of the database table' },
     },
-    required: ["tableName"]
-  }
+    required: ['tableName'],
+  },
 };
 
 /**
@@ -125,23 +129,32 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
           channel: args.channel || '#general',
           message: args.message || '',
           timestamp: new Date().toISOString(),
-          status: 'delivered'
+          status: 'delivered',
         };
         break;
 
       case 'slack_read_channel':
         result = [
-          { user: "سارة (أمن المعلومات)", text: `تم رصد هجمات محاكاة على بوابة المستأجر ${tenantId}`, timestamp: "قبل 10 دقائق" },
-          { user: "منذر (مهندس النظم)", text: "جميع شهادات SSL نشطة ومحدثة لعام 2026", timestamp: "قبل ساعة" },
-          { user: "Bot", text: "تم تحديث سياسات الحماية لمستوى Sandbox للجميع", timestamp: "قبل ساعتين" }
+          {
+            user: 'سارة (أمن المعلومات)',
+            text: `تم رصد هجمات محاكاة على بوابة المستأجر ${tenantId}`,
+            timestamp: 'قبل 10 دقائق',
+          },
+          { user: 'منذر (مهندس النظم)', text: 'جميع شهادات SSL نشطة ومحدثة لعام 2026', timestamp: 'قبل ساعة' },
+          { user: 'Bot', text: 'تم تحديث سياسات الحماية لمستوى Sandbox للجميع', timestamp: 'قبل ساعتين' },
         ];
         break;
 
       case 'github_search_code': {
         const queryVal = (args.query || '').toLowerCase();
         result = [
-          { file: "src/lib/rag/engine.ts", line: 42, match: `found keyword: ${queryVal}`, repo: "omnirag-monorepo" },
-          { file: "src/lib/storage/db.ts", line: 884, match: `getMcpServers query: ${queryVal}`, repo: "omnirag-monorepo" }
+          { file: 'src/lib/rag/engine.ts', line: 42, match: `found keyword: ${queryVal}`, repo: 'omnirag-monorepo' },
+          {
+            file: 'src/lib/storage/db.ts',
+            line: 884,
+            match: `getMcpServers query: ${queryVal}`,
+            repo: 'omnirag-monorepo',
+          },
         ];
         break;
       }
@@ -152,7 +165,7 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
           issueNumber: 204,
           title: args.title || 'تنبيه أمني من OmniRAG',
           repo: args.repo || 'security-audit',
-          url: `https://github.com/omnirag-org/${args.repo || 'security-audit'}/issues/204`
+          url: `https://github.com/omnirag-org/${args.repo || 'security-audit'}/issues/204`,
         };
         break;
 
@@ -162,23 +175,31 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
           repository: targetRepo,
           fullName: targetRepo,
           description: `GitHub Repository: ${targetRepo}`,
-          visibility: "public",
-          defaultBranch: "main",
-          languages: { TypeScript: "82%", CSS: "12%", HTML: "6%" },
+          visibility: 'public',
+          defaultBranch: 'main',
+          languages: { TypeScript: '82%', CSS: '12%', HTML: '6%' },
           mainFilesAndDirs: [
-            { name: "src/index.ts", description: "Main entry point" },
-            { name: "README.md", description: "Project documentation" },
-            { name: "package.json", description: "Package configuration" }
+            { name: 'src/index.ts', description: 'Main entry point' },
+            { name: 'README.md', description: 'Project documentation' },
+            { name: 'package.json', description: 'Package configuration' },
           ],
-          lastCommit: "Refactored RRF & Security - 2026-08-11"
+          lastCommit: 'Refactored RRF & Security - 2026-08-11',
         };
         break;
       }
 
       case 'web_live_search': {
         result = [
-          { title: "معايير أمن المعلومات ISO27001 لعام 2026", snippet: "التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.", url: "https://iso.org/standards/27001-2026" },
-          { title: "حماية تطبيقات الويب من ثغرات Prompt Injection", snippet: "تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.", url: "https://owasp.org/www-project-top-ten" }
+          {
+            title: 'معايير أمن المعلومات ISO27001 لعام 2026',
+            snippet: 'التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.',
+            url: 'https://iso.org/standards/27001-2026',
+          },
+          {
+            title: 'حماية تطبيقات الويب من ثغرات Prompt Injection',
+            snippet: 'تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.',
+            url: 'https://owasp.org/www-project-top-ten',
+          },
         ];
         break;
       }
@@ -187,16 +208,17 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
         const urlStr = (args.url || '').trim();
         result = {
           url: urlStr || 'https://example.com',
-          title: "بيان الحماية والسرية المعتمد",
-          content: "يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم."
+          title: 'بيان الحماية والسرية المعتمد',
+          content:
+            'يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم.',
         };
         break;
       }
 
       case 'external_postgres_query':
         result = [
-          { id: 1, table: "users_log", action: "LOGIN", status: "SUCCESS", ip: "192.168.1.45" },
-          { id: 2, table: "users_log", action: "READ_DOCUMENT", status: "DENIED", ip: "192.168.1.110" }
+          { id: 1, table: 'users_log', action: 'LOGIN', status: 'SUCCESS', ip: '192.168.1.45' },
+          { id: 2, table: 'users_log', action: 'READ_DOCUMENT', status: 'DENIED', ip: '192.168.1.110' },
         ];
         break;
 
@@ -204,13 +226,13 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
         result = {
           tableName: args.tableName || 'users_log',
           columns: [
-            { name: "id", type: "UUID", primary: true },
-            { name: "tenant_id", type: "VARCHAR(50)", nullable: false },
-            { name: "action", type: "VARCHAR(100)" },
-            { name: "status", type: "VARCHAR(20)" },
-            { name: "ip_address", type: "VARCHAR(45)" },
-            { name: "timestamp", type: "TIMESTAMP", default: "NOW()" }
-          ]
+            { name: 'id', type: 'UUID', primary: true },
+            { name: 'tenant_id', type: 'VARCHAR(50)', nullable: false },
+            { name: 'action', type: 'VARCHAR(100)' },
+            { name: 'status', type: 'VARCHAR(20)' },
+            { name: 'ip_address', type: 'VARCHAR(45)' },
+            { name: 'timestamp', type: 'TIMESTAMP', default: 'NOW()' },
+          ],
         };
         break;
 
@@ -219,18 +241,18 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
           success: true,
           tool: toolName,
           args: args,
-          message: "تم تنفيذ الأداة المخصصة بنجاح عبر بوابة الـ MCP بنظام الحماية والـ Sandbox المحكم.",
-          timestamp: new Date().toISOString()
+          message: 'تم تنفيذ الأداة المخصصة بنجاح عبر بوابة الـ MCP بنظام الحماية والـ Sandbox المحكم.',
+          timestamp: new Date().toISOString(),
         };
     }
   } catch (error: any) {
     success = false;
-    result = { error: error.message || "Failed to execute tool" };
+    result = { error: error.message || 'Failed to execute tool' };
   }
 
   // Log in Audit Logs
   await db.addAuditLog({
-    id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: `audit-${randomUUID()}`,
     tenantId,
     actorId: 'mcp_gateway_agent',
     action: 'MCP_TOOL_EXECUTED',
@@ -238,7 +260,7 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
     resourceId: toolName,
     status: success ? 'success' : 'error',
     details: `تم تنفيذ الأداة (${toolName}) بنجاح. المدخلات: ${JSON.stringify(args)}.`,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 
   return result;
@@ -279,12 +301,12 @@ export async function generateHydeDocument(query: string): Promise<string> {
  * RRF_Score(d) = (1 / (k + rank_semantic)) * semanticWeight + (1 / (k + rank_lexical)) * lexicalWeight
  * where k = 60
  */
-function computeRrfScore(
+export function computeRrfScore(
   semanticRank: number | null,
   lexicalRank: number | null,
   semanticWeight: number = 0.7,
   lexicalWeight: number = 0.3,
-  k: number = 60
+  k: number = 60,
 ): number {
   let score = 0;
   if (semanticRank !== null && semanticRank > 0) {
@@ -327,19 +349,17 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
     try {
       // Run semantic and lexical search in parallel
       const [semanticResults, lexicalResults] = await Promise.all([
-        isQdrantActive 
-          ? generateEmbedding(semanticSearchContent).then((vector) => 
+        isQdrantActive
+          ? generateEmbedding(semanticSearchContent).then((vector) =>
               searchQdrantSemantic({
                 vector,
                 tenantId,
                 collectionIds,
                 limit: topK * 3,
-              })
+              }),
             )
           : Promise.resolve([]),
-        isPostgresActive
-          ? searchPostgresLexical(lexicalSearchContent, tenantId, topK * 3)
-          : Promise.resolve([])
+        isPostgresActive ? searchPostgresLexical(lexicalSearchContent, tenantId, topK * 3) : Promise.resolve([]),
       ]);
 
       const itemMap = new Map<string, any>();
@@ -373,11 +393,17 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       });
 
       // Batch load document titles to eliminate N+1 queries
-      const docIds = Array.from(new Set(Array.from(itemMap.values()).map(i => i.documentId).filter(Boolean)));
+      const docIds = Array.from(
+        new Set(
+          Array.from(itemMap.values())
+            .map((i) => i.documentId)
+            .filter(Boolean),
+        ),
+      );
       const docMap = new Map<string, string>();
       if (docIds.length > 0) {
         const tenantDocs = await db.getDocuments(tenantId);
-        tenantDocs.forEach(d => docMap.set(d.id, d.title));
+        tenantDocs.forEach((d) => docMap.set(d.id, d.title));
       }
 
       const mergedList = Array.from(itemMap.values());
@@ -411,13 +437,16 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
     if (collectionIds && collectionIds.length > 0) {
       const docsInCollections = (await db.getDocuments(tenantId)).filter((d) =>
-        d.collectionIds?.some((c) => collectionIds.includes(c))
+        d.collectionIds?.some((c) => collectionIds.includes(c)),
       );
       const validDocIds = new Set(docsInCollections.map((d) => d.id));
       chunks = chunks.filter((c) => validDocIds.has(c.documentId));
     }
 
-    const queryTerms = lexicalSearchContent.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+    const queryTerms = lexicalSearchContent
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 2);
 
     const scoredChunks = chunks.map((chunk) => {
       const textLower = chunk.content.toLowerCase();
@@ -508,13 +537,17 @@ export async function generateRagCompletion(params: {
   const alreadyExecutedToolCalls: MCPToolCall[] = [];
 
   if (approvedToolCall) {
-    const executedResult = await executeMcpTool(tenantId, approvedToolCall.scopedToolName, approvedToolCall.inputParams);
+    const executedResult = await executeMcpTool(
+      tenantId,
+      approvedToolCall.scopedToolName,
+      approvedToolCall.inputParams,
+    );
     alreadyExecutedToolCalls.push({
       ...approvedToolCall,
       status: 'completed',
       outputResult: executedResult,
       latencyMs: 35,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     promptText = `${promptText}\n\n[تأكيد تنفيذ أداة الـ MCP]: تمت الموافقة البشرية بنجاح وتم إرجاع نتيجة الأداة (${approvedToolCall.scopedToolName}):\n${JSON.stringify(executedResult, null, 2)}\n\nيرجى دمج هذه البيانات وصياغة الرد النهائي للمستخدم.`;
@@ -546,7 +579,7 @@ export async function generateRagCompletion(params: {
       let toolsToOffer = Array.from(new Set(enabledTools));
       if (mode === 'private') {
         const externalPrefixes = ['slack_', 'github_', 'web_', 'fetch_'];
-        toolsToOffer = toolsToOffer.filter(t => !externalPrefixes.some(pref => t.startsWith(pref)));
+        toolsToOffer = toolsToOffer.filter((t) => !externalPrefixes.some((pref) => t.startsWith(pref)));
       }
 
       const systemInstruction = `أنت مساعد ذكي ومحرك وكلاء متمكن (Agentic RAG Engine) ضمن منصة OmniRAG للمؤسسات.
@@ -580,8 +613,8 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
               parameters: {
                 type: Type.OBJECT,
                 properties: def.properties,
-                required: def.required
-              }
+                required: def.required,
+              },
             });
           }
         }
@@ -593,8 +626,8 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         config: {
           systemInstruction: systemInstruction,
           temperature: 0.2,
-          tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined
-        }
+          tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
+        },
       });
 
       const functionCalls = response.functionCalls;
@@ -613,7 +646,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             latencyMs: 0,
             status: 'pending',
             hasSideEffect: true,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
           };
 
           return {
@@ -621,7 +654,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             citations: [],
             modelUsed: modelToUse,
             tokensUsed: { input: 200, output: 80 },
-            pendingToolCall: pendingCall
+            pendingToolCall: pendingCall,
           };
         } else {
           const toolResult = await executeMcpTool(tenantId, toolName, args);
@@ -633,8 +666,8 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             contents: secondPrompt,
             config: {
               systemInstruction: systemInstruction,
-              temperature: 0.2
-            }
+              temperature: 0.2,
+            },
           });
 
           const citations: Citation[] = contextChunks.map((chunk, idx) => ({
@@ -653,19 +686,21 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             modelUsed: modelToUse,
             tokensUsed: {
               input: Math.floor(secondPrompt.length / 4),
-              output: Math.floor((secondResponse.text || '').length / 4)
+              output: Math.floor((secondResponse.text || '').length / 4),
             },
-            toolCalls: [{
-              id: `tc-${Date.now()}`,
-              tenantId,
-              scopedToolName: toolName,
-              inputParams: args,
-              outputResult: toolResult,
-              latencyMs: 25,
-              status: 'completed',
-              hasSideEffect: false,
-              timestamp: new Date().toISOString()
-            }]
+            toolCalls: [
+              {
+                id: `tc-${Date.now()}`,
+                tenantId,
+                scopedToolName: toolName,
+                inputParams: args,
+                outputResult: toolResult,
+                latencyMs: 25,
+                status: 'completed',
+                hasSideEffect: false,
+                timestamp: new Date().toISOString(),
+              },
+            ],
           };
         }
       }
@@ -688,7 +723,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
           input: Math.floor(promptText.length / 4),
           output: Math.floor((response.text || '').length / 4),
         },
-        toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined
+        toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined,
       };
     } catch (err: any) {
       console.error('AI SDK/Google GenAI execution error, using deterministic fallback:', err);
@@ -712,6 +747,6 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
     citations: fallbackCitations,
     modelUsed: modelToUse,
     tokensUsed: { input: 120, output: 85 },
-    toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined
+    toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined,
   };
 }

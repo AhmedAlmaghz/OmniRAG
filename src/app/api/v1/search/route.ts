@@ -19,7 +19,8 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   try {
     const body: SearchQuery = await req.json();
-    const tenantId = body.tenantId || req.headers.get('x-tenant-id') || 'tenant-acme-01';
+    // Tenant identity is derived exclusively from the verified auth context
+    const tenantId = authCtx.tenantId;
 
     // Run Pre-Auth & Pre-Inference Hooks
     const authResult = await HookHarness.run('pre_auth', { tenantId });
@@ -42,6 +43,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     return NextResponse.json(searchResults);
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 });
+    console.error('[api/v1/search] Error:', err);
+    return NextResponse.json({ error: 'فشل تنفيذ البحث (Search request failed)' }, { status: 500 });
   }
 });

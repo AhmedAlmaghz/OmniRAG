@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { Collection } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +23,10 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     return NextResponse.json({ collections });
   } catch (err: any) {
     console.error('API Error in collections GET:', err);
-    return NextResponse.json({ collections: [], error: err.message || String(err) }, { status: 500 });
+    return NextResponse.json(
+      { collections: [], error: 'حدث خطأ داخلي في الخادم. يرجى المحاولة مرة أخرى لاحقاً.', code: 'INTERNAL_ERROR' },
+      { status: 500 },
+    );
   }
 });
 
@@ -53,6 +57,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     await db.addCollection(col);
     return NextResponse.json({ collection: col }, { status: 201 });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return serverErrorResponse('collections POST', err);
   }
 });

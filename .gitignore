@@ -8,3 +8,7 @@ coverage/
 *.key
 *.p12
 terminal_logs/
+.next/
+.vscode/
+.husky
+.zcode/

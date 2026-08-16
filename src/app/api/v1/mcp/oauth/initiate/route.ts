@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { mcpOAuthManager } from '@/lib/mcp/auth/oauth-manager';
 
-export async function POST(req: NextRequest) {
+export const dynamic = 'force-dynamic';
+
+export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
     const body = await req.json();
-    const tenantId = body.tenantId || req.headers.get('x-tenant-id') || 'tenant-alpha-001';
+    const tenantId = authCtx.tenantId;
 
     const {
       serverId,
@@ -16,10 +19,7 @@ export async function POST(req: NextRequest) {
     } = body;
 
     if (!serverId) {
-      return NextResponse.json(
-        { success: false, error: 'معرف خادم الـ MCP (serverId) مطلوب للربط' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: 'معرف خادم الـ MCP (serverId) مطلوب للربط' }, { status: 400 });
     }
 
     const host = req.headers.get('host') || 'localhost:3000';
@@ -46,9 +46,7 @@ export async function POST(req: NextRequest) {
       rfcValidation: 'RFC 8707 + RFC 9207 Enabled',
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message || 'فشل بدء تدفق توثيق OAuth 2.0' },
-      { status: 500 }
-    );
+    console.error('[api/v1/mcp/oauth/initiate] POST error:', err);
+    return NextResponse.json({ success: false, error: 'فشل بدء تدفق توثيق OAuth 2.0' }, { status: 500 });
   }
-}
+});

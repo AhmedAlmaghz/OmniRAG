@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { randomApiKey } from '@/lib/crypto/webRandom';
 import {
   User,
   Bell,
@@ -28,7 +29,7 @@ import {
   Type,
   LayoutGrid,
   Activity,
-  HardDrive
+  HardDrive,
 } from 'lucide-react';
 import IngestionSettingsView from './IngestionSettingsView';
 import ModelSettingsView from './ModelSettingsView';
@@ -43,7 +44,8 @@ interface SettingsViewProps {
   onLogOut?: () => void;
 }
 
-type TabType = 'account' | 'notifications' | 'security' | 'appearance' | 'aiModels' | 'ingestion' | 'diagnostics' | 'envVars';
+type TabType =
+  'account' | 'notifications' | 'security' | 'appearance' | 'aiModels' | 'ingestion' | 'diagnostics' | 'envVars';
 
 export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<TabType>('account');
@@ -73,9 +75,27 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
   const [isCopied, setIsCopied] = useState(false);
   const [trustedIPs, setTrustedIPs] = useState('127.0.0.1, 192.168.1.1');
   const [activeSessions, setActiveSessions] = useState([
-    { id: '1', device: 'Chrome / macOS', ip: '192.168.1.45', location: lang === 'ar' ? 'الرياض، السعودية' : 'Riyadh, KSA', current: true },
-    { id: '2', device: 'Safari / iPhone 15 Pro', ip: '172.56.21.90', location: lang === 'ar' ? 'دبي، الإمارات' : 'Dubai, UAE', current: false },
-    { id: '3', device: 'Edge / Windows 11', ip: '82.165.12.30', location: lang === 'ar' ? 'لندن، المملكة المتحدة' : 'London, UK', current: false },
+    {
+      id: '1',
+      device: 'Chrome / macOS',
+      ip: '192.168.1.45',
+      location: lang === 'ar' ? 'الرياض، السعودية' : 'Riyadh, KSA',
+      current: true,
+    },
+    {
+      id: '2',
+      device: 'Safari / iPhone 15 Pro',
+      ip: '172.56.21.90',
+      location: lang === 'ar' ? 'دبي، الإمارات' : 'Dubai, UAE',
+      current: false,
+    },
+    {
+      id: '3',
+      device: 'Edge / Windows 11',
+      ip: '82.165.12.30',
+      location: lang === 'ar' ? 'لندن، المملكة المتحدة' : 'London, UK',
+      current: false,
+    },
   ]);
 
   // --- Appearance State ---
@@ -93,7 +113,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       const savedBio = localStorage.getItem(`omnirag_profile_bio_${userEmail}`);
       const savedOrg = localStorage.getItem(`omnirag_profile_org_${userEmail}`);
       const savedColor = localStorage.getItem(`omnirag_profile_color_${userEmail}`);
-      
+
       const savedTheme = localStorage.getItem('omnirag_theme');
       const savedFontSize = localStorage.getItem('omnirag_font_size');
       const savedDensity = localStorage.getItem('omnirag_density');
@@ -141,8 +161,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
   };
 
   const generateNewApiKey = () => {
-    const randomHex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-    const key = `omni_sec_live_${randomHex}`;
+    const key = randomApiKey('omni_sec_live', 32);
     setApiKey(key);
     if (typeof window !== 'undefined') {
       localStorage.setItem(`omnirag_api_key_${userEmail}`, key);
@@ -273,7 +292,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       activeSessionsDesc: 'Review verified environments accessing your credentials in real-time.',
       revokeSession: 'Revoke',
       activeNow: 'Active Now',
-    }
+    },
   };
 
   const t = lang === 'ar' ? translations.ar : translations.en;
@@ -281,23 +300,35 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
   // Set avatar bg color class
   const getAvatarBg = (color: string) => {
     switch (color) {
-      case 'rose': return 'bg-rose-100 text-rose-700 border-rose-300';
-      case 'teal': return 'bg-teal-100 text-teal-700 border-teal-300';
-      case 'emerald': return 'bg-emerald-100 text-emerald-700 border-emerald-300';
-      case 'amber': return 'bg-amber-100 text-amber-700 border-amber-300';
-      case 'violet': return 'bg-violet-100 text-violet-700 border-violet-300';
-      default: return 'bg-indigo-100 text-indigo-700 border-indigo-300';
+      case 'rose':
+        return 'bg-rose-100 text-rose-700 border-rose-300';
+      case 'teal':
+        return 'bg-teal-100 text-teal-700 border-teal-300';
+      case 'emerald':
+        return 'bg-emerald-100 text-emerald-700 border-emerald-300';
+      case 'amber':
+        return 'bg-amber-100 text-amber-700 border-amber-300';
+      case 'violet':
+        return 'bg-violet-100 text-violet-700 border-violet-300';
+      default:
+        return 'bg-indigo-100 text-indigo-700 border-indigo-300';
     }
   };
 
   const getActiveDotColor = (color: string) => {
     switch (color) {
-      case 'rose': return 'bg-rose-500';
-      case 'teal': return 'bg-teal-500';
-      case 'emerald': return 'bg-emerald-500';
-      case 'amber': return 'bg-amber-500';
-      case 'violet': return 'bg-violet-500';
-      default: return 'bg-indigo-500';
+      case 'rose':
+        return 'bg-rose-500';
+      case 'teal':
+        return 'bg-teal-500';
+      case 'emerald':
+        return 'bg-emerald-500';
+      case 'amber':
+        return 'bg-amber-500';
+      case 'violet':
+        return 'bg-violet-500';
+      default:
+        return 'bg-indigo-500';
     }
   };
 
@@ -326,13 +357,10 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
           </div>
           {t.title}
         </h1>
-        <p className="text-sm text-slate-500 mt-2 max-w-3xl leading-relaxed">
-          {t.desc}
-        </p>
+        <p className="text-sm text-slate-500 mt-2 max-w-3xl leading-relaxed">{t.desc}</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8" id="settings-grid-layout">
-        
         {/* Navigation Sidebar */}
         <div className="lg:col-span-1 space-y-1.5" id="settings-sidebar">
           <button
@@ -348,7 +376,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <User className="w-4 h-4" />
               {t.tabAccount}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'account' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'account' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
 
           <button
@@ -364,7 +394,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <Bell className="w-4 h-4" />
               {t.tabNotifications}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'notifications' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'notifications' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
 
           <button
@@ -380,7 +412,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <Shield className="w-4 h-4" />
               {t.tabSecurity}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'security' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'security' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
 
           <button
@@ -396,7 +430,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <Monitor className="w-4 h-4" />
               {t.tabAppearance}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'appearance' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'appearance' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
 
           <button
@@ -412,7 +448,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <Sparkles className="w-4 h-4" />
               {t.tabAiModels}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'aiModels' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'aiModels' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
 
           <button
@@ -428,7 +466,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <HardDrive className="w-4 h-4" />
               {t.tabIngestion}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'ingestion' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'ingestion' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
 
           <button
@@ -444,7 +484,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <Key className="w-4 h-4" />
               {t.tabEnvVars}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'envVars' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'envVars' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
 
           <button
@@ -460,7 +502,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <Activity className="w-4 h-4" />
               {t.tabDiagnostics}
             </span>
-            <ChevronRight className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'diagnostics' ? 'opacity-100' : 'opacity-40'}`} />
+            <ChevronRight
+              className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${activeTab === 'diagnostics' ? 'opacity-100' : 'opacity-40'}`}
+            />
           </button>
         </div>
 
@@ -475,7 +519,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               transition={{ duration: 0.15 }}
               className="space-y-6"
             >
-              
               {/* ACCOUNT TAB CONTENT */}
               {activeTab === 'account' && (
                 <div className="space-y-6" id="section-account">
@@ -489,14 +532,18 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                         {lang === 'ar' ? 'أمان الهوية' : 'Identity Secure'}
                       </span>
                     </div>
-                    
+
                     <div className="p-6 space-y-6">
                       {/* Avatar & Dynamic Customization */}
                       <div className="flex flex-col sm:flex-row items-center gap-6 p-4 rounded-xl bg-slate-50 border border-slate-200/80">
                         <div className="relative">
-                          <div className={`w-20 h-20 rounded-2xl ${getAvatarBg(avatarColor)} flex items-center justify-center text-3xl font-extrabold shadow-md border-2 transition-all duration-300 relative`}>
+                          <div
+                            className={`w-20 h-20 rounded-2xl ${getAvatarBg(avatarColor)} flex items-center justify-center text-3xl font-extrabold shadow-md border-2 transition-all duration-300 relative`}
+                          >
                             {displayName ? displayName.charAt(0).toUpperCase() : 'U'}
-                            <span className={`absolute bottom-1.5 right-1.5 w-3.5 h-3.5 rounded-full border-2 border-white ring-1 ring-slate-200 animate-pulse ${getActiveDotColor(avatarColor)}`} />
+                            <span
+                              className={`absolute bottom-1.5 right-1.5 w-3.5 h-3.5 rounded-full border-2 border-white ring-1 ring-slate-200 animate-pulse ${getActiveDotColor(avatarColor)}`}
+                            />
                           </div>
                         </div>
                         <div className="space-y-3 flex-1 text-center sm:text-left rtl:sm:text-right">
@@ -507,11 +554,17 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                                 key={color}
                                 onClick={() => setAvatarColor(color)}
                                 className={`w-8 h-8 rounded-lg border-2 transition transform hover:scale-110 active:scale-95 ${
-                                  color === 'indigo' ? 'bg-indigo-500' :
-                                  color === 'teal' ? 'bg-teal-500' :
-                                  color === 'rose' ? 'bg-rose-500' :
-                                  color === 'emerald' ? 'bg-emerald-500' :
-                                  color === 'amber' ? 'bg-amber-500' : 'bg-violet-500'
+                                  color === 'indigo'
+                                    ? 'bg-indigo-500'
+                                    : color === 'teal'
+                                      ? 'bg-teal-500'
+                                      : color === 'rose'
+                                        ? 'bg-rose-500'
+                                        : color === 'emerald'
+                                          ? 'bg-emerald-500'
+                                          : color === 'amber'
+                                            ? 'bg-amber-500'
+                                            : 'bg-violet-500'
                                 } ${avatarColor === color ? 'border-indigo-600 ring-2 ring-indigo-300 ring-offset-1' : 'border-white shadow-xs hover:shadow-md'}`}
                                 aria-label={`Select ${color} color`}
                               />
@@ -575,9 +628,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                         </div>
 
                         <div className="sm:col-span-2 space-y-1.5">
-                          <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                            {t.bio}
-                          </label>
+                          <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">{t.bio}</label>
                           <textarea
                             value={bio}
                             onChange={(e) => setBio(e.target.value)}
@@ -597,7 +648,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                             </label>
                             <Lock className="w-3.5 h-3.5 text-slate-400" />
                           </div>
-                          <p className="text-xs font-semibold text-slate-600 font-mono break-all">{userEmail || 'N/A'}</p>
+                          <p className="text-xs font-semibold text-slate-600 font-mono break-all">
+                            {userEmail || 'N/A'}
+                          </p>
                         </div>
                         <div className="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
                           <div className="flex items-center justify-between mb-1">
@@ -609,7 +662,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                           <p className="text-xs font-semibold text-slate-600 font-mono break-all">{tenantId}</p>
                         </div>
                       </div>
-
                     </div>
                   </div>
                 </div>
@@ -625,9 +677,8 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                         <h2 className="text-lg font-bold text-slate-900">{t.tabNotifications}</h2>
                       </div>
                     </div>
-                    
+
                     <div className="p-6 divide-y divide-slate-100">
-                      
                       {/* Email Alerts Toggle */}
                       <div className="py-4.5 flex items-start justify-between gap-4 first:pt-0">
                         <div className="space-y-1">
@@ -695,7 +746,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                           <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] rtl:after:right-[2px] rtl:after:left-auto after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600" />
                         </label>
                       </div>
-
                     </div>
                   </div>
                 </div>
@@ -704,7 +754,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               {/* SECURITY & API KEYS TAB CONTENT */}
               {activeTab === 'security' && (
                 <div className="space-y-6" id="section-security">
-                  
                   {/* API Integration Key */}
                   <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-6 py-5 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
@@ -718,7 +767,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                     </div>
                     <div className="p-6 space-y-4">
                       <p className="text-xs text-slate-500 leading-relaxed">{t.apiKeyDesc}</p>
-                      
+
                       {apiKey ? (
                         <div className="space-y-3">
                           <div className="flex items-center gap-2 bg-slate-900 p-3 rounded-xl border border-slate-800">
@@ -741,7 +790,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                                 className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 transition"
                                 title={t.copyKey}
                               >
-                                {isCopied ? <Check className="w-4 h-4 text-emerald-400 animate-pulse" /> : <Copy className="w-4 h-4" />}
+                                {isCopied ? (
+                                  <Check className="w-4 h-4 text-emerald-400 animate-pulse" />
+                                ) : (
+                                  <Copy className="w-4 h-4" />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -754,7 +807,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                       ) : (
                         <div className="text-center p-6 border border-dashed border-slate-200 rounded-xl bg-slate-50">
                           <Lock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                          <p className="text-xs font-semibold text-slate-400">{lang === 'ar' ? 'لم يتم توليد مفاتيح أمان بعد' : 'No Access Tokens Generated yet'}</p>
+                          <p className="text-xs font-semibold text-slate-400">
+                            {lang === 'ar' ? 'لم يتم توليد مفاتيح أمان بعد' : 'No Access Tokens Generated yet'}
+                          </p>
                         </div>
                       )}
 
@@ -799,15 +854,19 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                     </div>
                     <div className="p-4 space-y-3">
                       <p className="text-xs text-slate-500 px-2 leading-relaxed">{t.activeSessionsDesc}</p>
-                      
+
                       <div className="overflow-x-auto">
                         <table className="w-full text-left rtl:text-right text-xs">
                           <thead>
                             <tr className="border-b border-slate-100 text-slate-400 font-semibold">
                               <th className="py-2 px-3">{lang === 'ar' ? 'الجهاز والمنصة' : 'Device / OS'}</th>
                               <th className="py-2 px-3">IP Address</th>
-                              <th className="py-2 px-3">{lang === 'ar' ? 'الموقع التقريبي' : 'Approximate Location'}</th>
-                              <th className="py-2 px-3 text-right rtl:text-left">{lang === 'ar' ? 'الإجراء' : 'Actions'}</th>
+                              <th className="py-2 px-3">
+                                {lang === 'ar' ? 'الموقع التقريبي' : 'Approximate Location'}
+                              </th>
+                              <th className="py-2 px-3 text-right rtl:text-left">
+                                {lang === 'ar' ? 'الإجراء' : 'Actions'}
+                              </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
@@ -815,7 +874,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                               <tr key={session.id} className="hover:bg-slate-50 transition duration-150">
                                 <td className="py-3 px-3 font-medium text-slate-800">
                                   <div className="flex items-center gap-2">
-                                    <span className={`w-2 h-2 rounded-full ${session.current ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                                    <span
+                                      className={`w-2 h-2 rounded-full ${session.current ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}
+                                    />
                                     {session.device}
                                     {session.current && (
                                       <span className="text-[9px] bg-emerald-550/10 text-emerald-700 font-semibold px-1.5 py-0.5 rounded border border-emerald-550/20">
@@ -843,7 +904,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                       </div>
                     </div>
                   </div>
-
                 </div>
               )}
 
@@ -858,7 +918,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                       </div>
                     </div>
                     <div className="p-6 space-y-6">
-                      
                       {/* Theme Selector */}
                       <div>
                         <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">
@@ -904,10 +963,16 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                                     : 'border-slate-200 hover:border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
                                 }`}
                               >
-                                <span className={`text-xs block ${
-                                  f === 'cairo' ? 'font-cairo' : f === 'tajawal' ? 'font-tajawal' : 'font-mono'
-                                }`}>
-                                  {f === 'cairo' ? 'خط القاهرة (Cairo)' : f === 'tajawal' ? 'خط تجول (Tajawal)' : 'خط آي بي إم (IBM Arabic)'}
+                                <span
+                                  className={`text-xs block ${
+                                    f === 'cairo' ? 'font-cairo' : f === 'tajawal' ? 'font-tajawal' : 'font-mono'
+                                  }`}
+                                >
+                                  {f === 'cairo'
+                                    ? 'خط القاهرة (Cairo)'
+                                    : f === 'tajawal'
+                                      ? 'خط تجول (Tajawal)'
+                                      : 'خط آي بي إم (IBM Arabic)'}
                                 </span>
                               </button>
                             ))}
@@ -931,10 +996,22 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                                   : 'border-slate-200 hover:border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
                               }`}
                             >
-                              <span className={`text-xs font-semibold ${
-                                sz === 'sm' ? 'text-[11px]' : sz === 'md' ? 'text-xs' : 'text-sm'
-                              }`}>
-                                {lang === 'ar' ? (sz === 'sm' ? 'صغير' : sz === 'md' ? 'طبيعي' : 'كبير جداً') : (sz === 'sm' ? 'Small' : sz === 'md' ? 'Medium' : 'Large')}
+                              <span
+                                className={`text-xs font-semibold ${
+                                  sz === 'sm' ? 'text-[11px]' : sz === 'md' ? 'text-xs' : 'text-sm'
+                                }`}
+                              >
+                                {lang === 'ar'
+                                  ? sz === 'sm'
+                                    ? 'صغير'
+                                    : sz === 'md'
+                                      ? 'طبيعي'
+                                      : 'كبير جداً'
+                                  : sz === 'sm'
+                                    ? 'Small'
+                                    : sz === 'md'
+                                      ? 'Medium'
+                                      : 'Large'}
                               </span>
                             </button>
                           ))}
@@ -965,7 +1042,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                           ))}
                         </div>
                       </div>
-
                     </div>
                   </div>
                 </div>
@@ -1000,10 +1076,13 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                 isOpen={showFirstLaunchWizard}
                 onClose={() => setShowFirstLaunchWizard(false)}
               />
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm" id="settings-shared-bar">
+              <div
+                className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm"
+                id="settings-shared-bar"
+              >
                 <p className="text-[11px] text-slate-500 text-center sm:text-left rtl:sm:text-right leading-relaxed max-w-md font-medium">
-                  {lang === 'ar' 
-                    ? 'يتم تخزين الإعدادات وتخصيصات الواجهة محلياً بشكل آمن لضمان التشفير والخصوصية التامة.' 
+                  {lang === 'ar'
+                    ? 'يتم تخزين الإعدادات وتخصيصات الواجهة محلياً بشكل آمن لضمان التشفير والخصوصية التامة.'
                     : 'All preferences and localized parameters are securely cryptographically cached on your browser client.'}
                 </p>
                 <div className="flex gap-2 w-full sm:w-auto shrink-0">
@@ -1030,7 +1109,10 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               </div>
 
               {/* DANGER CONTROL ZONE */}
-              <div className="bg-rose-50/50 border border-rose-200 rounded-2xl shadow-sm overflow-hidden" id="settings-danger-zone">
+              <div
+                className="bg-rose-50/50 border border-rose-200 rounded-2xl shadow-sm overflow-hidden"
+                id="settings-danger-zone"
+              >
                 <div className="px-6 py-5 border-b border-rose-200 bg-rose-50/80 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Shield className="w-5 h-5 text-rose-700 animate-pulse" />
@@ -1058,11 +1140,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                   </div>
                 </div>
               </div>
-
             </motion.div>
           </AnimatePresence>
         </div>
-
       </div>
     </div>
   );

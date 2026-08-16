@@ -1,6 +1,7 @@
 import { db } from '@/lib/storage/db';
 import { generateEmbedding } from '@/lib/rag/embedding';
 import { searchQdrantSemantic } from '@/lib/storage/qdrant';
+import { randomInt } from '@/lib/crypto/webRandom';
 
 export interface MCPToolDefinition {
   name: string;
@@ -46,7 +47,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         deliveryStatus: 'delivered',
         messageId: `slack-msg-${Date.now()}`,
       };
-      
+
       // Log audit
       await db.addAuditLog({
         id: `audit-${Date.now()}`,
@@ -86,9 +87,21 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         channel,
         messagesCount: Math.min(limit, 5),
         messages: [
-          { user: 'أحمد علي (مدير المشاريع)', text: 'هل تم استكمال مراجعة سياسات أمن المعلومات لعام 2026؟', timestamp: new Date(Date.now() - 3600000).toISOString() },
-          { user: 'سارة خالد (مهندسة الأمان)', text: 'نعم، تم تحديث معايير RLS ومستويات MCP Sandbox بنجاح.', timestamp: new Date(Date.now() - 1800000).toISOString() },
-          { user: 'خالد عمر (فريق التطوير)', text: 'ممتاز، سنقوم باختبار خوادم MCP وتدفق الـ OAuth الآن.', timestamp: new Date(Date.now() - 600000).toISOString() },
+          {
+            user: 'أحمد علي (مدير المشاريع)',
+            text: 'هل تم استكمال مراجعة سياسات أمن المعلومات لعام 2026؟',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+          },
+          {
+            user: 'سارة خالد (مهندسة الأمان)',
+            text: 'نعم، تم تحديث معايير RLS ومستويات MCP Sandbox بنجاح.',
+            timestamp: new Date(Date.now() - 1800000).toISOString(),
+          },
+          {
+            user: 'خالد عمر (فريق التطوير)',
+            text: 'ممتاز، سنقوم باختبار خوادم MCP وتدفق الـ OAuth الآن.',
+            timestamp: new Date(Date.now() - 600000).toISOString(),
+          },
         ],
       };
     },
@@ -180,27 +193,21 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['repo', 'title', 'body'],
     },
     execute: async (args, ctx) => {
-      const issueNumber = Math.floor(Math.random() * 800) + 100;
+      // This tool is a built-in mock (no real GitHub API call) used for
+      // demos/integration debugging. It returns a simulated issue, but does
+      // NOT write a fake audit-log entry claiming a real GitHub issue was
+      // created — such an entry would be a forged audit trail. The result
+      // itself is clearly marked as simulated to avoid misleading callers.
+      const issueNumber = randomInt(800) + 100; // [100, 899]
       const result = {
         success: true,
+        simulated: true,
         issueNumber,
         issueUrl: `https://github.com/${args.repo}/issues/${issueNumber}`,
         title: args.title,
         status: 'open',
         createdAt: new Date().toISOString(),
       };
-
-      await db.addAuditLog({
-        id: `audit-${Date.now()}`,
-        tenantId: ctx.tenantId,
-        actorId: ctx.userId || 'mcp_gateway',
-        action: 'MCP_TOOL_EXECUTE',
-        resourceType: 'github_issue',
-        resourceId: `${args.repo}#${issueNumber}`,
-        status: 'success',
-        details: `تم إنشاء GitHub Issue جديد (#${issueNumber}) بعنوان: ${args.title}`,
-        timestamp: new Date().toISOString(),
-      });
 
       return result;
     },
@@ -265,7 +272,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
           {
             title: 'Model Context Protocol (MCP) Specification 2026-07-28',
             url: 'https://modelcontextprotocol.io/spec/2026-07-28',
-            snippet: 'Stateless MCP server protocols, Resource Indicators RFC 8707, and OAuth iss validation RFC 9207 standard specifications.',
+            snippet:
+              'Stateless MCP server protocols, Resource Indicators RFC 8707, and OAuth iss validation RFC 9207 standard specifications.',
           },
           {
             title: 'OmniRAG - Architecture & Multi-Tenant Isolated Systems',
@@ -373,7 +381,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
   unstructured_parse_document: {
     name: 'unstructured_parse_document',
     serverName: 'OmniRAG Core Knowledge MCP Server',
-    description: 'معالجة وتحويل المستندات المعقدة والمتعددة (PDF, DOCX, PPTX, HTML) إلى عناصر هيكلية Markdown باستخدام Unstructured.io MCP Transform',
+    description:
+      'معالجة وتحويل المستندات المعقدة والمتعددة (PDF, DOCX, PPTX, HTML) إلى عناصر هيكلية Markdown باستخدام Unstructured.io MCP Transform',
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
@@ -382,7 +391,11 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       properties: {
         documentUrl: { type: 'string', description: 'رابط الملف أو محتوى Base64 للمستند المراد معالجته' },
         fileName: { type: 'string', description: 'اسم الملف الأصلي مع الامتداد (مثل document.pdf)' },
-        strategy: { type: 'string', description: 'استراتيجية التحويل: hi_res أو fast أو ocr_only', enum: ['hi_res', 'fast', 'ocr_only'] },
+        strategy: {
+          type: 'string',
+          description: 'استراتيجية التحويل: hi_res أو fast أو ocr_only',
+          enum: ['hi_res', 'fast', 'ocr_only'],
+        },
       },
       required: ['documentUrl'],
     },
@@ -418,7 +431,12 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
 
           if (res.ok) {
             const elements = await res.json();
-            const text = Array.isArray(elements) ? elements.map((e: any) => e.text).filter(Boolean).join('\n\n') : '';
+            const text = Array.isArray(elements)
+              ? elements
+                  .map((e: any) => e.text)
+                  .filter(Boolean)
+                  .join('\n\n')
+              : '';
             return {
               success: true,
               engine: 'Unstructured.io MCP Transform',
@@ -445,7 +463,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
   mistral_document_ai_parse: {
     name: 'mistral_document_ai_parse',
     serverName: 'OmniRAG Core Knowledge MCP Server',
-    description: 'تحليل واستيعاب مستندات PDF والصور باستخدام Mistral Document AI OCR API لفهم التخطيط واستخراج الجداول والمعادلات الرياضية بصيغة Markdown',
+    description:
+      'تحليل واستيعاب مستندات PDF والصور باستخدام Mistral Document AI OCR API لفهم التخطيط واستخراج الجداول والمعادلات الرياضية بصيغة Markdown',
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
@@ -487,7 +506,9 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
           if (res.ok) {
             const data = await res.json();
             const pages = data.pages || [];
-            const markdown = pages.map((p: any, idx: number) => `### [صفحة ${idx + 1}]\n${p.markdown || p.text || ''}`).join('\n\n');
+            const markdown = pages
+              .map((p: any, idx: number) => `### [صفحة ${idx + 1}]\n${p.markdown || p.text || ''}`)
+              .join('\n\n');
             return {
               success: true,
               engine: 'Mistral Document AI API',
@@ -529,7 +550,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     },
     execute: async (args, ctx) => {
       const { query, topK = 4 } = args;
-      
+
       // Vector search from Qdrant or fallback to db chunks
       try {
         const queryVector = await generateEmbedding(query);
@@ -559,7 +580,11 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       // Fallback
       const chunks = await db.getChunks(ctx.tenantId);
       const filtered = chunks
-        .filter((c) => c.content.toLowerCase().includes(query.toLowerCase()) || c.documentTitle?.toLowerCase().includes(query.toLowerCase()))
+        .filter(
+          (c) =>
+            c.content.toLowerCase().includes(query.toLowerCase()) ||
+            c.documentTitle?.toLowerCase().includes(query.toLowerCase()),
+        )
         .slice(0, topK);
 
       return {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { mcpOAuthManager } from '@/lib/mcp/auth/oauth-manager';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export async function GET(req: NextRequest) {
   try {
@@ -11,7 +12,7 @@ export async function GET(req: NextRequest) {
     if (!code || !state) {
       return NextResponse.json(
         { success: false, error: 'كود التفويض أو القيمة العشوائية (State) مفقودة في Callback' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -23,9 +24,6 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message || 'فشل استكمال توثيق OAuth 2.0' },
-      { status: 500 }
-    );
+    return serverErrorResponse('mcp/oauth/callback', err);
   }
 }

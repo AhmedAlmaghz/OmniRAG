@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Document, DocumentVersion } from '@/lib/types/omnirag';
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import {
   History,
   GitBranch,
@@ -63,13 +64,13 @@ export function DocumentVersionHistoryModal({
   const fetchVersions = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/v1/documents/versions?documentId=${doc.id}`);
+      const res = await fetchWithAuth(`/api/v1/documents/versions?documentId=${doc.id}`);
       if (res.ok) {
         const data = await res.json();
         if (data.versions && data.versions.length > 0) {
           const sorted = [...data.versions].sort((a, b) => b.versionNumber - a.versionNumber);
           setVersions(sorted);
-          if (!selectedVersionNum || !sorted.some(v => v.versionNumber === selectedVersionNum)) {
+          if (!selectedVersionNum || !sorted.some((v) => v.versionNumber === selectedVersionNum)) {
             setSelectedVersionNum(sorted[0].versionNumber);
           }
         }
@@ -125,7 +126,7 @@ export function DocumentVersionHistoryModal({
     setStatusMessage(null);
 
     try {
-      const res = await fetch('/api/v1/documents/versions', {
+      const res = await fetchWithAuth('/api/v1/documents/versions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -140,7 +141,9 @@ export function DocumentVersionHistoryModal({
         setDoc(data.document);
         setSelectedVersionNum(targetVer.versionNumber);
         if (data.versions) {
-          setVersions([...data.versions].sort((a: DocumentVersion, b: DocumentVersion) => b.versionNumber - a.versionNumber));
+          setVersions(
+            [...data.versions].sort((a: DocumentVersion, b: DocumentVersion) => b.versionNumber - a.versionNumber),
+          );
         }
         setStatusMessage({
           type: 'success',
@@ -181,7 +184,7 @@ export function DocumentVersionHistoryModal({
     setStatusMessage(null);
 
     try {
-      const res = await fetch('/api/v1/documents/versions', {
+      const res = await fetchWithAuth('/api/v1/documents/versions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -189,7 +192,8 @@ export function DocumentVersionHistoryModal({
           documentId: doc.id,
           title: newTitle.trim() || doc.title,
           content: newContent,
-          changeSummary: changeSummary.trim() || (isRtl ? 'تعديل محتوى وفهرسة جديدة' : 'Content update and re-indexing'),
+          changeSummary:
+            changeSummary.trim() || (isRtl ? 'تعديل محتوى وفهرسة جديدة' : 'Content update and re-indexing'),
           createdBy: authorName.trim() || 'Admin User',
         }),
       });
@@ -199,7 +203,9 @@ export function DocumentVersionHistoryModal({
         setDoc(data.document);
         setSelectedVersionNum(data.version.versionNumber);
         if (data.versions) {
-          setVersions([...data.versions].sort((a: DocumentVersion, b: DocumentVersion) => b.versionNumber - a.versionNumber));
+          setVersions(
+            [...data.versions].sort((a: DocumentVersion, b: DocumentVersion) => b.versionNumber - a.versionNumber),
+          );
         }
         setViewMode('diff');
         setStatusMessage({
@@ -304,9 +310,10 @@ export function DocumentVersionHistoryModal({
     return { diffRows, addedCount, removedCount, unchangedCount };
   };
 
-  const diffResult = selectedVersion && currentActiveVersion
-    ? computeDiff(selectedVersion.content || '', currentActiveVersion.content || '')
-    : { diffRows: [], addedCount: 0, removedCount: 0, unchangedCount: 0 };
+  const diffResult =
+    selectedVersion && currentActiveVersion
+      ? computeDiff(selectedVersion.content || '', currentActiveVersion.content || '')
+      : { diffRows: [], addedCount: 0, removedCount: 0, unchangedCount: 0 };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
@@ -322,9 +329,7 @@ export function DocumentVersionHistoryModal({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-extrabold text-slate-950 truncate max-w-md">
-                  {doc.title}
-                </h3>
+                <h3 className="text-sm font-extrabold text-slate-950 truncate max-w-md">{doc.title}</h3>
                 <span className="text-[10px] font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-200 font-mono">
                   {isRtl ? `الإصدار النشط v${doc.version || 1}` : `Active v${doc.version || 1}`}
                 </span>
@@ -378,10 +383,7 @@ export function DocumentVersionHistoryModal({
               )}
               <span>{statusMessage.text}</span>
             </div>
-            <button
-              onClick={() => setStatusMessage(null)}
-              className="text-slate-400 hover:text-slate-600 text-xs"
-            >
+            <button onClick={() => setStatusMessage(null)} className="text-slate-400 hover:text-slate-600 text-xs">
               ✕
             </button>
           </div>
@@ -475,7 +477,9 @@ export function DocumentVersionHistoryModal({
 
                         <span className="flex items-center gap-1 font-mono text-indigo-600 font-bold">
                           <Layers className="w-2.5 h-2.5" />
-                          <span>{ver.chunkCount || 0} {isRtl ? 'مقطع' : 'chunks'}</span>
+                          <span>
+                            {ver.chunkCount || 0} {isRtl ? 'مقطع' : 'chunks'}
+                          </span>
                         </span>
                       </div>
                     </div>
@@ -535,7 +539,11 @@ export function DocumentVersionHistoryModal({
                   className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
                 >
                   <RotateCcw className={`w-3.5 h-3.5 ${isReverting ? 'animate-spin' : ''}`} />
-                  <span>{isRtl ? `استرجاع إلى v${selectedVersion.versionNumber}` : `Revert to v${selectedVersion.versionNumber}`}</span>
+                  <span>
+                    {isRtl
+                      ? `استرجاع إلى v${selectedVersion.versionNumber}`
+                      : `Revert to v${selectedVersion.versionNumber}`}
+                  </span>
                 </button>
               )}
             </div>
@@ -546,9 +554,7 @@ export function DocumentVersionHistoryModal({
                 {/* Diff Summary Header Bar */}
                 <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-4 font-sans">
                   <div className="flex items-center gap-2 text-xs">
-                    <span className="text-slate-500 font-medium">
-                      {isRtl ? 'مقارنة بين:' : 'Comparing:'}
-                    </span>
+                    <span className="text-slate-500 font-medium">{isRtl ? 'مقارنة بين:' : 'Comparing:'}</span>
                     <span className="px-2 py-0.5 rounded-md bg-violet-100 text-violet-800 font-bold font-mono">
                       v{selectedVersion.versionNumber} ({selectedVersion.createdBy || 'Author'})
                     </span>
@@ -587,8 +593,13 @@ export function DocumentVersionHistoryModal({
                       diffResult.diffRows.map((row, idx) => {
                         if (row.type === 'unchanged') {
                           return (
-                            <div key={idx} className="flex items-start gap-3 py-0.5 text-slate-400 hover:bg-slate-800/40 px-2 rounded">
-                              <span className="w-8 text-slate-600 select-none text-right shrink-0">{row.oldLineNum}</span>
+                            <div
+                              key={idx}
+                              className="flex items-start gap-3 py-0.5 text-slate-400 hover:bg-slate-800/40 px-2 rounded"
+                            >
+                              <span className="w-8 text-slate-600 select-none text-right shrink-0">
+                                {row.oldLineNum}
+                              </span>
                               <span className="w-4 select-none text-slate-600 shrink-0"> </span>
                               <span className="break-all whitespace-pre-wrap">{row.oldLine}</span>
                             </div>
@@ -597,8 +608,13 @@ export function DocumentVersionHistoryModal({
 
                         if (row.type === 'added') {
                           return (
-                            <div key={idx} className="flex items-start gap-3 py-0.5 bg-emerald-950/50 text-emerald-300 border-l-2 border-emerald-500 px-2 rounded">
-                              <span className="w-8 text-emerald-600 select-none text-right shrink-0">{row.newLineNum}</span>
+                            <div
+                              key={idx}
+                              className="flex items-start gap-3 py-0.5 bg-emerald-950/50 text-emerald-300 border-l-2 border-emerald-500 px-2 rounded"
+                            >
+                              <span className="w-8 text-emerald-600 select-none text-right shrink-0">
+                                {row.newLineNum}
+                              </span>
                               <span className="w-4 select-none text-emerald-400 font-bold shrink-0">+</span>
                               <span className="break-all whitespace-pre-wrap">{row.newLine}</span>
                             </div>
@@ -607,10 +623,17 @@ export function DocumentVersionHistoryModal({
 
                         if (row.type === 'removed') {
                           return (
-                            <div key={idx} className="flex items-start gap-3 py-0.5 bg-rose-950/50 text-rose-300 border-l-2 border-rose-500 px-2 rounded">
-                              <span className="w-8 text-rose-600 select-none text-right shrink-0">{row.oldLineNum}</span>
+                            <div
+                              key={idx}
+                              className="flex items-start gap-3 py-0.5 bg-rose-950/50 text-rose-300 border-l-2 border-rose-500 px-2 rounded"
+                            >
+                              <span className="w-8 text-rose-600 select-none text-right shrink-0">
+                                {row.oldLineNum}
+                              </span>
                               <span className="w-4 select-none text-rose-400 font-bold shrink-0">-</span>
-                              <span className="break-all whitespace-pre-wrap line-through opacity-80">{row.oldLine}</span>
+                              <span className="break-all whitespace-pre-wrap line-through opacity-80">
+                                {row.oldLine}
+                              </span>
                             </div>
                           );
                         }
@@ -619,12 +642,18 @@ export function DocumentVersionHistoryModal({
                           return (
                             <React.Fragment key={idx}>
                               <div className="flex items-start gap-3 py-0.5 bg-rose-950/50 text-rose-300 border-l-2 border-rose-500 px-2 rounded">
-                                <span className="w-8 text-rose-600 select-none text-right shrink-0">{row.oldLineNum}</span>
+                                <span className="w-8 text-rose-600 select-none text-right shrink-0">
+                                  {row.oldLineNum}
+                                </span>
                                 <span className="w-4 select-none text-rose-400 font-bold shrink-0">-</span>
-                                <span className="break-all whitespace-pre-wrap line-through opacity-80">{row.oldLine}</span>
+                                <span className="break-all whitespace-pre-wrap line-through opacity-80">
+                                  {row.oldLine}
+                                </span>
                               </div>
                               <div className="flex items-start gap-3 py-0.5 bg-emerald-950/50 text-emerald-300 border-l-2 border-emerald-500 px-2 rounded">
-                                <span className="w-8 text-emerald-600 select-none text-right shrink-0">{row.newLineNum}</span>
+                                <span className="w-8 text-emerald-600 select-none text-right shrink-0">
+                                  {row.newLineNum}
+                                </span>
                                 <span className="w-4 select-none text-emerald-400 font-bold shrink-0">+</span>
                                 <span className="break-all whitespace-pre-wrap">{row.newLine}</span>
                               </div>
@@ -647,7 +676,9 @@ export function DocumentVersionHistoryModal({
                   <div>
                     <h4 className="text-xs font-bold text-slate-900">{selectedVersion.title}</h4>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      {isRtl ? `تم الحفظ في: ${new Date(selectedVersion.createdAt).toLocaleString()}` : `Saved at: ${new Date(selectedVersion.createdAt).toLocaleString()}`}
+                      {isRtl
+                        ? `تم الحفظ في: ${new Date(selectedVersion.createdAt).toLocaleString()}`
+                        : `Saved at: ${new Date(selectedVersion.createdAt).toLocaleString()}`}
                     </p>
                   </div>
 
@@ -656,7 +687,7 @@ export function DocumentVersionHistoryModal({
                     className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
                   >
                     {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copied ? (isRtl ? 'تم النسخ' : 'Copied') : (isRtl ? 'نسخ النص' : 'Copy Text')}</span>
+                    <span>{copied ? (isRtl ? 'تم النسخ' : 'Copied') : isRtl ? 'نسخ النص' : 'Copy Text'}</span>
                   </button>
                 </div>
 
@@ -679,7 +710,9 @@ export function DocumentVersionHistoryModal({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-700">{isRtl ? 'عنوان المستند' : 'Document Title'}</label>
+                  <label className="text-xs font-bold text-slate-700">
+                    {isRtl ? 'عنوان المستند' : 'Document Title'}
+                  </label>
                   <input
                     type="text"
                     value={newTitle}
@@ -690,10 +723,16 @@ export function DocumentVersionHistoryModal({
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">{isRtl ? 'ملخص التغيير / Changelog' : 'Change Summary'}</label>
+                    <label className="text-xs font-bold text-slate-700">
+                      {isRtl ? 'ملخص التغيير / Changelog' : 'Change Summary'}
+                    </label>
                     <input
                       type="text"
-                      placeholder={isRtl ? 'مثال: تحديث بنود العزل الأمني وتعديل الشروط' : 'e.g., Updated multi-tenant isolation terms'}
+                      placeholder={
+                        isRtl
+                          ? 'مثال: تحديث بنود العزل الأمني وتعديل الشروط'
+                          : 'e.g., Updated multi-tenant isolation terms'
+                      }
                       value={changeSummary}
                       onChange={(e) => setChangeSummary(e.target.value)}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:border-indigo-500"
@@ -701,7 +740,9 @@ export function DocumentVersionHistoryModal({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">{isRtl ? 'اسم المحرر / المراجع' : 'Editor Name'}</label>
+                    <label className="text-xs font-bold text-slate-700">
+                      {isRtl ? 'اسم المحرر / المراجع' : 'Editor Name'}
+                    </label>
                     <input
                       type="text"
                       value={authorName}
@@ -713,7 +754,9 @@ export function DocumentVersionHistoryModal({
 
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-700">{isRtl ? 'محتوى المستند الكامل' : 'Document Content'}</label>
+                    <label className="text-xs font-bold text-slate-700">
+                      {isRtl ? 'محتوى المستند الكامل' : 'Document Content'}
+                    </label>
                     <span className="text-[10px] text-slate-400 font-mono">
                       ~{Math.round(newContent.length / 4)} tokens
                     </span>
@@ -743,8 +786,12 @@ export function DocumentVersionHistoryModal({
                     <Sparkles className={`w-4 h-4 ${isSavingNewVer ? 'animate-spin' : ''}`} />
                     <span>
                       {isSavingNewVer
-                        ? (isRtl ? 'جاري الحفظ والتجزئة...' : 'Saving & Indexing...')
-                        : (isRtl ? `حفظ وفهرسة الإصدار v${(doc.version || 1) + 1}` : `Save & Index as v${(doc.version || 1) + 1}`)}
+                        ? isRtl
+                          ? 'جاري الحفظ والتجزئة...'
+                          : 'Saving & Indexing...'
+                        : isRtl
+                          ? `حفظ وفهرسة الإصدار v${(doc.version || 1) + 1}`
+                          : `Save & Index as v${(doc.version || 1) + 1}`}
                     </span>
                   </button>
                 </div>

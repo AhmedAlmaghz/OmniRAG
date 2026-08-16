@@ -1,12 +1,11 @@
 import crypto from 'crypto';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyApiAuth } from '@/lib/auth/apiAuth';
-import { checkRateLimit } from '@/lib/security/rateLimiter';
 import { processPdfWithBatchedPipeline } from '@/lib/pdf/pdfChunker';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { dispatchFile, archiveUploadedFile } from '@/lib/services/unstructuredService';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,12 +57,48 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 const ALLOWED_EXTENSIONS = new Set([
-  'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'txt', 'md', 'markdown', 'json', 'csv',
-  'py', 'js', 'jsx', 'ts', 'tsx', 'go', 'html', 'css', 'xml',
-  'yaml', 'yml', 'sql', 'c', 'cpp', 'h',
-  'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp',
-  'mp3', 'wav', 'webm', 'ogg', 'aac', 'flac',
-  'mp4', 'mov', 'avi'
+  'pdf',
+  'docx',
+  'doc',
+  'pptx',
+  'ppt',
+  'xlsx',
+  'xls',
+  'txt',
+  'md',
+  'markdown',
+  'json',
+  'csv',
+  'py',
+  'js',
+  'jsx',
+  'ts',
+  'tsx',
+  'go',
+  'html',
+  'css',
+  'xml',
+  'yaml',
+  'yml',
+  'sql',
+  'c',
+  'cpp',
+  'h',
+  'png',
+  'jpg',
+  'jpeg',
+  'webp',
+  'gif',
+  'bmp',
+  'mp3',
+  'wav',
+  'webm',
+  'ogg',
+  'aac',
+  'flac',
+  'mp4',
+  'mov',
+  'avi',
 ]);
 
 function normalizeMimeType(fileName: string, mimeType: string): string {
@@ -97,22 +132,14 @@ function normalizeMimeType(fileName: string, mimeType: string): string {
   return mimeType || 'application/octet-stream';
 }
 
-// Default up to 50MB documents for large-scale chunking & ingestion
-const DEFAULT_MAX_FILE_SIZE_MB = 50;
-const MAX_ALLOWED_FILE_SIZE_MB_CAP = 200;
+// Default 10MB per upload; 50MB is the server-enforced hard cap. The cap is
+// intentionally NOT controllable by client headers to prevent DoS abuse.
+const DEFAULT_MAX_FILE_SIZE_MB = 10;
+const MAX_ALLOWED_FILE_SIZE_MB_CAP = 50;
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
-  // Rate limiting
-  const rateLimit = checkRateLimit(req, 60, 60000);
-  if (!rateLimit.success && rateLimit.response) {
-    return rateLimit.response;
-  }
-
-  // Auth verification
-  const auth = await verifyApiAuth(req);
-  if (!auth.authenticated && auth.response) {
-    return auth.response;
-  }
+  // The wrapper already applied rate limiting and verified auth; authCtx is the
+  // single source of identity. No redundant inner checks here.
 
   // Load client-supplied dynamic environment keys from headers into process.env / global store
   getEnv('GEMINI_API_KEY', req);
@@ -161,9 +188,12 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           mistralApiKey = jsonBody.mistralApiKey || undefined;
           unstructuredApiKey = jsonBody.unstructuredApiKey || undefined;
           groqApiKey = jsonBody.groqApiKey || undefined;
-          
+
           if (jsonBody.maxFileSizeMb && !isNaN(Number(jsonBody.maxFileSizeMb))) {
-            requestedMaxFileSizeMb = Math.min(Math.max(Number(jsonBody.maxFileSizeMb), 1), MAX_ALLOWED_FILE_SIZE_MB_CAP);
+            requestedMaxFileSizeMb = Math.min(
+              Math.max(Number(jsonBody.maxFileSizeMb), 1),
+              MAX_ALLOWED_FILE_SIZE_MB_CAP,
+            );
           }
           if (jsonBody.pagesPerChunk && !isNaN(Number(jsonBody.pagesPerChunk))) {
             requestedPagesPerChunk = Math.min(Math.max(Number(jsonBody.pagesPerChunk), 1), 200);
@@ -190,7 +220,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
             const file = fileObj as any;
             fileName = (formData.get('fileName') as string) || file.name || 'document.txt';
             mimeType = (formData.get('mimeType') as string) || file.type || 'application/octet-stream';
-            
+
             if (typeof file.arrayBuffer === 'function') {
               const arrayBuf = await file.arrayBuffer();
               fileBuffer = Buffer.from(arrayBuf);
@@ -203,7 +233,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
             } else if (file._buffer) {
               fileBuffer = file._buffer;
             }
-            
+
             if (fileBuffer) {
               cleanBase64 = fileBuffer.toString('base64');
             }
@@ -249,14 +279,14 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     if (!fileBuffer) {
       return NextResponse.json(
         { error: 'فشل تحليل الملف المرفوع. يرجى التأكد من اختيار ملف صحيح ونشط.', code: '400_BAD_FORM_DATA' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!fileBuffer || fileBuffer.length === 0) {
       return NextResponse.json(
         { error: 'محتوى الملف مطلوب (File data is required)', code: '400_MISSING_DATA' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -264,8 +294,11 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     const maxSizeBytes = requestedMaxFileSizeMb * 1024 * 1024;
     if (fileBuffer.length > maxSizeBytes) {
       return NextResponse.json(
-        { error: `حجم الملف يتجاوز الحد الأقصى المسموح به (${requestedMaxFileSizeMb} ميجابايت)`, code: '413_FILE_TOO_LARGE' },
-        { status: 413 }
+        {
+          error: `حجم الملف يتجاوز الحد الأقصى المسموح به (${requestedMaxFileSizeMb} ميجابايت)`,
+          code: '413_FILE_TOO_LARGE',
+        },
+        { status: 413 },
       );
     }
 
@@ -277,7 +310,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           error: `صيغة الملف (.${fileExt}) غير مدعومة. الصيغ المدعومة هي: PDF, DOCX, PPTX, TXT, Markdown, JSON, CSV, وشفرات البرمجة.`,
           code: '415_UNSUPPORTED_TYPE',
         },
-        { status: 415 }
+        { status: 415 },
       );
     }
 
@@ -286,14 +319,16 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     const skipCache = req.headers.get('x-skip-cache') === 'true';
 
     // Meticulously archive the raw uploaded file first
-    const tenantId = auth.tenantId || 'global-tenant';
+    const tenantId = authCtx.tenantId;
     const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantId, fileHash);
     console.log(`[Document Ingestion] File meticulously archived to disk: ${archivedPath}`);
 
     if (!skipCache && SERVER_OCR_CACHE.has(fileHash)) {
       const cached = SERVER_OCR_CACHE.get(fileHash)!;
       cached.hits += 1;
-      console.log(`[Document Ingestion Cache] Server OCR Cache Hit for ${fileName} (Hash: ${fileHash.substring(0, 10)}..., Hits: ${cached.hits})`);
+      console.log(
+        `[Document Ingestion Cache] Server OCR Cache Hit for ${fileName} (Hash: ${fileHash.substring(0, 10)}..., Hits: ${cached.hits})`,
+      );
       return NextResponse.json(
         {
           text: cached.text,
@@ -306,7 +341,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           isCacheHit: true,
           fileHash,
         },
-        { headers: { 'X-OCR-Cache': 'HIT' } }
+        { headers: { 'X-OCR-Cache': 'HIT' } },
       );
     }
 
@@ -318,8 +353,10 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     const isPdf = mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
     if (isPdf) {
       // Execute batched slicing pipeline with Mistral Document AI & Unstructured MCP tool
-      console.log(`[Document Ingestion] Processing PDF (${fileName}, ${(fileBuffer.length / (1024 * 1024)).toFixed(2)} MB) via ${requestedPagesPerChunk}-page batched pipeline...`);
-      
+      console.log(
+        `[Document Ingestion] Processing PDF (${fileName}, ${(fileBuffer.length / (1024 * 1024)).toFixed(2)} MB) via ${requestedPagesPerChunk}-page batched pipeline...`,
+      );
+
       const pipelineResult = await processPdfWithBatchedPipeline(fileBuffer, {
         preferredEngine: requestedEngine as any,
         pagesPerChunk: requestedPagesPerChunk,
@@ -335,14 +372,17 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       if (!extractedText || extractedText.trim().length === 0) {
         return NextResponse.json(
           {
-            error: 'تعذر استخراج النصوص من ملف PDF. يرجى التأكد من أن الملف يحتوي على نصوص قابلة للقراءة أو ليس محميًا بكلمة مرور.',
+            error:
+              'تعذر استخراج النصوص من ملف PDF. يرجى التأكد من أن الملف يحتوي على نصوص قابلة للقراءة أو ليس محميًا بكلمة مرور.',
             code: '422_PDF_UNREADABLE',
           },
-          { status: 422 }
+          { status: 422 },
         );
       }
     } else {
-      console.log(`[Document Ingestion] Processing non-PDF document (${fileName}) using Unstructured direct service dispatcher...`);
+      console.log(
+        `[Document Ingestion] Processing non-PDF document (${fileName}) using Unstructured direct service dispatcher...`,
+      );
       const dispatchResult = await dispatchFile(fileBuffer, fileName, mimeType, {
         unstructuredApiKey: unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY,
         mistralApiKey: mistralApiKey || process.env.MISTRAL_API_KEY,
@@ -368,7 +408,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           error: 'لم يتم استخراج أي نص من الملف. يرجى التأكد من أن الملف غير فارغ ويحتوي على نصوص قابلة للقراءة.',
           code: '422_UNREADABLE_DOCUMENT',
         },
-        { status: 422 }
+        { status: 422 },
       );
     }
 
@@ -397,10 +437,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       fileHash,
     });
   } catch (error: any) {
-    console.error('Error parsing document in /api/v1/documents/parse:', error);
-    return NextResponse.json(
-      { error: error.message || 'فشل استخراج النص من المستند', code: '500_PARSE_FAILED' },
-      { status: 500 }
-    );
+    return serverErrorResponse('documents/parse POST', error);
   }
 });

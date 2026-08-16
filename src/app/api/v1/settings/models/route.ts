@@ -1,6 +1,7 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_AI_MODELS, AIModelConfig } from '@/lib/config/aiModels';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +27,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
       serverTime: new Date().toISOString(),
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'فشل جلب إعدادات النماذج' }, { status: 500 });
+    return serverErrorResponse('settings/models GET', error);
   }
 });
 
@@ -58,6 +59,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     return response;
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'فشل حفظ إعدادات النماذج' }, { status: 500 });
+    return serverErrorResponse('settings/models POST', error);
   }
 });

@@ -1,21 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
     const body = await req.json().catch(() => ({}));
     const { code = '', focus = 'security-and-types' } = body;
 
     if (!code || typeof code !== 'string') {
-      return NextResponse.json({
-        score: 0,
-        securityRating: 'C',
-        summaryAr: 'لم يتم تقديم أي كود للتحليل.',
-        summaryEn: 'No code provided for analysis.',
-        recommendations: [],
-      }, { status: 400 });
+      return NextResponse.json(
+        {
+          score: 0,
+          securityRating: 'C',
+          summaryAr: 'لم يتم تقديم أي كود للتحليل.',
+          summaryEn: 'No code provided for analysis.',
+          recommendations: [],
+        },
+        { status: 400 },
+      );
     }
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -46,7 +50,10 @@ Return a strictly valid JSON response without markdown formatting with this sche
 
         const text = response?.text || '';
         if (text) {
-          const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+          const cleaned = text
+            .replace(/```json/g, '')
+            .replace(/```/g, '')
+            .trim();
           const parsed = JSON.parse(cleaned);
           return NextResponse.json(parsed);
         }
@@ -57,7 +64,8 @@ Return a strictly valid JSON response without markdown formatting with this sche
 
     // Heuristic static analysis fallback
     const hasAny = code.includes(': any') || code.includes('any[]');
-    const hasHardcodedSecret = /AIza[0-9A-Za-z-_]{35}/.test(code) || /sk-[0-9A-Za-z]{20,}/.test(code) || code.includes('FakeSecretKey');
+    const hasHardcodedSecret =
+      /AIza[0-9A-Za-z-_]{35}/.test(code) || /sk-[0-9A-Za-z]{20,}/.test(code) || code.includes('FakeSecretKey');
     const hasDangerouslySetInnerHTML = code.includes('dangerouslySetInnerHTML');
     const hasConsoleLog = code.includes('console.log');
 
@@ -68,7 +76,8 @@ Return a strictly valid JSON response without markdown formatting with this sche
       score -= 35;
       recommendations.push({
         type: 'security',
-        messageAr: 'تم اكتشاف مفتاح API حساس مسجل بشكل نصي صريح في الكود. انقله فوراً إلى ملف البيئة .env.example وخادم الـ API.',
+        messageAr:
+          'تم اكتشاف مفتاح API حساس مسجل بشكل نصي صريح في الكود. انقله فوراً إلى ملف البيئة .env.example وخادم الـ API.',
         messageEn: 'Hardcoded API secret detected. Move it to server-side environment variables immediately.',
       });
     }
@@ -119,7 +128,7 @@ Return a strictly valid JSON response without markdown formatting with this sche
         summaryEn: 'Preliminary check completed.',
         recommendations: [],
       },
-      { status: 200 }
+      { status: 200 },
     );
   }
-}
+});

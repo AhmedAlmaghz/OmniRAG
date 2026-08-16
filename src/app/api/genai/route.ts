@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
     const body = await req.json().catch(() => ({}));
     const { prompt, locale = 'ar' } = body;
@@ -17,9 +18,10 @@ export async function POST(req: NextRequest) {
       // Fallback deterministic response if API key is not yet set
       return NextResponse.json({
         status: 'success',
-        result: locale === 'ar'
-          ? `// مكون Next.js App Router تم توليده بنجاح:\n\nexport default function DynamicWidget() {\n  return (\n    <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-white">\n      <h3 className="text-lg font-bold">مكون متوافق مع معايير Next.js v16</h3>\n      <p className="text-slate-400 text-sm mt-2">${prompt}</p>\n    </div>\n  );\n}`
-          : `// Generated Next.js App Router Component:\n\nexport default function DynamicWidget() {\n  return (\n    <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-white">\n      <h3 className="text-lg font-bold">Next.js v16 Compliant Component</h3>\n      <p className="text-slate-400 text-sm mt-2">${prompt}</p>\n    </div>\n  );\n}`,
+        result:
+          locale === 'ar'
+            ? `// مكون Next.js App Router تم توليده بنجاح:\n\nexport default function DynamicWidget() {\n  return (\n    <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-white">\n      <h3 className="text-lg font-bold">مكون متوافق مع معايير Next.js v16</h3>\n      <p className="text-slate-400 text-sm mt-2">${prompt}</p>\n    </div>\n  );\n}`
+            : `// Generated Next.js App Router Component:\n\nexport default function DynamicWidget() {\n  return (\n    <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-white">\n      <h3 className="text-lg font-bold">Next.js v16 Compliant Component</h3>\n      <p className="text-slate-400 text-sm mt-2">${prompt}</p>\n    </div>\n  );\n}`,
       });
     }
 
@@ -36,9 +38,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error('GenAI route error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to process AI generation', result: `Error: ${error.message}` },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'فشل توليد المحتوى (Failed to process AI generation)' }, { status: 500 });
   }
-}
+});

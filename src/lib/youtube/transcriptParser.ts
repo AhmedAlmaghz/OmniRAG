@@ -1,7 +1,6 @@
 import { YoutubeTranscript } from 'youtube-transcript';
-// @ts-ignore
+// @ts-expect-error — youtube-captions-scraper ships no bundled types
 import { getSubtitles } from 'youtube-captions-scraper';
-// @ts-ignore
 import ytdl from '@distube/ytdl-core';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
 import { transcribeWithGroqWhisper } from '../services/unstructuredService';
@@ -134,7 +133,7 @@ async function fetchAndParseXmlCaptions(baseUrl: string): Promise<string | null>
  */
 async function fetchWithYoutubeTranscriptPackage(
   videoId: string,
-  lang: string
+  lang: string,
 ): Promise<{ text: string; method: string } | null> {
   try {
     if (lang) {
@@ -220,7 +219,7 @@ async function fetchWithYoutubeTranscriptPackage(
  */
 async function fetchWithCaptionsScraper(
   videoId: string,
-  lang: string
+  lang: string,
 ): Promise<{ text: string; method: string } | null> {
   try {
     const langsToTry = [lang, 'ar', 'en'].filter((v, i, a) => v && a.indexOf(v) === i);
@@ -264,7 +263,7 @@ async function generateAiTranscriptFallback(
   channel: string,
   targetUrl: string,
   description: string,
-  lang: string
+  lang: string,
 ): Promise<string> {
   const prompt = `You are an expert audio/video speech transcriber and content analyzer.
 Please generate a full, comprehensive, timestamped transcript in ${lang === 'ar' ? 'Arabic' : 'English'} for the following YouTube video.
@@ -306,7 +305,9 @@ Requirements:
   const timestampedLines: string[] = [];
   const timeLabels = ['[00:00]', '[01:15]', '[02:45]', '[04:20]', '[06:00]', '[08:15]', '[10:30]', '[12:45]'];
 
-  timestampedLines.push(`${timeLabels[0]} ${lang === 'ar' ? 'بداية ومقدمة الفيديو' : 'Video Introduction'}: ${title} - (${channel})`);
+  timestampedLines.push(
+    `${timeLabels[0]} ${lang === 'ar' ? 'بداية ومقدمة الفيديو' : 'Video Introduction'}: ${title} - (${channel})`,
+  );
 
   let labelIdx = 1;
   for (const line of lines) {
@@ -314,7 +315,9 @@ Requirements:
       // Check if line already has a timestamp like 01:23 or [01:23]
       const existingTime = line.match(/^(\[?\d{1,2}:\d{2}\]?)/);
       if (existingTime) {
-        timestampedLines.push(line.startsWith('[') ? line : `[${existingTime[1]}] ${line.slice(existingTime[1].length).trim()}`);
+        timestampedLines.push(
+          line.startsWith('[') ? line : `[${existingTime[1]}] ${line.slice(existingTime[1].length).trim()}`,
+        );
       } else {
         timestampedLines.push(`${timeLabels[labelIdx]} ${line}`);
         labelIdx++;
@@ -323,9 +326,17 @@ Requirements:
   }
 
   if (timestampedLines.length <= 2) {
-    const descText = description.trim() || (lang === 'ar' ? `تفريغ نصي وتحليل شامل لمحتوى فيديو "${title}" المقدم عبر قناة "${channel}".` : `Transcript and content summary for "${title}" by channel "${channel}".`);
-    timestampedLines.push(`${timeLabels[1]} ${lang === 'ar' ? 'العرض والمحتوى الرئيسي' : 'Core Overview'}:\n${descText}`);
-    timestampedLines.push(`${timeLabels[2]} ${lang === 'ar' ? 'الخلاصة والنقاط الختامية للفيديو.' : 'Summary and key takeaways.'}`);
+    const descText =
+      description.trim() ||
+      (lang === 'ar'
+        ? `تفريغ نصي وتحليل شامل لمحتوى فيديو "${title}" المقدم عبر قناة "${channel}".`
+        : `Transcript and content summary for "${title}" by channel "${channel}".`);
+    timestampedLines.push(
+      `${timeLabels[1]} ${lang === 'ar' ? 'العرض والمحتوى الرئيسي' : 'Core Overview'}:\n${descText}`,
+    );
+    timestampedLines.push(
+      `${timeLabels[2]} ${lang === 'ar' ? 'الخلاصة والنقاط الختامية للفيديو.' : 'Summary and key takeaways.'}`,
+    );
   }
 
   return timestampedLines.join('\n');
@@ -337,7 +348,7 @@ Requirements:
 async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   console.log(`[YouTube Downloader] Starting audio-only stream download for video ID: ${videoId}...`);
-  
+
   const stream = ytdl(url, {
     filter: 'audioonly',
     quality: 'lowestaudio',
@@ -357,11 +368,13 @@ async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; 
     stream.on('end', () => {
       clearTimeout(timeout);
       const buffer = Buffer.concat(chunks);
-      console.log(`[YouTube Downloader] Audio download complete! Buffer size: ${(buffer.length / 1024 / 1024).toFixed(2)} MB`);
+      console.log(
+        `[YouTube Downloader] Audio download complete! Buffer size: ${(buffer.length / 1024 / 1024).toFixed(2)} MB`,
+      );
       resolve({
         buffer,
         fileName: `${videoId}.m4a`,
-        mimeType: 'audio/mp4'
+        mimeType: 'audio/mp4',
       });
     });
 
@@ -392,7 +405,7 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
   let channelName = 'YouTube Video';
   let durationStr = 'غير محدد';
   let videoDescription = '';
-  let thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+  const thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
   let transcriptText = '';
   let extractionMethod = 'none';
   let fetchedHtml = '';
@@ -477,16 +490,18 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
   if (!transcriptText && groqKey) {
     try {
       const audioResult = await downloadYoutubeAudio(videoId);
-      
+
       if (audioResult && audioResult.buffer && audioResult.buffer.length > 0) {
         if (audioResult.buffer.length > 25 * 1024 * 1024) {
-          console.log(`[YouTube Transcription] Audio size ${(audioResult.buffer.length / 1024 / 1024).toFixed(2)}MB exceeds Whisper 25MB limit.`);
+          console.log(
+            `[YouTube Transcription] Audio size ${(audioResult.buffer.length / 1024 / 1024).toFixed(2)}MB exceeds Whisper 25MB limit.`,
+          );
         } else {
           const whisperResult = await transcribeWithGroqWhisper(
             audioResult.buffer,
             audioResult.fileName,
             audioResult.mimeType,
-            groqKey
+            groqKey,
           );
           if (whisperResult && whisperResult.success && whisperResult.text) {
             transcriptText = whisperResult.text;
@@ -496,7 +511,9 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
       }
     } catch (whisperError: any) {
       // Audio stream may be blocked by YouTube bot-detection in data-center IPs; silently proceed to AI Transcript Engine
-      console.log('[YouTube Transcription] Audio stream not directly extractable on this host, utilizing AI Transcription Engine...');
+      console.log(
+        '[YouTube Transcription] Audio stream not directly extractable on this host, utilizing AI Transcription Engine...',
+      );
     }
   }
 
@@ -508,7 +525,7 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
       channelName,
       targetUrl,
       videoDescription,
-      lang
+      lang,
     );
     extractionMethod = 'AI Video Speech & Semantic Transcriber (Gemini)';
   }

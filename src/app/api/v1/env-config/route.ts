@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getEnv, setServerEnv, setServerEnvs } from '@/lib/env/runtimeEnv';
 import { resetPostgresPool } from '@/lib/storage/postgres';
 import { resetQdrantClient } from '@/lib/storage/qdrant';
+import { serverErrorResponse } from '@/lib/api/safeError';
 import pg from 'pg';
 const { Client } = pg;
 
@@ -226,14 +227,11 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       if (key === 'DATABASE_URL') {
         try {
           const isLocal = valToTest.includes('localhost') || valToTest.includes('127.0.0.1');
+          const strictTls = process.env.PG_TLS_REJECT_UNAUTHORIZED !== 'false';
           const client = new Client({
             connectionString: valToTest,
             connectionTimeoutMillis: 4000,
-            ssl: isLocal
-              ? false
-              : {
-                  rejectUnauthorized: false,
-                },
+            ssl: isLocal ? false : strictTls ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
           });
           await client.connect();
           await client.query('SELECT 1;');
@@ -245,11 +243,12 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             message: 'تم الاتصال بقاعدة بيانات PostgreSQL (Neon DB) بنجاح! الجداول الأساسية جاهزة.',
           });
         } catch (err: any) {
+          console.error('[env-config] PostgreSQL connection check failed:', err);
           return NextResponse.json({
             success: false,
             key,
             latencyMs: Date.now() - startTime,
-            message: `فشل الاتصال بـ PostgreSQL: ${err.message}`,
+            message: 'فشل الاتصال بـ PostgreSQL: تعذر إتمام الاتصال بقاعدة البيانات.',
           });
         }
       }
@@ -289,11 +288,12 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             });
           }
         } catch (err: any) {
+          console.error('[env-config] Qdrant connection check failed:', err);
           return NextResponse.json({
             success: false,
             key,
             latencyMs: Date.now() - startTime,
-            message: `تعذر الوصول لرابط Qdrant: ${err.message}`,
+            message: 'تعذر الوصول لرابط Qdrant: تعذر إتمام الاتصال.',
           });
         }
       }
@@ -319,11 +319,12 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             });
           }
         } catch (err: any) {
+          console.error('[env-config] Mistral check failed:', err);
           return NextResponse.json({
             success: false,
             key,
             latencyMs: Date.now() - startTime,
-            message: `فشل فحص Mistral: ${err.message}`,
+            message: 'فشل فحص Mistral: تعذر الوصول للواجهة أو المفتاح غير صالح.',
           });
         }
       }
@@ -349,6 +350,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       message: 'تمت معالجة الطلب.',
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return serverErrorResponse('env-config POST', err);
   }
 });

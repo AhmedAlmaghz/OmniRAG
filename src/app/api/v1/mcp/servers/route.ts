@@ -2,6 +2,7 @@ import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { MCPServerConfig } from '@/lib/types/omnirag';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // Action 1: Add/Register Server
     if ((body.action === 'add' && body.server) || (body.endpointUrl && body.name && !body.action)) {
       const serverData = body.server || body;
-      
+
       // Determine default tools based on server name
       const nameLower = (serverData.name || '').toLowerCase();
       let defaultEnabled: string[] = [];
@@ -31,9 +32,19 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       } else if (nameLower.includes('github') || nameLower.includes('كود') || nameLower.includes('برمجة')) {
         defaultEnabled = ['github_search_code', 'github_create_issue', 'github_read_repo'];
         defaultRequired = ['github_create_issue'];
-      } else if (nameLower.includes('search') || nameLower.includes('web') || nameLower.includes('بحث') || nameLower.includes('ويب')) {
+      } else if (
+        nameLower.includes('search') ||
+        nameLower.includes('web') ||
+        nameLower.includes('بحث') ||
+        nameLower.includes('ويب')
+      ) {
         defaultEnabled = ['web_live_search', 'fetch_url_content'];
-      } else if (nameLower.includes('postgres') || nameLower.includes('sql') || nameLower.includes('db') || nameLower.includes('قاعدة')) {
+      } else if (
+        nameLower.includes('postgres') ||
+        nameLower.includes('sql') ||
+        nameLower.includes('db') ||
+        nameLower.includes('قاعدة')
+      ) {
         defaultEnabled = ['external_postgres_query', 'get_table_schema'];
         defaultRequired = ['external_postgres_query'];
       } else {
@@ -52,7 +63,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         requireConfirmationTools: serverData.requireConfirmationTools || defaultRequired,
         headers: serverData.headers || {},
         status: 'healthy',
-        latencyMs: Math.floor(Math.random() * 25) + 15,
+        latencyMs: 0,
         lastChecked: new Date().toISOString(),
       };
 
@@ -71,18 +82,21 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         timestamp: new Date().toISOString(),
       });
 
-      return NextResponse.json({ 
-        success: true, 
-        server: newServer, 
-        servers: await db.getMcpServers(tenantId) 
-      }, { status: 201 });
+      return NextResponse.json(
+        {
+          success: true,
+          server: newServer,
+          servers: await db.getMcpServers(tenantId),
+        },
+        { status: 201 },
+      );
     }
 
     // Action 1.5: Edit/Update Server Configuration
     if (body.action === 'edit' && body.server) {
       const serverData = body.server;
       const servers = await db.getMcpServers(tenantId);
-      const existing = servers.find(s => s.id === serverData.id);
+      const existing = servers.find((s) => s.id === serverData.id);
 
       if (!existing) {
         return NextResponse.json({ error: 'خادم MCP غير موجود للتعديل' }, { status: 404 });
@@ -119,7 +133,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       return NextResponse.json({
         success: true,
         server: updatedServer,
-        servers: await db.getMcpServers(tenantId)
+        servers: await db.getMcpServers(tenantId),
       });
     }
 
@@ -127,7 +141,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     if (body.action === 'ping' && body.serverId) {
       const { serverId } = body;
       const servers = await db.getMcpServers(tenantId);
-      const server = servers.find(s => s.id === serverId);
+      const server = servers.find((s) => s.id === serverId);
       if (!server) {
         return NextResponse.json({ error: 'Server not found' }, { status: 404 });
       }
@@ -142,7 +156,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         const timeoutId = setTimeout(() => controller.abort(), 2000);
 
         const requestHeaders: Record<string, string> = {
-          'Accept': 'application/json',
+          Accept: 'application/json',
           ...(server.headers || {}),
         };
 
@@ -163,14 +177,20 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       } catch (err: any) {
         latencyMs = Date.now() - startTime;
         status = 'down';
-        errorMsg = err.message || 'Connection timeout';
+        console.error(`[mcp/test] Connection to ${server.endpointUrl} failed:`, err);
+        errorMsg = 'تعذر الاتصال بالخادم (مهلة أو رفض الاتصال).';
       }
 
       // Handle dummy/seeded endpoints gracefully in developer environments
-      const isDummy = server.endpointUrl.includes('.internal') || server.endpointUrl.includes('example.com') || server.endpointUrl.startsWith('/');
+      const isDummy =
+        server.endpointUrl.includes('.internal') ||
+        server.endpointUrl.includes('example.com') ||
+        server.endpointUrl.startsWith('/');
       if (isDummy && status === 'down') {
         status = 'healthy';
-        latencyMs = Math.floor(Math.random() * 20) + 15;
+        // Dummy/seeded endpoints have nothing real to probe; report the measured
+        // probe-attempt duration instead of fabricating a latency value.
+        latencyMs = Math.max(1, Date.now() - startTime);
       }
 
       const updatedServer = {
@@ -190,9 +210,10 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         resourceType: 'mcp_server',
         resourceId: serverId,
         status: status === 'healthy' ? 'success' : 'error',
-        details: status === 'healthy' 
-          ? `تم فحص الاتصال بـ ${server.name} بنجاح. زمن الاستجابة: ${latencyMs}ms.` 
-          : `فشل الاتصال بـ ${server.name}. الخطأ: ${errorMsg}.`,
+        details:
+          status === 'healthy'
+            ? `تم فحص الاتصال بـ ${server.name} بنجاح. زمن الاستجابة: ${latencyMs}ms.`
+            : `فشل الاتصال بـ ${server.name}. الخطأ: ${errorMsg}.`,
         timestamp: new Date().toISOString(),
       });
 
@@ -202,7 +223,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         latencyMs,
         lastChecked: updatedServer.lastChecked,
         error: errorMsg || undefined,
-        servers: await db.getMcpServers(tenantId)
+        servers: await db.getMcpServers(tenantId),
       });
     }
 
@@ -210,7 +231,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     if (body.action === 'delete' && body.serverId) {
       const { serverId } = body;
       const servers = await db.getMcpServers(tenantId);
-      const server = servers.find(s => s.id === serverId);
+      const server = servers.find((s) => s.id === serverId);
       if (!server) {
         return NextResponse.json({ error: 'Server not found' }, { status: 404 });
       }
@@ -230,9 +251,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         timestamp: new Date().toISOString(),
       });
 
-      return NextResponse.json({ 
-        success: true, 
-        servers: await db.getMcpServers(tenantId) 
+      return NextResponse.json({
+        success: true,
+        servers: await db.getMcpServers(tenantId),
       });
     }
 
@@ -241,15 +262,15 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     if (serverId && toolName) {
       // Toggle or Add Tool to enabledTools list
       const servers = await db.getMcpServers(tenantId);
-      const server = servers.find(s => s.id === serverId);
+      const server = servers.find((s) => s.id === serverId);
       if (server) {
         let updatedTools = [...server.enabledTools];
         if (updatedTools.includes(toolName)) {
-          updatedTools = updatedTools.filter(t => t !== toolName);
+          updatedTools = updatedTools.filter((t) => t !== toolName);
         } else {
           updatedTools.push(toolName);
         }
-        
+
         const updatedServer = {
           ...server,
           enabledTools: updatedTools,
@@ -273,6 +294,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     return NextResponse.json({ success: true, servers: await db.getMcpServers(tenantId) });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return serverErrorResponse('mcp/servers POST', err);
   }
 });

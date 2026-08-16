@@ -11,7 +11,8 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
-    const { action = 'generate', prompt, serverId, tenantId = 'tenant-acme-01', toolSchema } = body;
+    const { action = 'generate', prompt, serverId, toolSchema } = body;
+    const tenantId = authCtx.tenantId;
 
     // Action 1: Generate Tool Schema from Natural Language Prompt
     if (action === 'generate') {
@@ -101,7 +102,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       }
 
       const toolName = toolSchema.toolName.trim();
-      let enabledTools = [...(server.enabledTools || [])];
+      const enabledTools = [...(server.enabledTools || [])];
       if (!enabledTools.includes(toolName)) {
         enabledTools.push(toolName);
       }
@@ -142,6 +143,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     return NextResponse.json({ error: 'إجراء غير مدعوم' }, { status: 400 });
   } catch (error: any) {
     console.error('Error in MCP generate-tool API:', error);
-    return NextResponse.json({ error: error.message || 'فشل توليد الأداة' }, { status: 500 });
+    return NextResponse.json({ error: 'فشل توليد الأداة (Failed to generate tool)' }, { status: 500 });
   }
 });

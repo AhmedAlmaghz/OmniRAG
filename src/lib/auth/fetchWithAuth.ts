@@ -36,7 +36,7 @@ function wrapResponseWithSafeJson(res: Response): Response {
       } catch (jsonErr) {
         const text = await clone.text().catch(() => '');
         console.warn('Endpoint returned non-JSON response (status: ' + res.status + '):', text.slice(0, 120));
-        
+
         // Return structured fallback object instead of crashing UI
         return {
           ok: false,
@@ -50,7 +50,7 @@ function wrapResponseWithSafeJson(res: Response): Response {
           syncLogs: [],
           mcpResources: [],
           status: res.status,
-          raw: text.slice(0, 300)
+          raw: text.slice(0, 300),
         };
       }
     } catch (fallbackErr) {
@@ -62,7 +62,7 @@ function wrapResponseWithSafeJson(res: Response): Response {
         documents: [],
         messages: [],
         conversations: [],
-        servers: []
+        servers: [],
       };
     }
   };
@@ -72,57 +72,39 @@ function wrapResponseWithSafeJson(res: Response): Response {
 
 export async function fetchWithAuth(url: string | URL | Request, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
-  
-  if (auth && auth.currentUser) {
-    try {
-      const tokenPromise = auth.currentUser.getIdToken();
-      let timeoutId: NodeJS.Timeout;
-      const timeoutPromise = new Promise<string>((_, reject) => 
-        timeoutId = setTimeout(() => reject(new Error('Auth token timeout')), 1500)
-      );
-      
-      let tokenResolved = false;
-      const safeTokenPromise = tokenPromise.then(res => {
-        tokenResolved = true;
-        return res;
-      }).catch(err => {
-        if (!tokenResolved) throw err;
-        console.warn('Background token retrieval failed:', err);
-        return null as any as string;
-      });
 
-      const token = await Promise.race([safeTokenPromise, timeoutPromise]);
-      clearTimeout(timeoutId!);
-      headers.set('Authorization', `Bearer ${token}`);
-    } catch (e) {
-      console.warn('Firebase ID token retrieval bypassed, using fallback tenant auth:', e);
-      let storedTenant = 'tenant-acme-01';
-      if (typeof window !== 'undefined') {
-        try {
-          storedTenant = localStorage.getItem('omnirag-tenant-id') || 
-                         localStorage.getItem('omnirag_tenant_id') || 
-                         'tenant-acme-01';
-        } catch (err) {}
-      }
-      headers.set('Authorization', `Bearer ${storedTenant}`);
-    }
-  } else {
-    if (typeof window !== 'undefined') {
-      let storedTenant = 'tenant-acme-01';
-      try {
-        storedTenant = localStorage.getItem('omnirag-tenant-id') || 
-                       localStorage.getItem('omnirag_tenant_id') || 
-                       'tenant-acme-01';
-      } catch (e) {
-        console.warn('Failed to safely read tenant-id from localStorage due to sandboxing:', e);
-      }
-      headers.set('Authorization', `Bearer ${storedTenant}`);
-    }
+  // Auth is strictly Firebase-only. There is no demo/tenant fallback: callers
+  // run only after onAuthStateChanged reports a Firebase user (MainApp gates
+  // the UI behind auth), so a missing currentUser is a real error — surface
+  // it instead of impersonating a tenant.
+  if (!auth || !auth.currentUser) {
+    throw new Error('omnirag-auth-required');
   }
+
+  let token: string;
+  try {
+    let timeoutId: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<string>(
+      (_, reject) => (timeoutId = setTimeout(() => reject(new Error('Auth token timeout')), 1500)),
+    );
+    token = await Promise.race([auth.currentUser.getIdToken(), timeoutPromise]);
+    if (timeoutId) clearTimeout(timeoutId);
+  } catch (e) {
+    console.warn('Firebase ID token retrieval failed — aborting request:', e);
+    throw new Error('omnirag-auth-required');
+  }
+  headers.set('Authorization', `Bearer ${token}`);
 
   // Attach client-saved environment variables for runtime backend execution
   if (typeof window !== 'undefined') {
-    const envKeys = ['DATABASE_URL', 'QDRANT_URL', 'QDRANT_API_KEY', 'MISTRAL_API_KEY', 'UNSTRUCTURED_API_KEY', 'GEMINI_API_KEY'];
+    const envKeys = [
+      'DATABASE_URL',
+      'QDRANT_URL',
+      'QDRANT_API_KEY',
+      'MISTRAL_API_KEY',
+      'UNSTRUCTURED_API_KEY',
+      'GEMINI_API_KEY',
+    ];
     envKeys.forEach((k) => {
       try {
         const val = localStorage.getItem(`omnirag_env_${k}`);
@@ -148,10 +130,13 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
     return wrapResponseWithSafeJson(response);
   } catch (primaryError) {
     console.warn(`Primary fetch to ${resolvedUrl} failed, trying relative/fallback URL:`, primaryError);
-    
-    const fallbackUrl = (resolvedUrl === rawUrl && rawUrl.startsWith('/'))
-      ? (typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null' ? `${window.location.origin}${rawUrl}` : rawUrl)
-      : rawUrl;
+
+    const fallbackUrl =
+      resolvedUrl === rawUrl && rawUrl.startsWith('/')
+        ? typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null'
+          ? `${window.location.origin}${rawUrl}`
+          : rawUrl
+        : rawUrl;
 
     if (fallbackUrl !== resolvedUrl) {
       try {
@@ -165,23 +150,25 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
       }
     }
 
-    const fallbackResponse = new Response(JSON.stringify({ 
-      error: 'Network request failed',
-      sources: [],
-      collections: [],
-      documents: [],
-      syncLogs: [],
-      mcpResources: [],
-      conversations: [],
-      messages: [],
-      servers: []
-    }), {
-      status: 503,
-      statusText: 'Service Unavailable',
-      headers: { 'Content-Type': 'application/json' },
-    });
+    const fallbackResponse = new Response(
+      JSON.stringify({
+        error: 'Network request failed',
+        sources: [],
+        collections: [],
+        documents: [],
+        syncLogs: [],
+        mcpResources: [],
+        conversations: [],
+        messages: [],
+        servers: [],
+      }),
+      {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
 
     return wrapResponseWithSafeJson(fallbackResponse);
   }
 }
-

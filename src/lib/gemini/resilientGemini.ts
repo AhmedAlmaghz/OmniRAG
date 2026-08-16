@@ -1,4 +1,5 @@
 import { GoogleGenAI, GenerateContentParameters, GenerateContentResponse } from '@google/genai';
+import { randomInt } from '../crypto/webRandom';
 
 let aiClientInstance: GoogleGenAI | null = null;
 let cachedApiKey: string | null = null;
@@ -49,7 +50,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 function isTransientError(error: any): boolean {
   if (!error) return false;
-  const str = (typeof error === 'string' ? error : (error.message || JSON.stringify(error))).toLowerCase();
+  const str = (typeof error === 'string' ? error : error.message || JSON.stringify(error)).toLowerCase();
   return (
     str.includes('503') ||
     str.includes('unavailable') ||
@@ -80,16 +81,15 @@ export interface ResilientGenerateOptions {
  * and seamless fallback across available models.
  */
 export async function generateContentWithResilience(
-  options: ResilientGenerateOptions
+  options: ResilientGenerateOptions,
 ): Promise<GenerateContentResponse | null> {
   const ai = getResilientAiClient();
   if (!ai) return null;
 
   const primaryModel = options.model || 'gemini-3.7-flash';
-  const modelsToTry: string[] = [
-    primaryModel,
-    ...(options.fallbackModels || VALID_FALLBACK_MODELS),
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i);
+  const modelsToTry: string[] = [primaryModel, ...(options.fallbackModels || VALID_FALLBACK_MODELS)].filter(
+    (m, i, arr) => m && arr.indexOf(m) === i,
+  );
 
   const maxRetries = options.maxRetriesPerModel ?? 2;
   const initialDelay = options.initialDelayMs ?? 400;
@@ -112,7 +112,7 @@ export async function generateContentWithResilience(
 
         if (transient && !isLastAttempt) {
           // Exponential backoff with small random jitter
-          const backoff = initialDelay * Math.pow(2, attempt) + Math.random() * 200;
+          const backoff = initialDelay * Math.pow(2, attempt) + randomInt(200);
           await sleep(backoff);
           continue;
         }

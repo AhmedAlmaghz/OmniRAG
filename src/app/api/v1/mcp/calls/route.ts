@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
 
-export async function GET(req: NextRequest) {
+export const dynamic = 'force-dynamic';
+
+export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
-    const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get('tenantId') || req.headers.get('x-tenant-id') || 'tenant-alpha-001';
+    const tenantId = authCtx.tenantId;
 
     const calls = await db.getToolCalls(tenantId);
 
@@ -15,9 +17,7 @@ export async function GET(req: NextRequest) {
       calls,
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message || 'فشل جلب سجل استدعاءات الأدوات' },
-      { status: 500 }
-    );
+    console.error('[api/v1/mcp/calls] GET error:', err);
+    return NextResponse.json({ success: false, error: 'فشل جلب سجل استدعاءات الأدوات' }, { status: 500 });
   }
-}
+});

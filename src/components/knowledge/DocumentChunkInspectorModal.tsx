@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Document, DocumentChunk } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { useAsync } from '@/hooks/useAsync';
 import {
   X,
   Layers,
@@ -16,7 +17,7 @@ import {
   ArrowUpRight,
   ShieldCheck,
   Hash,
-  BookOpen
+  BookOpen,
 } from 'lucide-react';
 
 interface DocumentChunkInspectorModalProps {
@@ -26,40 +27,22 @@ interface DocumentChunkInspectorModalProps {
   onClose: () => void;
 }
 
-export function DocumentChunkInspectorModal({
-  document,
-  tenantId,
-  lang,
-  onClose,
-}: DocumentChunkInspectorModalProps) {
+export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose }: DocumentChunkInspectorModalProps) {
   const isRtl = lang === 'ar';
-  const [chunks, setChunks] = useState<DocumentChunk[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'chunks' | 'raw'>('chunks');
 
-  useEffect(() => {
-    async function loadChunks() {
-      setIsLoading(true);
-      try {
-        const res = await fetchWithAuth(
-          `/api/v1/documents?tenantId=${tenantId}&documentId=${document.id}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          if (data.chunks) {
-            setChunks(data.chunks);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load document chunks:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadChunks();
-  }, [document.id, tenantId]);
+  const { data: chunks, isLoading } = useAsync<DocumentChunk[]>(
+    async (signal) => {
+      const res = await fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}&documentId=${document.id}`, { signal });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data.chunks) ? data.chunks : [];
+    },
+    [document.id, tenantId],
+  );
+  const chunkList = chunks ?? [];
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -67,7 +50,7 @@ export function DocumentChunkInspectorModal({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const filteredChunks = chunks.filter((c) => {
+  const filteredChunks = chunkList.filter((c) => {
     if (!searchQuery.trim()) return true;
     return (
       c.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -75,14 +58,14 @@ export function DocumentChunkInspectorModal({
     );
   });
 
-  const totalTokens = chunks.reduce(
-    (acc, c) => acc + Math.round(c.content.length / 4),
-    0
-  );
+  const totalTokens = chunkList.reduce((acc, c) => acc + Math.round(c.content.length / 4), 0);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden" dir={isRtl ? 'rtl' : 'ltr'}>
+      <div
+        className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
+        dir={isRtl ? 'rtl' : 'ltr'}
+      >
         {/* Header */}
         <div className="p-5 border-b border-slate-150 flex items-center justify-between gap-4 bg-slate-50/70">
           <div className="flex items-center gap-3 min-w-0">
@@ -98,9 +81,7 @@ export function DocumentChunkInspectorModal({
                   {document.language?.toUpperCase() || 'AR'}
                 </span>
               </div>
-              <h3 className="text-sm font-extrabold text-slate-900 truncate mt-0.5">
-                {document.title}
-              </h3>
+              <h3 className="text-sm font-extrabold text-slate-900 truncate mt-0.5">{document.title}</h3>
             </div>
           </div>
 
@@ -114,14 +95,12 @@ export function DocumentChunkInspectorModal({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                {isRtl ? 'المقاطع الدلالية' : 'Vector Chunks'} ({chunks.length})
+                {isRtl ? 'المقاطع الدلالية' : 'Vector Chunks'} ({chunkList.length})
               </button>
               <button
                 onClick={() => setActiveView('raw')}
                 className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                  activeView === 'raw'
-                    ? 'bg-white text-indigo-600 shadow-3xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                  activeView === 'raw' ? 'bg-white text-indigo-600 shadow-3xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {isRtl ? 'النص الكامل المستخرج' : 'Raw Text'}
@@ -143,7 +122,7 @@ export function DocumentChunkInspectorModal({
             <span className="flex items-center gap-1.5">
               <Hash className="w-3.5 h-3.5 text-indigo-600" />
               <span>{isRtl ? 'إجمالي المقاطع:' : 'Total Chunks:'}</span>
-              <strong className="font-mono text-indigo-700">{chunks.length}</strong>
+              <strong className="font-mono text-indigo-700">{chunkList.length}</strong>
             </span>
             <span className="flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
@@ -185,7 +164,9 @@ export function DocumentChunkInspectorModal({
                 <div className="py-16 text-center space-y-3">
                   <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
                   <p className="text-xs text-slate-500 font-medium">
-                    {isRtl ? 'جاري جلب المقاطع والمتجهات الدلالية من Qdrant...' : 'Retrieving vector points and payloads from Qdrant...'}
+                    {isRtl
+                      ? 'جاري جلب المقاطع والمتجهات الدلالية من Qdrant...'
+                      : 'Retrieving vector points and payloads from Qdrant...'}
                   </p>
                 </div>
               ) : filteredChunks.length === 0 ? (

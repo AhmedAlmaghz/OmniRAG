@@ -1,5 +1,6 @@
 import { AuditLogEntry, ChatMode } from '../types/omnirag';
 import { db } from '../storage/db';
+import { randomUUID } from 'crypto';
 
 export type HookStage = 'pre_auth' | 'pre_inference' | 'pre_tool' | 'post_tool' | 'post_inference';
 
@@ -31,12 +32,7 @@ const PROMPT_INJECTION_PATTERNS = [
 ];
 
 // Side-effecting tools requiring explicit human approval
-const SIDE_EFFECT_TOOLS = [
-  'slack_send_message',
-  'github_create_issue',
-  'external_postgres_query',
-  'email_send',
-];
+const SIDE_EFFECT_TOOLS = ['slack_send_message', 'github_create_issue', 'external_postgres_query', 'email_send'];
 
 export class HookHarness {
   /**
@@ -78,7 +74,12 @@ export class HookHarness {
     // H6: InputSanitizer
     for (const pattern of PROMPT_INJECTION_PATTERNS) {
       if (pattern.test(prompt)) {
-        await this.logAudit(ctx, 'pre_inference', 'blocked', `H6 InputSanitizer: Detected Prompt Injection pattern: ${pattern.source}`);
+        await this.logAudit(
+          ctx,
+          'pre_inference',
+          'blocked',
+          `H6 InputSanitizer: Detected Prompt Injection pattern: ${pattern.source}`,
+        );
         return {
           allow: false,
           reason: 'تم اكتشاف محاولة تجاوز أو هجوم حقن (Prompt Injection Defense). تم رفض الطلب حتمياً.',
@@ -121,7 +122,12 @@ export class HookHarness {
 
     // H5: SideEffectGate
     if (SIDE_EFFECT_TOOLS.includes(toolName) || serverWithTool.requireConfirmationTools.includes(toolName)) {
-      await this.logAudit(ctx, 'pre_tool', 'blocked', `H5 SideEffectGate: Tool ${toolName} requires explicit human approval`);
+      await this.logAudit(
+        ctx,
+        'pre_tool',
+        'blocked',
+        `H5 SideEffectGate: Tool ${toolName} requires explicit human approval`,
+      );
       return {
         allow: true,
         requiresConfirmation: true,
@@ -137,17 +143,22 @@ export class HookHarness {
   private static async runPostInferenceHooks(ctx: HookContext): Promise<HookResult> {
     let output = ctx.output || '';
 
-    // H9: PIIRedactor - Redact Email and Phone patterns
-    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
-    const phoneRegex = /(\+?\d{1,4}[\s-.]?)?\(?\d{3}\)?[\s-.]?\d{3}[\s-.]?\d{4}/g;
+    // H9: PII Redactor. Use stateless (non-global) detection first to decide
+    // whether to redact, then run a fresh global regex for the replacements.
+    // Mixing .test() and .replace() on the same /g regex mutates lastIndex and
+    // silently skips matches, so the two steps use independent patterns.
+    const emailDetect = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/;
+    const phoneDetect = /(\+?\d{1,4}[\s-.]?)?\(?\d{3}\)?[\s-.]?\d{3}[\s-.]?\d{4}/;
+    const emailRegexG = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+    const phoneRegexG = /(\+?\d{1,4}[\s-.]?)?\(?\d{3}\)?[\s-.]?\d{3}[\s-.]?\d{4}/g;
 
     let redacted = false;
-    if (emailRegex.test(output)) {
-      output = output.replace(emailRegex, '[REDACTED:EMAIL]');
+    if (emailDetect.test(output)) {
+      output = output.replace(emailRegexG, '[REDACTED:EMAIL]');
       redacted = true;
     }
-    if (phoneRegex.test(output)) {
-      output = output.replace(phoneRegex, '[REDACTED:PHONE]');
+    if (phoneDetect.test(output)) {
+      output = output.replace(phoneRegexG, '[REDACTED:PHONE]');
       redacted = true;
     }
 
@@ -161,9 +172,14 @@ export class HookHarness {
   }
 
   // H12: AuditLogger helper
-  private static async logAudit(ctx: HookContext, action: string, status: 'success' | 'blocked' | 'error', details: string): Promise<void> {
+  private static async logAudit(
+    ctx: HookContext,
+    action: string,
+    status: 'success' | 'blocked' | 'error',
+    details: string,
+  ): Promise<void> {
     await db.addAuditLog({
-      id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: `audit-${randomUUID()}`,
       tenantId: ctx.tenantId || 'system',
       actorId: ctx.userId || 'agentic_engine',
       action: action.toUpperCase(),

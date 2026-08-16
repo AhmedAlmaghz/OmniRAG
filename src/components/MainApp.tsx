@@ -25,13 +25,14 @@ import {
   BarChart3,
   Layers,
   Home,
-  Cpu, Settings,
+  Cpu,
+  Settings,
 } from 'lucide-react';
 
 type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'analytics' | 'settings';
 
 export default function MainApp() {
-  const [tenantId, setTenantId] = useState('tenant-acme-01');
+  const [tenantId, setTenantId] = useState('');
   const [currentTenantName, setCurrentTenantName] = useState<string>('');
   const [lang, setLang] = useState<'ar' | 'en'>('ar');
   const [activeTab, setActiveTab] = useState<TabType>('landing');
@@ -49,7 +50,6 @@ export default function MainApp() {
       }
 
       const savedAuth = localStorage.getItem('omnirag-auth');
-      const savedTenant = localStorage.getItem('omnirag-tenant-id');
       const savedEmail = localStorage.getItem('omnirag-user-email');
 
       // Check URL query parameters for tab overriding
@@ -63,16 +63,28 @@ export default function MainApp() {
         setActiveTab(savedTab);
       }
 
-      if (savedAuth === 'true' && savedTenant) {
+      // Faith/HUD mitigation: `savedAuth` only shortens the login-screen flash — it
+      // is a yes/no flag, never an identity. tenantId and userEmail are derived
+      // EXCLUSIVELY from the onAuthStateChanged handler below, so a tampered
+      // localStorage cannot impersonate a tenant; a forged session flag can only
+      // briefly delay the auth gate, which Firebase then reopens to the true user.
+      if (savedAuth === 'true') {
         setIsAuthenticated(true);
-        setTenantId(savedTenant);
         if (savedEmail) setUserEmail(savedEmail);
       } else {
         setIsAuthenticated(false);
       }
 
       // Sync client local environment variables to server runtime
-      const envKeys = ['DATABASE_URL', 'POSTGRES_URL', 'QDRANT_URL', 'QDRANT_API_KEY', 'MISTRAL_API_KEY', 'UNSTRUCTURED_API_KEY', 'GEMINI_API_KEY'];
+      const envKeys = [
+        'DATABASE_URL',
+        'POSTGRES_URL',
+        'QDRANT_URL',
+        'QDRANT_API_KEY',
+        'MISTRAL_API_KEY',
+        'UNSTRUCTURED_API_KEY',
+        'GEMINI_API_KEY',
+      ];
       const localEnvs: Record<string, string> = {};
       envKeys.forEach((k) => {
         try {
@@ -103,7 +115,6 @@ export default function MainApp() {
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('omnirag-auth', 'true');
-      localStorage.setItem('omnirag-tenant-id', tid);
       localStorage.setItem('omnirag-user-email', email);
 
       const currentTab = localStorage.getItem('omnirag-active-tab') as TabType;
@@ -158,7 +169,6 @@ export default function MainApp() {
         setUserEmail(email);
         if (typeof window !== 'undefined') {
           localStorage.setItem('omnirag-auth', 'true');
-          localStorage.setItem('omnirag-tenant-id', tid);
           localStorage.setItem('omnirag-user-email', email);
         }
       } else {
@@ -189,7 +199,7 @@ export default function MainApp() {
     } finally {
       setIsAuthenticated(false);
       setUserEmail(null);
-      setTenantId('tenant-acme-01');
+      setTenantId('');
       setActiveTab('landing');
       if (typeof window !== 'undefined') {
         localStorage.removeItem('omnirag-auth');
@@ -313,7 +323,10 @@ export default function MainApp() {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-950 text-slate-100 dark' : 'bg-slate-50 text-slate-900'}`} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div
+      className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-950 text-slate-100 dark' : 'bg-slate-50 text-slate-900'}`}
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
+    >
       {/* Top Main Navigation Header with integrated links */}
       <Header
         currentTenantId={tenantId}
@@ -335,11 +348,15 @@ export default function MainApp() {
         {activeTab === 'knowledge' && <KnowledgeBase tenantId={tenantId} lang={lang} />}
         {activeTab === 'mcp' && <McpGateway tenantId={tenantId} lang={lang} />}
         {activeTab === 'analytics' && <AnalyticsCenter tenantId={tenantId} lang={lang} />}
-        {activeTab === 'settings' && <SettingsView tenantId={tenantId} lang={lang} userEmail={userEmail} onLogOut={handleLogOut} />}
+        {activeTab === 'settings' && (
+          <SettingsView tenantId={tenantId} lang={lang} userEmail={userEmail} onLogOut={handleLogOut} />
+        )}
       </main>
 
       {/* Footer */}
-      <footer className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-900 border-t border-slate-800' : 'bg-white border-t border-slate-200'}`}>
+      <footer
+        className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-900 border-t border-slate-800' : 'bg-white border-t border-slate-200'}`}
+      >
         <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
           <span>
             POWERED BY{' '}

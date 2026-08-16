@@ -22,7 +22,7 @@ import {
   Zap,
   Globe,
   Clock,
-  HardDrive
+  HardDrive,
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
@@ -35,32 +35,54 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
   const [isRunning, setIsRunning] = useState(false);
   const [report, setReport] = useState<any>(null);
   const [lastChecked, setLastChecked] = useState<string | null>(null);
-  const [logs, setLogs] = useState<Array<{ id: string; timestamp: string; level: 'info' | 'success' | 'warn' | 'error'; message: string }>>([]);
+  const [logs, setLogs] = useState<
+    Array<{ id: string; timestamp: string; level: 'info' | 'success' | 'warn' | 'error'; message: string }>
+  >([]);
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'connections' | 'environment' | 'logs'>('connections');
   const [testingTarget, setTestingTarget] = useState<string | null>(null);
 
-  const addLog = useCallback((message: string, level: 'info' | 'success' | 'warn' | 'error' = 'info') => {
-    const timeStr = new Date().toLocaleTimeString(lang === 'ar' ? 'ar-SA' : 'en-US', { hour12: false });
-    setLogs((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        timestamp: timeStr,
-        level,
-        message,
-      },
-    ]);
-  }, [lang]);
+  const addLog = useCallback(
+    (message: string, level: 'info' | 'success' | 'warn' | 'error' = 'info') => {
+      const timeStr = new Date().toLocaleTimeString(lang === 'ar' ? 'ar-SA' : 'en-US', { hour12: false });
+      // UI log-row id — must be unique. Use the Web Crypto UUID unconditionally;
+      // an environment without `crypto.randomUUID` is broken/sandboxed and should
+      // fail loudly rather than silently weaken the id (consistent with webRandom.ts).
+      if (typeof globalThis.crypto?.randomUUID !== 'function') {
+        throw new Error('crypto.randomUUID is unavailable in this environment.');
+      }
+      setLogs((prev) => [
+        ...prev,
+        {
+          id: globalThis.crypto.randomUUID(),
+          timestamp: timeStr,
+          level,
+          message,
+        },
+      ]);
+    },
+    [lang],
+  );
 
   const runFullDiagnostics = useCallback(async () => {
     setIsRunning(true);
     addLog(lang === 'ar' ? 'بدء الفحص التشخيصي الكامل للنظام...' : 'Starting full system diagnostic suite...', 'info');
 
     try {
-      addLog(lang === 'ar' ? 'اختبار الاتصال بقاعدة بيانات PostgreSQL...' : 'Testing PostgreSQL database connection...', 'info');
-      addLog(lang === 'ar' ? 'اختبار محرك المتجهات Qdrant Vector Engine...' : 'Testing Qdrant vector cluster connection...', 'info');
-      addLog(lang === 'ar' ? 'المصادقة مع واجهة Mistral Document AI API...' : 'Authenticating with Mistral Document AI API...', 'info');
+      addLog(
+        lang === 'ar' ? 'اختبار الاتصال بقاعدة بيانات PostgreSQL...' : 'Testing PostgreSQL database connection...',
+        'info',
+      );
+      addLog(
+        lang === 'ar' ? 'اختبار محرك المتجهات Qdrant Vector Engine...' : 'Testing Qdrant vector cluster connection...',
+        'info',
+      );
+      addLog(
+        lang === 'ar'
+          ? 'المصادقة مع واجهة Mistral Document AI API...'
+          : 'Authenticating with Mistral Document AI API...',
+        'info',
+      );
 
       const res = await fetchWithAuth('/api/v1/diagnostics');
       if (res.ok) {
@@ -75,14 +97,14 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
             lang === 'ar'
               ? `تم الاتصال بنجاح بـ PostgreSQL (${pg.latencyMs}ms) - الإصدار: ${pg.version} - الجداول النشطة: ${pg.activeTablesCount}`
               : `PostgreSQL connected successfully (${pg.latencyMs}ms) - Version: ${pg.version} - Tables: ${pg.activeTablesCount}`,
-            'success'
+            'success',
           );
         } else {
           addLog(
             lang === 'ar'
               ? `فشل الاتصال بـ PostgreSQL: ${pg?.message || 'غير معروف'}`
               : `PostgreSQL connection issue: ${pg?.message || 'Unknown error'}`,
-            'warn'
+            'warn',
           );
         }
 
@@ -92,14 +114,14 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
             lang === 'ar'
               ? `تم الاتصال بمحرك Qdrant (${qd.latencyMs}ms) - مجموعة البيانات: omnirag_chunks (${qd.collectionInfo?.pointsCount || 0} متجهات)`
               : `Qdrant cluster connected (${qd.latencyMs}ms) - Collection: omnirag_chunks (${qd.collectionInfo?.pointsCount || 0} vectors)`,
-            'success'
+            'success',
           );
         } else {
           addLog(
             lang === 'ar'
               ? `تنبيه محرك المتجهات Qdrant: ${qd?.message || 'غير متصل'}`
               : `Qdrant vector engine alert: ${qd?.message || 'Disconnected'}`,
-            'warn'
+            'warn',
           );
         }
 
@@ -109,14 +131,14 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
             lang === 'ar'
               ? `تمت مصادقة Mistral API بنجاح (${ms.latencyMs}ms) - عدد النماذج المتاحة: ${ms.modelsCount}`
               : `Mistral API authenticated successfully (${ms.latencyMs}ms) - Models available: ${ms.modelsCount}`,
-            'success'
+            'success',
           );
         } else {
           addLog(
             lang === 'ar'
               ? `تنبيه Mistral Document AI: ${ms?.message || 'فشل المصادقة'}`
               : `Mistral Document AI alert: ${ms?.message || 'Authentication failed'}`,
-            'warn'
+            'warn',
           );
         }
 
@@ -124,19 +146,16 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           lang === 'ar'
             ? `اكتمل الفحص التشخيصي بنجاح! نسبة الجاهزية للإنتاج: ${data.readinessScore}%`
             : `Diagnostics finished! Production Readiness Score: ${data.readinessScore}%`,
-          'success'
+          'success',
         );
       } else {
         addLog(
           lang === 'ar' ? 'تعذر جلب تقرير التشخيص من الخادم' : 'Failed to retrieve diagnostic report from server',
-          'error'
+          'error',
         );
       }
     } catch (err: any) {
-      addLog(
-        lang === 'ar' ? `خطأ أثناء التشخيص: ${err.message}` : `Diagnostic error: ${err.message}`,
-        'error'
-      );
+      addLog(lang === 'ar' ? `خطأ أثناء التشخيص: ${err.message}` : `Diagnostic error: ${err.message}`, 'error');
     } finally {
       setIsRunning(false);
     }
@@ -145,10 +164,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
   const testSingleTarget = async (target: 'postgres' | 'qdrant' | 'mistral') => {
     setTestingTarget(target);
     const label = target === 'postgres' ? 'PostgreSQL' : target === 'qdrant' ? 'Qdrant' : 'Mistral API';
-    addLog(
-      lang === 'ar' ? `جاري اختبار اتصال ${label} منفصلاً...` : `Re-testing connection for ${label}...`,
-      'info'
-    );
+    addLog(lang === 'ar' ? `جاري اختبار اتصال ${label} منفصلاً...` : `Re-testing connection for ${label}...`, 'info');
 
     try {
       const res = await fetchWithAuth('/api/v1/diagnostics', {
@@ -178,14 +194,14 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
               lang === 'ar'
                 ? `اختبار ${label} ناجح! زمن الاستجابة: ${singleResult.latencyMs}ms`
                 : `${label} re-test succeeded! Latency: ${singleResult.latencyMs}ms`,
-              'success'
+              'success',
             );
           } else {
             addLog(
               lang === 'ar'
                 ? `فشل اختبار ${label}: ${singleResult.message}`
                 : `${label} re-test failed: ${singleResult.message}`,
-              'error'
+              'error',
             );
           }
         }
@@ -193,7 +209,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
     } catch (err: any) {
       addLog(
         lang === 'ar' ? `خطأ أثناء إعادة اختبار ${label}: ${err.message}` : `Error re-testing ${label}: ${err.message}`,
-        'error'
+        'error',
       );
     } finally {
       setTestingTarget(null);
@@ -317,9 +333,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
               <Server className="w-6 h-6 text-cyan-400" />
               {t.title}
             </h2>
-            <p className="text-slate-300 text-xs leading-relaxed">
-              {t.desc}
-            </p>
+            <p className="text-slate-300 text-xs leading-relaxed">{t.desc}</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
@@ -360,8 +374,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                   score >= 85
                     ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
                     : score >= 50
-                    ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                    : 'bg-gradient-to-r from-rose-600 to-rose-400'
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                      : 'bg-gradient-to-r from-rose-600 to-rose-400'
                 }`}
                 style={{ width: `${score}%` }}
               />
@@ -393,8 +407,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                   ? 'البيئة تعمل بكفاءة'
                   : 'Operational & Ready'
                 : lang === 'ar'
-                ? 'تحذير في إحدى الخدمات'
-                : 'Degraded State'}
+                  ? 'تحذير في إحدى الخدمات'
+                  : 'Degraded State'}
             </span>
           </div>
         </div>
@@ -466,8 +480,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     pg?.status === 'connected'
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : pg?.status === 'missing_config'
-                      ? 'bg-amber-50 text-amber-700 border-amber-200'
-                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
                   }`}
                 >
                   {pg?.status === 'connected' ? (
@@ -478,14 +492,12 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                   {pg?.status === 'connected'
                     ? t.statusConnected
                     : pg?.status === 'missing_config'
-                    ? t.statusMissingConfig
-                    : t.statusDisconnected}
+                      ? t.statusMissingConfig
+                      : t.statusDisconnected}
                 </span>
               </div>
 
-              <p className="text-xs text-slate-600 leading-relaxed min-h-[36px]">
-                {pg?.message || '—'}
-              </p>
+              <p className="text-xs text-slate-600 leading-relaxed min-h-[36px]">{pg?.message || '—'}</p>
 
               <div className="space-y-2 pt-2 border-t border-slate-100 text-xs font-mono">
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
@@ -540,8 +552,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     qd?.status === 'connected'
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : qd?.status === 'missing_config'
-                      ? 'bg-amber-50 text-amber-700 border-amber-200'
-                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
                   }`}
                 >
                   {qd?.status === 'connected' ? (
@@ -552,14 +564,12 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                   {qd?.status === 'connected'
                     ? t.statusConnected
                     : qd?.status === 'missing_config'
-                    ? t.statusMissingConfig
-                    : t.statusDisconnected}
+                      ? t.statusMissingConfig
+                      : t.statusDisconnected}
                 </span>
               </div>
 
-              <p className="text-xs text-slate-600 leading-relaxed min-h-[36px]">
-                {qd?.message || '—'}
-              </p>
+              <p className="text-xs text-slate-600 leading-relaxed min-h-[36px]">{qd?.message || '—'}</p>
 
               <div className="space-y-2 pt-2 border-t border-slate-100 text-xs font-mono">
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
@@ -614,8 +624,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     ms?.status === 'connected'
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : ms?.status === 'missing_config'
-                      ? 'bg-amber-50 text-amber-700 border-amber-200'
-                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
                   }`}
                 >
                   {ms?.status === 'connected' ? (
@@ -626,14 +636,12 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                   {ms?.status === 'connected'
                     ? t.statusConnected
                     : ms?.status === 'missing_config'
-                    ? t.statusMissingConfig
-                    : t.statusAuthFailed}
+                      ? t.statusMissingConfig
+                      : t.statusAuthFailed}
                 </span>
               </div>
 
-              <p className="text-xs text-slate-600 leading-relaxed min-h-[36px]">
-                {ms?.message || '—'}
-              </p>
+              <p className="text-xs text-slate-600 leading-relaxed min-h-[36px]">{ms?.message || '—'}</p>
 
               <div className="space-y-2 pt-2 border-t border-slate-100 text-xs font-mono">
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
@@ -678,7 +686,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
               </h3>
             </div>
             <span className="text-xs text-slate-500 font-medium">
-              {report?.envAudit?.filter((e: any) => e.present).length || 0} / {report?.envAudit?.length || 0} {lang === 'ar' ? 'مكوّن ببيئة الخادم' : 'Configured'}
+              {report?.envAudit?.filter((e: any) => e.present).length || 0} / {report?.envAudit?.length || 0}{' '}
+              {lang === 'ar' ? 'مكوّن ببيئة الخادم' : 'Configured'}
             </span>
           </div>
 
@@ -723,9 +732,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                         )}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-slate-600 text-[11px] max-w-xs truncate">
-                      {v.preview}
-                    </td>
+                    <td className="py-3 px-4 text-slate-600 text-[11px] max-w-xs truncate">{v.preview}</td>
                     <td className="py-3 px-4 text-center">
                       {v.required ? (
                         <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 font-sans">
@@ -774,10 +781,10 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                       l.level === 'success'
                         ? 'bg-emerald-900/60 text-emerald-400'
                         : l.level === 'error'
-                        ? 'bg-rose-900/60 text-rose-400'
-                        : l.level === 'warn'
-                        ? 'bg-amber-900/60 text-amber-400'
-                        : 'bg-indigo-900/60 text-indigo-300'
+                          ? 'bg-rose-900/60 text-rose-400'
+                          : l.level === 'warn'
+                            ? 'bg-amber-900/60 text-amber-400'
+                            : 'bg-indigo-900/60 text-indigo-300'
                     }`}
                   >
                     {l.level}
@@ -787,10 +794,10 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                       l.level === 'success'
                         ? 'text-emerald-300'
                         : l.level === 'error'
-                        ? 'text-rose-300'
-                        : l.level === 'warn'
-                        ? 'text-amber-300'
-                        : 'text-slate-300'
+                          ? 'text-rose-300'
+                          : l.level === 'warn'
+                            ? 'text-amber-300'
+                            : 'text-slate-300'
                     }
                   >
                     {l.message}

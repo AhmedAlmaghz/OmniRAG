@@ -44,7 +44,7 @@ export class MCPClientPool {
         // Direct probe to the stateless gateway protocol handler
         const pingRes = await processMcpProtocolRequest(
           { jsonrpc: '2.0', id: 'probe-1', method: 'ping' },
-          { tenantId, serverId: server.id }
+          { tenantId, serverId: server.id },
         );
 
         latencyMs = Math.max(5, Date.now() - startTime);
@@ -53,8 +53,9 @@ export class MCPClientPool {
           status = 'degraded';
         }
       } else {
-        // Stdio/WebSocket internal probe
-        latencyMs = Math.floor(Math.random() * 25) + 10;
+        // Stdio/WebSocket internal probe — no real endpoint to time, so report
+        // the measured probe attempt duration rather than a fabricated value.
+        latencyMs = Math.max(1, Date.now() - startTime);
       }
     } catch (err) {
       status = 'disconnected';
@@ -87,7 +88,7 @@ export class MCPClientPool {
     serverId: string,
     toolName: string,
     args: Record<string, any>,
-    ctx: { tenantId: string; userId?: string }
+    ctx: { tenantId: string; userId?: string },
   ) {
     const servers = await db.getMcpServers(ctx.tenantId);
     const targetServer = servers.find((s) => s.id === serverId);
@@ -112,7 +113,7 @@ export class MCPClientPool {
         method: 'tools/call',
         params: { name: toolName, arguments: args },
       },
-      { tenantId: ctx.tenantId, userId: ctx.userId, serverId }
+      { tenantId: ctx.tenantId, userId: ctx.userId, serverId },
     );
 
     if (res.error) {

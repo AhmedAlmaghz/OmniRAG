@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['firebase-admin'],
   reactStrictMode: true,
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   experimental: {
     webpackBuildWorker: false,

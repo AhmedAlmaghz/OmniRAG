@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 import type { Metadata } from 'next';
 import 'katex/dist/katex.min.css';
 import './globals.css';
@@ -6,7 +6,8 @@ import { headers } from 'next/headers';
 
 export const metadata: Metadata = {
   title: 'OmniRAG - Enterprise Agentic RAG Platform',
-  description: 'Enterprise Agentic RAG Platform with Hybrid Retrieval, MCP Gateway, Multi-Tenancy, and Deterministic Security Guardrails',
+  description:
+    'Enterprise Agentic RAG Platform with Hybrid Retrieval, MCP Gateway, Multi-Tenancy, and Deterministic Security Guardrails',
   icons: {
     icon: '/icon.jpg',
     shortcut: '/favicon.ico',
@@ -14,19 +15,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const headersList = await headers();
   const forwardedHost = headersList.get('x-forwarded-host');
   const host = forwardedHost || headersList.get('host') || 'localhost:3000';
   const proto = headersList.get('x-forwarded-proto') || 'https';
   const firstProto = proto.split(',')[0].trim();
   const isSecure = firstProto === 'https' || host.includes('run.app');
-  
-  let origin = `${isSecure ? 'https' : 'http'}://${host}`;
+
+  const origin = `${isSecure ? 'https' : 'http'}://${host}`;
 
   return (
     <html lang="ar" dir="rtl" className="h-full">

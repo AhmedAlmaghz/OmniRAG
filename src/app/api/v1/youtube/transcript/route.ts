@@ -12,9 +12,14 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     return NextResponse.json(result);
   } catch (error: any) {
     console.error('YouTube transcript route error:', error);
+    // Validation errors carry a user-facing Arabic message (e.g. invalid URL) → 400.
+    const isValidation = typeof error?.message === 'string' && error.message.includes('صحيح');
+    if (isValidation) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
-      { error: error.message || 'حدث خطأ أثناء معالجة تفريغ فيديو يوتيوب' },
-      { status: error.message && error.message.includes('صحيح') ? 400 : 500 }
+      { error: 'حدث خطأ أثناء معالجة تفريغ فيديو يوتيوب', code: 'INTERNAL_ERROR' },
+      { status: 500 },
     );
   }
 });

@@ -5,6 +5,7 @@ import { streamText } from 'ai';
 import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch } from '@/lib/rag/engine';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,6 +71,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
 
     return result.toTextStreamResponse();
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Streaming execution failed' }, { status: 500 });
+    return serverErrorResponse('chat/stream', err);
   }
 });

@@ -1,5 +1,6 @@
 import { generatePKCEPair, PKCEPair } from './pkce';
 import { encryptToken, decryptToken } from './encryption';
+import crypto from 'crypto';
 import { db } from '@/lib/storage/db';
 
 export interface OAuthSessionState {
@@ -52,7 +53,7 @@ export class MCPOAuthManager {
     url.searchParams.set('state', pkce.state);
     url.searchParams.set('code_challenge', pkce.codeChallenge);
     url.searchParams.set('code_challenge_method', pkce.codeChallengeMethod);
-    
+
     // RFC 8707 Resource Indicator
     if (params.resourceIndicator) {
       url.searchParams.set('resource', params.resourceIndicator);
@@ -86,9 +87,10 @@ export class MCPOAuthManager {
     // Cleanup session state
     activeOAuthSessions.delete(params.state);
 
-    // Simulate Token Exchange with Authorization Code + PKCE Verifier
-    const accessToken = `mcp-token-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-    const refreshToken = `mcp-refresh-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+    // Simulate Token Exchange with Authorization Code + PKCE Verifier.
+    // Use cryptographically-strong random values for issued token material.
+    const accessToken = `mcp-token-${Date.now()}-${crypto.randomUUID()}`;
+    const refreshToken = `mcp-refresh-${Date.now()}-${crypto.randomUUID()}`;
 
     const encryptedAccessToken = encryptToken(accessToken);
     const encryptedRefreshToken = encryptToken(refreshToken);

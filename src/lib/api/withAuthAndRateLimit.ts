@@ -9,8 +9,17 @@ type ApiHandler = (req: NextRequest, authCtx: AuthenticatedContext, props?: any)
 export function withAuthAndRateLimit(handler: ApiHandler, options?: { limit?: number; windowMs?: number }) {
   return async (req: NextRequest, props?: any): Promise<Response | NextResponse> => {
     try {
-      // 1. Pre-load runtime environment variables from headers to enable global/internal DB calls
-      const envKeys = ['DATABASE_URL', 'POSTGRES_URL', 'QDRANT_URL', 'QDRANT_API_KEY', 'MISTRAL_API_KEY', 'UNSTRUCTURED_API_KEY', 'GEMINI_API_KEY'];
+      // 1. Pre-load runtime environment variables to enable global/internal DB calls.
+      //    getEnv() itself ignores client-supplied headers in production.
+      const envKeys = [
+        'DATABASE_URL',
+        'POSTGRES_URL',
+        'QDRANT_URL',
+        'QDRANT_API_KEY',
+        'MISTRAL_API_KEY',
+        'UNSTRUCTURED_API_KEY',
+        'GEMINI_API_KEY',
+      ];
       let dbUrlChanged = false;
 
       envKeys.forEach((key) => {
@@ -32,7 +41,7 @@ export function withAuthAndRateLimit(handler: ApiHandler, options?: { limit?: nu
         return rateLimit.response;
       }
 
-      // 3. Authentication
+      // 3. Authentication (strict: rejects missing/invalid tokens — see apiAuth.ts)
       const authCtx = await verifyApiAuth(req);
       if (!authCtx.authenticated) {
         const unauthorizedRes = authCtx.response || NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -41,9 +50,10 @@ export function withAuthAndRateLimit(handler: ApiHandler, options?: { limit?: nu
 
       // 4. Execution
       return await handler(req, authCtx, props);
-    } catch (err: any) {
-      console.error('API Wrapper Error:', err);
-      return NextResponse.json({ error: err?.message || 'Internal Server Error' }, { status: 500 });
+    } catch (err) {
+      console.error('[withAuthAndRateLimit] Unexpected error:', err);
+      // Never leak internal error details to clients
+      return NextResponse.json({ error: 'خطأ داخلي في الخادم (Internal Server Error)' }, { status: 500 });
     }
   };
 }

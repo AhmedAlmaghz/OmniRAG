@@ -44,10 +44,11 @@ import {
   insertPostgresMessage,
   resetPostgresPool,
 } from './postgres';
-import { upsertQdrantChunk, deleteQdrantDocument, updateQdrantDocumentPayload } from './qdrant';
-import { generateEmbedding } from '../rag/embedding';
+import { upsertQdrantChunk, upsertQdrantChunks, deleteQdrantDocument, updateQdrantDocumentPayload } from './qdrant';
+import { generateEmbedding, embedBatch } from '../rag/embedding';
 import { processYoutubeTranscript } from '../youtube/transcriptParser';
 import { processPdfWithBatchedPipeline } from '../pdf/pdfChunker';
+import { decryptSourceConfig } from './sourceConfigCrypto';
 
 import {
   INITIAL_TENANTS,
@@ -59,11 +60,12 @@ import {
   INITIAL_SOURCES,
   INITIAL_SYNC_LOGS,
 } from './constants';
+import type { IOmniRAGDatabase } from './IOmniRAGDatabase';
 
 // Lazy-seeding state
 let isSeeded = false;
 
-class MemoryDatabase {
+export class MemoryDatabase implements IOmniRAGDatabase {
   tenants: Tenant[] = [...INITIAL_TENANTS];
   collections: Collection[] = [...INITIAL_COLLECTIONS];
   documents: Document[] = [...INITIAL_DOCUMENTS];
@@ -80,34 +82,54 @@ class MemoryDatabase {
     this.mcpServers = [...INITIAL_MCP_SERVERS];
   }
 
-  getSources(tenantId: string): SourceConnector[] {
+  resetDatabaseState(): void {
+    // No external pool to reset for the in-memory store; reseed initial data.
+    this.tenants = [...INITIAL_TENANTS];
+    this.collections = [...INITIAL_COLLECTIONS];
+    this.documents = [...INITIAL_DOCUMENTS];
+    this.chunks = [...INITIAL_CHUNKS];
+    this.mcpServers = [...INITIAL_MCP_SERVERS];
+    this.sources = [...INITIAL_SOURCES];
+    this.syncLogs = [...INITIAL_SYNC_LOGS];
+    this.auditLogs = [...INITIAL_AUDIT_LOGS];
+    this.toolCalls = [];
+    this.conversations = [];
+    this.messages = [];
+  }
+
+  async getSources(tenantId: string): Promise<SourceConnector[]> {
     return this.sources
       .filter((s) => s.tenantId === tenantId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
-  getSourceById(id: string, tenantId: string): SourceConnector | undefined {
+  async getSourceById(id: string, tenantId: string): Promise<SourceConnector | undefined> {
     return this.sources.find((s) => s.id === id && s.tenantId === tenantId);
   }
 
-  addSource(source: SourceConnector) {
+  async addSource(source: SourceConnector): Promise<void> {
+    const startedAt = Date.now();
     this.sources = this.sources.filter((s) => s.id !== source.id);
     this.sources.push(source);
-    this.addSyncLog({
+    await this.addSyncLog({
       id: `log-${Date.now()}`,
       tenantId: source.tenantId,
       sourceId: source.id,
       sourceName: source.name,
       status: 'success',
       itemsProcessed: source.documentCount || 1,
-      durationMs: Math.floor(Math.random() * 2000) + 800,
+      durationMs: Math.max(1, Date.now() - startedAt),
       message: `تم ربط الموصل ${source.name} وتشغيل استيعاب البيانات الأولي (ذاكرة بديلة)`,
       timestamp: new Date().toISOString(),
     });
   }
 
-  updateSource(id: string, updates: Partial<SourceConnector>, tenantId: string): SourceConnector | undefined {
-    const s = this.getSourceById(id, tenantId);
+  async updateSource(
+    id: string,
+    updates: Partial<SourceConnector>,
+    tenantId: string,
+  ): Promise<SourceConnector | undefined> {
+    const s = await this.getSourceById(id, tenantId);
     if (s) {
       Object.assign(s, updates);
       return s;
@@ -115,11 +137,20 @@ class MemoryDatabase {
     return undefined;
   }
 
-  deleteSource(id: string, tenantId: string) {
+  async deleteSource(id: string, tenantId: string): Promise<void> {
     this.sources = this.sources.filter((s) => !(s.id === id && s.tenantId === tenantId));
   }
 
-  getSyncLogs(tenantId: string, sourceId?: string): SyncLogEntry[] {
+  async syncSource(
+    id: string,
+    tenantId: string,
+  ): Promise<{ success: boolean; itemsProcessed: number; durationMs: number }> {
+    const source = await this.getSourceById(id, tenantId);
+    if (!source) return { success: false, itemsProcessed: 0, durationMs: 0 };
+    return { success: true, itemsProcessed: source.documentCount || 0, durationMs: 0 };
+  }
+
+  async getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
     let logs = this.syncLogs.filter((l) => l.tenantId === tenantId);
     if (sourceId) {
       logs = logs.filter((l) => l.sourceId === sourceId);
@@ -127,13 +158,13 @@ class MemoryDatabase {
     return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
-  addSyncLog(log: SyncLogEntry) {
+  async addSyncLog(log: SyncLogEntry): Promise<void> {
     this.syncLogs = this.syncLogs.filter((l) => l.id !== log.id);
     this.syncLogs.push(log);
   }
 
-  getMcpResources(tenantId: string): McpResourceItem[] {
-    const sList = this.getSources(tenantId);
+  async getMcpResources(tenantId: string): Promise<McpResourceItem[]> {
+    const sList = await this.getSources(tenantId);
     return sList.map((s) => ({
       uri: `resource://sources/${s.id}`,
       name: s.name,
@@ -145,47 +176,136 @@ class MemoryDatabase {
     }));
   }
 
-  getDocuments(tenantId: string): Document[] {
-    return this.documents
+  async getDocuments(tenantId: string): Promise<Document[]> {
+    const docs = this.documents
       .filter((d) => d.tenantId === tenantId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    // Dev-only data auto-seed: after Demo Auth removal, real Firebase tenants
+    // (`tenant-<uid>`) no longer collide with the seeded `tenant-acme-01` /
+    // `tenant-health-02` demo data. Without this, a fresh dev user (e.g. the
+    // AuthScreen "Sandbox Guest") would see an empty Knowledge Base in the
+    // memory-only path. In production, returns whatever exists (empty allowed).
+    if (docs.length === 0 && process.env.NODE_ENV !== 'production') {
+      const defaultDocs = INITIAL_DOCUMENTS.map((d) => ({
+        ...d,
+        id: `${d.id}-${tenantId}`,
+        tenantId,
+      }));
+      for (const d of defaultDocs) {
+        await this.addDocument(d);
+      }
+      const defaultChunks = INITIAL_CHUNKS.map((c) => ({
+        ...c,
+        id: `${c.id}-${tenantId}`,
+        documentId: `${c.documentId}-${tenantId}`,
+        tenantId,
+      }));
+      await this.addChunks(defaultChunks);
+      return this.documents
+        .filter((d) => d.tenantId === tenantId)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+
+    return docs;
   }
 
-  getDocumentById(id: string, tenantId: string): Document | undefined {
+  async getDocumentById(id: string, tenantId: string): Promise<Document | undefined> {
     return this.documents.find((d) => d.id === id && d.tenantId === tenantId);
   }
 
-  addDocument(docObj: Document) {
+  async addDocument(docObj: Document): Promise<void> {
     this.documents = this.documents.filter((d) => d.id !== docObj.id);
     this.documents.push(docObj);
   }
 
-  deleteDocument(id: string, tenantId: string) {
+  async updateDocument(id: string, updates: Partial<Document>, tenantId: string): Promise<Document | undefined> {
+    const doc = await this.getDocumentById(id, tenantId);
+    if (!doc) return undefined;
+    Object.assign(doc, updates);
+    return doc;
+  }
+
+  async deleteDocument(id: string, tenantId: string): Promise<void> {
     this.documents = this.documents.filter((d) => !(d.id === id && d.tenantId === tenantId));
     this.chunks = this.chunks.filter((c) => !(c.documentId === id && c.tenantId === tenantId));
   }
 
-  getChunks(tenantId: string): DocumentChunk[] {
+  async getChunks(tenantId: string): Promise<DocumentChunk[]> {
     return this.chunks.filter((c) => c.tenantId === tenantId);
   }
 
-  addChunk(chunk: DocumentChunk) {
+  async addChunk(chunk: DocumentChunk): Promise<void> {
     this.chunks = this.chunks.filter((c) => c.id !== chunk.id);
     this.chunks.push(chunk);
   }
 
-  getCollections(tenantId: string): Collection[] {
+  async addChunks(chunks: DocumentChunk[]): Promise<void> {
+    if (chunks.length === 0) return;
+    const ids = new Set(chunks.map((c) => c.id));
+    this.chunks = this.chunks.filter((c) => !ids.has(c.id));
+    this.chunks.push(...chunks);
+  }
+
+  async getDocumentVersions(documentId: string, tenantId: string): Promise<DocumentVersion[]> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    return doc?.versions || [];
+  }
+
+  async createDocumentVersion(
+    documentId: string,
+    params: { title?: string; content: string; changeSummary?: string; createdBy?: string },
+    tenantId: string,
+  ): Promise<{ document: Document; version: DocumentVersion } | undefined> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    if (!doc) return undefined;
+    const versions = doc.versions || [];
+    const versionNumber = versions.length + 1;
+    const version: DocumentVersion = {
+      id: `ver-${documentId}-${versionNumber}`,
+      documentId,
+      versionNumber,
+      title: params.title || doc.title,
+      content: params.content,
+      chunkCount: 0,
+      changeSummary: params.changeSummary,
+      createdBy: params.createdBy,
+      createdAt: new Date().toISOString(),
+    };
+    doc.versions = [...versions, version];
+    doc.content = params.content;
+    doc.version = versionNumber;
+    doc.updatedAt = new Date().toISOString();
+    return { document: doc, version };
+  }
+
+  async revertDocumentVersion(
+    documentId: string,
+    targetVersionNumber: number,
+    tenantId: string,
+  ): Promise<{ document: Document; restoredVersion: DocumentVersion } | undefined> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    if (!doc) return undefined;
+    const targetVer = (doc.versions || []).find((v) => v.versionNumber === targetVersionNumber);
+    if (!targetVer) return undefined;
+    doc.content = targetVer.content;
+    doc.version = targetVer.versionNumber;
+    doc.updatedAt = new Date().toISOString();
+    return { document: doc, restoredVersion: targetVer };
+  }
+
+  async getCollections(tenantId: string): Promise<Collection[]> {
     return this.collections
       .filter((c) => c.tenantId === tenantId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
-  addCollection(col: Collection) {
+  async addCollection(col: Collection): Promise<void> {
     this.collections = this.collections.filter((c) => c.id !== col.id);
     this.collections.push(col);
   }
 
-  getMcpServers(tenantId: string): MCPServerConfig[] {
+  async getMcpServers(tenantId: string): Promise<MCPServerConfig[]> {
     const servers = this.mcpServers.filter((s) => s.tenantId === tenantId);
     if (servers.length === 0) {
       const tenantDefaults = INITIAL_MCP_SERVERS.map((s) => ({
@@ -199,12 +319,12 @@ class MemoryDatabase {
     return servers;
   }
 
-  addMcpServer(server: MCPServerConfig) {
+  async addMcpServer(server: MCPServerConfig): Promise<void> {
     this.mcpServers = this.mcpServers.filter((s) => s.id !== server.id);
     this.mcpServers.push(server);
   }
 
-  toggleMcpTool(serverId: string, toolName: string, tenantId: string) {
+  async toggleMcpTool(serverId: string, toolName: string, tenantId: string): Promise<void> {
     const s = this.mcpServers.find((srv) => srv.id === serverId && srv.tenantId === tenantId);
     if (s) {
       if (s.enabledTools.includes(toolName)) {
@@ -215,33 +335,33 @@ class MemoryDatabase {
     }
   }
 
-  deleteMcpServer(serverId: string, tenantId: string) {
+  async deleteMcpServer(serverId: string, tenantId: string): Promise<void> {
     this.mcpServers = this.mcpServers.filter((s) => !(s.id === serverId && s.tenantId === tenantId));
   }
 
-  getAuditLogs(tenantId: string): AuditLogEntry[] {
+  async getAuditLogs(tenantId: string): Promise<AuditLogEntry[]> {
     return this.auditLogs
       .filter((a) => a.tenantId === tenantId)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
-  addAuditLog(entry: AuditLogEntry) {
+  async addAuditLog(entry: AuditLogEntry): Promise<void> {
     this.auditLogs = this.auditLogs.filter((a) => a.id !== entry.id);
     this.auditLogs.push(entry);
   }
 
-  getToolCalls(tenantId: string): MCPToolCall[] {
+  async getToolCalls(tenantId: string): Promise<MCPToolCall[]> {
     return this.toolCalls
       .filter((tc) => tc.tenantId === tenantId)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
-  addToolCall(tc: MCPToolCall) {
+  async addToolCall(tc: MCPToolCall): Promise<void> {
     this.toolCalls = this.toolCalls.filter((t) => t.id !== tc.id);
     this.toolCalls.push(tc);
   }
 
-  getConversations(tenantId: string): Conversation[] {
+  async getConversations(tenantId: string): Promise<Conversation[]> {
     const convs = this.conversations.filter((c) => c.tenantId === tenantId);
     if (convs.length === 0) {
       const defaultConv: Conversation = {
@@ -256,27 +376,27 @@ class MemoryDatabase {
         updatedAt: new Date().toISOString(),
       };
       this.conversations.push(defaultConv);
-      this.getMessages(defaultConv.id, tenantId);
+      await this.getMessages(defaultConv.id, tenantId);
       return [defaultConv];
     }
     return convs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
 
-  getConversationById(id: string, tenantId: string): Conversation | null {
+  async getConversationById(id: string, tenantId: string): Promise<Conversation | null> {
     return this.conversations.find((c) => c.id === id && c.tenantId === tenantId) || null;
   }
 
-  saveConversation(conv: Conversation) {
+  async saveConversation(conv: Conversation): Promise<void> {
     this.conversations = this.conversations.filter((c) => c.id !== conv.id);
     this.conversations.push(conv);
   }
 
-  deleteConversation(id: string, tenantId: string) {
+  async deleteConversation(id: string, tenantId: string): Promise<void> {
     this.conversations = this.conversations.filter((c) => !(c.id === id && c.tenantId === tenantId));
     this.messages = this.messages.filter((m) => !(m.conversationId === id && m.tenantId === tenantId));
   }
 
-  getMessages(conversationId: string, tenantId: string): Message[] {
+  async getMessages(conversationId: string, tenantId: string): Promise<Message[]> {
     const msgs = this.messages.filter((m) => m.conversationId === conversationId && m.tenantId === tenantId);
     if (msgs.length === 0 && conversationId.startsWith('conv-init')) {
       const welcomeMsg: Message = {
@@ -284,7 +404,8 @@ class MemoryDatabase {
         tenantId,
         conversationId,
         role: 'assistant',
-        content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG (ذاكرة بديلة). يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
+        content:
+          'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG (ذاكرة بديلة). يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
         createdAt: new Date().toISOString(),
         modelUsed: 'gemini-3.7-flash',
       };
@@ -294,14 +415,20 @@ class MemoryDatabase {
     return msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }
 
-  addMessage(msg: Message) {
+  async addMessage(msg: Message): Promise<void> {
     this.messages = this.messages.filter((m) => m.id !== msg.id);
     this.messages.push(msg);
 
     const conv = this.conversations.find((c) => c.id === msg.conversationId && c.tenantId === msg.tenantId);
     if (conv) {
       conv.updatedAt = new Date().toISOString();
-      if (msg.role === 'user' && (conv.title.startsWith('محادثة جديدة') || conv.title.startsWith('New Conversation') || conv.title === 'جلسة استفسارات السياسات والأمن' || conv.title === 'جلسة استفسارات السياسات والأمن (ذاكرة بديلة)')) {
+      if (
+        msg.role === 'user' &&
+        (conv.title.startsWith('محادثة جديدة') ||
+          conv.title.startsWith('New Conversation') ||
+          conv.title === 'جلسة استفسارات السياسات والأمن' ||
+          conv.title === 'جلسة استفسارات السياسات والأمن (ذاكرة بديلة)')
+      ) {
         conv.title = msg.content.length > 35 ? msg.content.substring(0, 35) + '...' : msg.content;
       }
     }
@@ -322,7 +449,7 @@ async function ensureSeeded(): Promise<void> {
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 8000);
       });
-      
+
       const dbPromise = ensurePostgresTables().catch((err) => {
         if (!isSeeded) throw err; // if race is still ongoing, pass error to Promise.race
         console.error('Background ensurePostgresTables late error caught to prevent unhandled rejection:', err);
@@ -332,7 +459,7 @@ async function ensureSeeded(): Promise<void> {
       isSeeded = true;
     } catch (error) {
       console.log('PostgreSQL database initialization offline fallback triggered:', (error as Error)?.message);
-      db.enableMemoryFallback();
+      dbInstance.enableMemoryFallback();
       isSeeded = true;
     } finally {
       clearTimeout(timeoutId!);
@@ -344,7 +471,7 @@ async function ensureSeeded(): Promise<void> {
 }
 
 // Durable Postgres Database Singleton Store (Bypassing Firestore completely as requested)
-class OmniRAGDatabase {
+class OmniRAGDatabase implements IOmniRAGDatabase {
   private useMemory = false;
 
   enableMemoryFallback() {
@@ -378,18 +505,18 @@ class OmniRAGDatabase {
   async getSources(tenantId: string): Promise<SourceConnector[]> {
     let sourcesList: SourceConnector[] = [];
     if (this.useMemory) {
-      sourcesList = memoryDb.getSources(tenantId);
+      sourcesList = await memoryDb.getSources(tenantId);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          sourcesList = memoryDb.getSources(tenantId);
+          sourcesList = await memoryDb.getSources(tenantId);
         } else {
           sourcesList = await getPostgresSources(tenantId);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getSources');
-        sourcesList = memoryDb.getSources(tenantId);
+        sourcesList = await memoryDb.getSources(tenantId);
       }
     }
 
@@ -409,22 +536,23 @@ class OmniRAGDatabase {
   }
 
   async getSourceById(id: string, tenantId: string): Promise<SourceConnector | undefined> {
-    if (this.useMemory) return memoryDb.getSourceById(id, tenantId);
+    if (this.useMemory) return await memoryDb.getSourceById(id, tenantId);
     try {
       await ensureSeeded();
-      if (this.useMemory) return memoryDb.getSourceById(id, tenantId);
+      if (this.useMemory) return await memoryDb.getSourceById(id, tenantId);
       const s = await getPostgresSourceById(id, tenantId);
       if (s) return s;
     } catch (e) {
       this.handleDatabaseError(e, 'getSourceById');
     }
-    return memoryDb.getSourceById(id, tenantId);
+    return await memoryDb.getSourceById(id, tenantId);
   }
 
   async addSource(source: SourceConnector): Promise<void> {
-    memoryDb.addSource(source);
+    await memoryDb.addSource(source);
     if (this.useMemory) return;
 
+    const startedAt = Date.now();
     try {
       await ensureSeeded();
       if (this.useMemory) return;
@@ -436,7 +564,7 @@ class OmniRAGDatabase {
         sourceName: source.name,
         status: 'success',
         itemsProcessed: source.documentCount || 1,
-        durationMs: Math.floor(Math.random() * 2000) + 800,
+        durationMs: Math.max(1, Date.now() - startedAt),
         message: `تم ربط الموصل ${source.name} وتشغيل استيعاب البيانات الأولي في قاعدة Postgres`,
         timestamp: new Date().toISOString(),
       });
@@ -445,14 +573,18 @@ class OmniRAGDatabase {
     }
   }
 
-  async updateSource(id: string, updates: Partial<SourceConnector>, tenantId: string): Promise<SourceConnector | undefined> {
-    const memUpdated = memoryDb.updateSource(id, updates, tenantId);
+  async updateSource(
+    id: string,
+    updates: Partial<SourceConnector>,
+    tenantId: string,
+  ): Promise<SourceConnector | undefined> {
+    const memUpdated = await memoryDb.updateSource(id, updates, tenantId);
     if (this.useMemory) {
       if (updates.collectionIds) {
-        const docs = memoryDb.getDocuments(tenantId);
+        const docs = await memoryDb.getDocuments(tenantId);
         const docsToUpdate = docs.filter((d) => d.metadata?.sourceId === id);
         for (const d of docsToUpdate) {
-          memoryDb.addDocument({ ...d, collectionIds: updates.collectionIds });
+          await memoryDb.addDocument({ ...d, collectionIds: updates.collectionIds });
         }
       }
       return memUpdated;
@@ -484,7 +616,7 @@ class OmniRAGDatabase {
   }
 
   async deleteSource(id: string, tenantId: string, purgeDocs: boolean = true): Promise<void> {
-    memoryDb.deleteSource(id, tenantId);
+    await memoryDb.deleteSource(id, tenantId);
     if (this.useMemory) return;
 
     try {
@@ -503,20 +635,25 @@ class OmniRAGDatabase {
     }
   }
 
-  async syncSource(id: string, tenantId: string): Promise<{ success: boolean; itemsProcessed: number; durationMs: number }> {
+  async syncSource(
+    id: string,
+    tenantId: string,
+  ): Promise<{ success: boolean; itemsProcessed: number; durationMs: number }> {
     try {
       const source = await this.getSourceById(id, tenantId);
       if (!source) return { success: false, itemsProcessed: 0, durationMs: 0 };
 
-      const duration = Math.floor(Math.random() * 3000) + 1200;
-      const items = Math.floor(Math.random() * 5) + 1;
+      // Decrypt connector credentials for the trusted sync path only.
+      const decryptedConfig = source.config ? decryptSourceConfig(source.config) : source.config;
+      const duration = 2400;
+      const items = 1;
 
       source.status = 'healthy';
       source.lastSyncAt = new Date().toISOString();
       source.documentCount = (source.documentCount || 0) + items;
       source.lastError = undefined;
 
-      memoryDb.updateSource(id, source, tenantId);
+      await memoryDb.updateSource(id, source, tenantId);
       if (!this.useMemory) {
         try {
           await insertPostgresSource(source);
@@ -530,7 +667,8 @@ class OmniRAGDatabase {
       let newDocContent = `تحديث بيانات من الموصل (${source.name}):\nتم جلب واستخراج ${items} سجل جديد وحفظها بتشفير عالي ومعالجة متجهات Qdrant بضمان عزْل المستأجر ${tenantId}.`;
 
       if (source.type === 'youtube') {
-        const ytUrl = source.config?.playlistUrl || source.config?.url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        const ytUrl =
+          decryptedConfig?.playlistUrl || decryptedConfig?.url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         try {
           const ytData = await processYoutubeTranscript(ytUrl, 'ar');
           if (ytData && ytData.success && ytData.transcript) {
@@ -541,7 +679,7 @@ class OmniRAGDatabase {
           console.log('YouTube sync transcript failed, fallback to structured summary:', (ytErr as Error)?.message);
         }
       } else if (source.type === 'file') {
-        const fileData = source.config?.fileData || source.config?.base64;
+        const fileData = decryptedConfig?.fileData || decryptedConfig?.base64;
         if (fileData && typeof fileData === 'string') {
           try {
             const cleanBase64 = fileData.includes(',') ? fileData.split(',')[1] : fileData;
@@ -586,20 +724,21 @@ class OmniRAGDatabase {
       newDoc.chunkCount = chunkTextList.length;
       await this.addDocument(newDoc);
 
-      for (let index = 0; index < chunkTextList.length; index++) {
-        const text = chunkTextList[index];
-        await this.addChunk({
-          id: `chunk-${newDocId}-${index + 1}`,
-          tenantId,
-          documentId: newDocId,
-          documentTitle: newDocTitle,
-          content: text,
-          chunkIndex: index,
-          pageNumber: 1,
-          language: 'ar',
-          metadata: { sourceId: source.id, position: index },
-        });
-      }
+      const chunks = chunkTextList.map(
+        (text, index) =>
+          ({
+            id: `chunk-${newDocId}-${index + 1}`,
+            tenantId,
+            documentId: newDocId,
+            documentTitle: newDocTitle,
+            content: text,
+            chunkIndex: index,
+            pageNumber: 1,
+            language: 'ar',
+            metadata: { sourceId: source.id, position: index },
+          }) as DocumentChunk,
+      );
+      await this.addChunks(chunks);
 
       await this.addSyncLog({
         id: `log-${Date.now()}`,
@@ -616,7 +755,7 @@ class OmniRAGDatabase {
       return { success: true, itemsProcessed: items, durationMs: duration };
     } catch (err) {
       this.handleDatabaseError(err, 'syncSource');
-      return memoryDb.getSourceById(id, tenantId)
+      return (await memoryDb.getSourceById(id, tenantId))
         ? { success: true, itemsProcessed: 1, durationMs: 1200 }
         : { success: false, itemsProcessed: 0, durationMs: 0 };
     }
@@ -626,18 +765,18 @@ class OmniRAGDatabase {
   async getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
     let logsList: SyncLogEntry[] = [];
     if (this.useMemory) {
-      logsList = memoryDb.getSyncLogs(tenantId, sourceId);
+      logsList = await memoryDb.getSyncLogs(tenantId, sourceId);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          logsList = memoryDb.getSyncLogs(tenantId, sourceId);
+          logsList = await memoryDb.getSyncLogs(tenantId, sourceId);
         } else {
           logsList = await getPostgresSyncLogs(tenantId, sourceId);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getSyncLogs');
-        logsList = memoryDb.getSyncLogs(tenantId, sourceId);
+        logsList = await memoryDb.getSyncLogs(tenantId, sourceId);
       }
     }
 
@@ -657,7 +796,7 @@ class OmniRAGDatabase {
   }
 
   async addSyncLog(log: SyncLogEntry): Promise<void> {
-    memoryDb.addSyncLog(log);
+    await memoryDb.addSyncLog(log);
     if (this.useMemory) return;
 
     try {
@@ -684,7 +823,7 @@ class OmniRAGDatabase {
       }));
     } catch (e) {
       this.handleDatabaseError(e, 'getMcpResources');
-      return memoryDb.getMcpResources(tenantId);
+      return await memoryDb.getMcpResources(tenantId);
     }
   }
 
@@ -692,18 +831,18 @@ class OmniRAGDatabase {
   async getDocuments(tenantId: string): Promise<Document[]> {
     let docsList: Document[] = [];
     if (this.useMemory) {
-      docsList = memoryDb.getDocuments(tenantId);
+      docsList = await memoryDb.getDocuments(tenantId);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          docsList = memoryDb.getDocuments(tenantId);
+          docsList = await memoryDb.getDocuments(tenantId);
         } else {
           docsList = await getPostgresDocuments(tenantId);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getDocuments');
-        docsList = memoryDb.getDocuments(tenantId);
+        docsList = await memoryDb.getDocuments(tenantId);
       }
     }
 
@@ -723,9 +862,7 @@ class OmniRAGDatabase {
         documentId: `${c.documentId}-${tenantId}`,
         tenantId,
       }));
-      for (const ch of defaultChunks) {
-        await this.addChunk(ch);
-      }
+      await this.addChunks(defaultChunks);
 
       return defaultDocs;
     }
@@ -734,20 +871,20 @@ class OmniRAGDatabase {
   }
 
   async getDocumentById(id: string, tenantId: string): Promise<Document | undefined> {
-    if (this.useMemory) return memoryDb.getDocumentById(id, tenantId);
+    if (this.useMemory) return await memoryDb.getDocumentById(id, tenantId);
     try {
       await ensureSeeded();
-      if (this.useMemory) return memoryDb.getDocumentById(id, tenantId);
+      if (this.useMemory) return await memoryDb.getDocumentById(id, tenantId);
       const d = await getPostgresDocumentById(id, tenantId);
       if (d) return d;
     } catch (e) {
       this.handleDatabaseError(e, 'getDocumentById');
     }
-    return memoryDb.getDocumentById(id, tenantId);
+    return await memoryDb.getDocumentById(id, tenantId);
   }
 
   async addDocument(docObj: Document): Promise<void> {
-    memoryDb.addDocument(docObj);
+    await memoryDb.addDocument(docObj);
     if (this.useMemory) return;
 
     try {
@@ -763,11 +900,11 @@ class OmniRAGDatabase {
     const d = await this.getDocumentById(id, tenantId);
     if (d) {
       const updated = { ...d, ...updates };
-      memoryDb.addDocument(updated);
+      await memoryDb.addDocument(updated);
       if (!this.useMemory) {
         try {
           await insertPostgresDocument(updated);
-          
+
           if (updates.collectionIds) {
             await updateQdrantDocumentPayload(id, tenantId, { collectionIds: updates.collectionIds });
           }
@@ -781,7 +918,7 @@ class OmniRAGDatabase {
   }
 
   async deleteDocument(id: string, tenantId: string): Promise<void> {
-    memoryDb.deleteDocument(id, tenantId);
+    await memoryDb.deleteDocument(id, tenantId);
 
     try {
       await deletePostgresDocument(id, tenantId);
@@ -821,26 +958,27 @@ class OmniRAGDatabase {
       changeSummary?: string;
       createdBy?: string;
     },
-    tenantId: string
+    tenantId: string,
   ): Promise<{ document: Document; version: DocumentVersion } | undefined> {
     const doc = await this.getDocumentById(documentId, tenantId);
     if (!doc) return undefined;
 
-    const existingVersions = doc.versions && doc.versions.length > 0
-      ? [...doc.versions]
-      : [
-          {
-            id: `ver-${doc.id}-v1`,
-            documentId: doc.id,
-            versionNumber: 1,
-            title: doc.title,
-            content: doc.content,
-            chunkCount: doc.chunkCount || 0,
-            createdAt: doc.createdAt,
-            createdBy: 'Ingestion Engine',
-            changeSummary: 'الإصدار الأولي المستوعب في قاعدة المعرفة',
-          },
-        ];
+    const existingVersions =
+      doc.versions && doc.versions.length > 0
+        ? [...doc.versions]
+        : [
+            {
+              id: `ver-${doc.id}-v1`,
+              documentId: doc.id,
+              versionNumber: 1,
+              title: doc.title,
+              content: doc.content,
+              chunkCount: doc.chunkCount || 0,
+              createdAt: doc.createdAt,
+              createdBy: 'Ingestion Engine',
+              changeSummary: 'الإصدار الأولي المستوعب في قاعدة المعرفة',
+            },
+          ];
 
     const currentMaxVer = existingVersions.reduce((max, v) => Math.max(max, v.versionNumber), 1);
     const nextVerNumber = currentMaxVer + 1;
@@ -888,23 +1026,21 @@ class OmniRAGDatabase {
 
     // Update chunks
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
-    for (let i = 0; i < chunkTextList.length; i++) {
-      const chunk: DocumentChunk = {
-        id: `chunk-${doc.id}-v${nextVerNumber}-${i + 1}`,
-        tenantId,
-        documentId: doc.id,
-        documentTitle: newTitle,
-        content: chunkTextList[i],
-        chunkIndex: i,
-        pageNumber: 1,
-        language: doc.language === 'en' ? 'en' : 'ar',
-        metadata: {
-          version: nextVerNumber,
-          position: i,
-        },
-      };
-      await this.addChunk(chunk);
-    }
+    const versionChunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+      id: `chunk-${doc.id}-v${nextVerNumber}-${i + 1}`,
+      tenantId,
+      documentId: doc.id,
+      documentTitle: newTitle,
+      content: text,
+      chunkIndex: i,
+      pageNumber: 1,
+      language: doc.language === 'en' ? 'en' : 'ar',
+      metadata: {
+        version: nextVerNumber,
+        position: i,
+      },
+    }));
+    await this.addChunks(versionChunks);
 
     await this.addSyncLog({
       id: `log-ver-${Date.now()}`,
@@ -924,7 +1060,7 @@ class OmniRAGDatabase {
   async revertDocumentVersion(
     documentId: string,
     targetVersionNumber: number,
-    tenantId: string
+    tenantId: string,
   ): Promise<{ document: Document; restoredVersion: DocumentVersion } | undefined> {
     const doc = await this.getDocumentById(documentId, tenantId);
     if (!doc) return undefined;
@@ -959,23 +1095,21 @@ class OmniRAGDatabase {
 
     // Update chunks
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
-    for (let i = 0; i < chunkTextList.length; i++) {
-      const chunk: DocumentChunk = {
-        id: `chunk-${doc.id}-rev-v${targetVer.versionNumber}-${i + 1}`,
-        tenantId,
-        documentId: doc.id,
-        documentTitle: targetVer.title,
-        content: chunkTextList[i],
-        chunkIndex: i,
-        pageNumber: 1,
-        language: doc.language === 'en' ? 'en' : 'ar',
-        metadata: {
-          restoredFromVersion: targetVer.versionNumber,
-          position: i,
-        },
-      };
-      await this.addChunk(chunk);
-    }
+    const revertChunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+      id: `chunk-${doc.id}-rev-v${targetVer.versionNumber}-${i + 1}`,
+      tenantId,
+      documentId: doc.id,
+      documentTitle: targetVer.title,
+      content: text,
+      chunkIndex: i,
+      pageNumber: 1,
+      language: doc.language === 'en' ? 'en' : 'ar',
+      metadata: {
+        restoredFromVersion: targetVer.versionNumber,
+        position: i,
+      },
+    }));
+    await this.addChunks(revertChunks);
 
     await this.addSyncLog({
       id: `log-revert-${Date.now()}`,
@@ -996,18 +1130,18 @@ class OmniRAGDatabase {
   async getChunks(tenantId: string): Promise<DocumentChunk[]> {
     let chunksList: DocumentChunk[] = [];
     if (this.useMemory) {
-      chunksList = memoryDb.getChunks(tenantId);
+      chunksList = await memoryDb.getChunks(tenantId);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          chunksList = memoryDb.getChunks(tenantId);
+          chunksList = await memoryDb.getChunks(tenantId);
         } else {
           chunksList = await getPostgresChunks(tenantId);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getChunks');
-        chunksList = memoryDb.getChunks(tenantId);
+        chunksList = await memoryDb.getChunks(tenantId);
       }
     }
 
@@ -1018,9 +1152,7 @@ class OmniRAGDatabase {
         documentId: `${c.documentId}-${tenantId}`,
         tenantId,
       }));
-      for (const ch of defaultChunks) {
-        await this.addChunk(ch);
-      }
+      await this.addChunks(defaultChunks);
       return defaultChunks;
     }
 
@@ -1028,7 +1160,7 @@ class OmniRAGDatabase {
   }
 
   async addChunk(chunk: DocumentChunk): Promise<void> {
-    memoryDb.addChunk(chunk);
+    await memoryDb.addChunk(chunk);
 
     try {
       const vector = await generateEmbedding(chunk.content);
@@ -1071,7 +1203,7 @@ class OmniRAGDatabase {
           pageNumber: chunk.pageNumber || 1,
           language: chunk.language || 'ar',
           collectionIds,
-          ...(chunk.metadata || {})
+          ...(chunk.metadata || {}),
         },
       });
     } catch (vecErr) {
@@ -1079,22 +1211,100 @@ class OmniRAGDatabase {
     }
   }
 
-  // Collections
+  /**
+   * Batch ingestion path. Ingests many chunks in one pass instead of looping
+   * `addChunk`, which issued a serial embedding API call + a per-chunk parent-
+   * document lookup + a single-point Qdrant upsert for every chunk.
+   *
+   * Here we:
+   *   1. write all chunks to the memory store in one shot;
+   *   2. generate all embeddings with bounded concurrency (one batched wave);
+   *   3. resolve each unique parent document's collectionIds ONCE (not per chunk);
+   *   4. insert all Postgres rows in parallel;
+   *   5. push all vectors to Qdrant in a single multi-point upsert.
+   */
+  async addChunks(chunks: DocumentChunk[]): Promise<void> {
+    if (chunks.length === 0) return;
+    await memoryDb.addChunks(chunks);
+    if (this.useMemory) return;
+
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+
+      // 1. Generate all embeddings in one bounded-concurrency wave.
+      const vectors = await embedBatch(chunks.map((c) => c.content));
+
+      // 2. Resolve collectionIds per unique parent document ONCE.
+      const collectionIdsByDoc = new Map<string, string[]>();
+      for (const docId of new Set(chunks.map((c) => c.documentId))) {
+        try {
+          const parentDoc = await this.getDocumentById(docId, chunks[0].tenantId);
+          collectionIdsByDoc.set(docId, parentDoc?.collectionIds || []);
+        } catch {
+          collectionIdsByDoc.set(docId, []);
+        }
+      }
+
+      // 3. Insert all Postgres rows in parallel (cheap local writes).
+      await Promise.all(
+        chunks.map((chunk) =>
+          insertPostgresChunk({
+            id: chunk.id,
+            tenantId: chunk.tenantId,
+            documentId: chunk.documentId,
+            documentTitle: chunk.documentTitle,
+            content: chunk.content,
+            chunkIndex: chunk.chunkIndex || 0,
+            pageNumber: chunk.pageNumber || 1,
+            language: chunk.language || 'ar',
+            metadata: chunk.metadata || {},
+          }).catch(() => {
+            /* a single failed lexical row must not abort the batch */
+          }),
+        ),
+      );
+
+      // 4. One multi-point Qdrant upsert for the whole batch.
+      const points = chunks
+        .map((chunk, i) => ({
+          id: chunk.id,
+          vector: vectors[i],
+          payload: {
+            tenantId: chunk.tenantId,
+            documentId: chunk.documentId,
+            documentTitle: chunk.documentTitle || '',
+            content: chunk.content,
+            chunkIndex: chunk.chunkIndex || 0,
+            pageNumber: chunk.pageNumber || 1,
+            language: chunk.language || 'ar',
+            collectionIds: collectionIdsByDoc.get(chunk.documentId) || [],
+            ...(chunk.metadata || {}),
+          },
+        }))
+        .filter((p) => Array.isArray(p.vector) && p.vector.length > 0);
+
+      await upsertQdrantChunks(points);
+    } catch (vecErr) {
+      console.error('Batch vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
+    }
+  }
+
   async getCollections(tenantId: string): Promise<Collection[]> {
     let collectionsList: Collection[] = [];
     if (this.useMemory) {
-      collectionsList = memoryDb.getCollections(tenantId);
+      collectionsList = await memoryDb.getCollections(tenantId);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          collectionsList = memoryDb.getCollections(tenantId);
+          collectionsList = await memoryDb.getCollections(tenantId);
         } else {
           collectionsList = await getPostgresCollections(tenantId);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getCollections');
-        collectionsList = memoryDb.getCollections(tenantId);
+        collectionsList = await memoryDb.getCollections(tenantId);
       }
     }
 
@@ -1114,7 +1324,7 @@ class OmniRAGDatabase {
   }
 
   async addCollection(col: Collection): Promise<void> {
-    memoryDb.addCollection(col);
+    await memoryDb.addCollection(col);
     if (this.useMemory) return;
 
     try {
@@ -1130,18 +1340,18 @@ class OmniRAGDatabase {
   async getMcpServers(tenantId: string): Promise<MCPServerConfig[]> {
     let serversList: MCPServerConfig[] = [];
     if (this.useMemory) {
-      serversList = memoryDb.getMcpServers(tenantId);
+      serversList = await memoryDb.getMcpServers(tenantId);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          serversList = memoryDb.getMcpServers(tenantId);
+          serversList = await memoryDb.getMcpServers(tenantId);
         } else {
           serversList = await getPostgresMcpServers(tenantId);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getMcpServers');
-        serversList = memoryDb.getMcpServers(tenantId);
+        serversList = await memoryDb.getMcpServers(tenantId);
       }
     }
 
@@ -1159,14 +1369,15 @@ class OmniRAGDatabase {
 
     // Ensure Unstructured Transform is always auto-injected for existing active sessions
     const hasUnstructured = serversList.some(
-      (s) => s.endpointUrl === 'https://mcp.transform.unstructured.io' || s.id.includes('unstructured-transform')
+      (s) => s.endpointUrl === 'https://mcp.transform.unstructured.io' || s.id.includes('unstructured-transform'),
     );
     if (!hasUnstructured) {
       const unstructuredServer: MCPServerConfig = {
         id: `mcp-unstructured-transform-${tenantId}`,
         tenantId,
         name: 'Unstructured Transform',
-        description: 'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
+        description:
+          'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
         endpointUrl: 'https://mcp.transform.unstructured.io',
         protocolVersion: '2026-07-28',
         sandboxTier: 'T2_ELEVATED',
@@ -1184,7 +1395,7 @@ class OmniRAGDatabase {
   }
 
   async addMcpServer(server: MCPServerConfig): Promise<void> {
-    memoryDb.addMcpServer(server);
+    await memoryDb.addMcpServer(server);
     if (this.useMemory) return;
 
     try {
@@ -1197,7 +1408,7 @@ class OmniRAGDatabase {
   }
 
   async toggleMcpTool(serverId: string, toolName: string, tenantId: string): Promise<void> {
-    memoryDb.toggleMcpTool(serverId, toolName, tenantId);
+    await memoryDb.toggleMcpTool(serverId, toolName, tenantId);
     if (this.useMemory) return;
 
     try {
@@ -1219,7 +1430,7 @@ class OmniRAGDatabase {
   }
 
   async deleteMcpServer(serverId: string, tenantId: string): Promise<void> {
-    memoryDb.deleteMcpServer(serverId, tenantId);
+    await memoryDb.deleteMcpServer(serverId, tenantId);
     if (this.useMemory) return;
 
     try {
@@ -1235,18 +1446,18 @@ class OmniRAGDatabase {
   async getAuditLogs(tenantId: string): Promise<AuditLogEntry[]> {
     let auditList: AuditLogEntry[] = [];
     if (this.useMemory) {
-      auditList = memoryDb.getAuditLogs(tenantId);
+      auditList = await memoryDb.getAuditLogs(tenantId);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          auditList = memoryDb.getAuditLogs(tenantId);
+          auditList = await memoryDb.getAuditLogs(tenantId);
         } else {
           auditList = await getPostgresAuditLogs(tenantId);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getAuditLogs');
-        auditList = memoryDb.getAuditLogs(tenantId);
+        auditList = await memoryDb.getAuditLogs(tenantId);
       }
     }
 
@@ -1266,7 +1477,7 @@ class OmniRAGDatabase {
   }
 
   async addAuditLog(entry: AuditLogEntry): Promise<void> {
-    memoryDb.addAuditLog(entry);
+    await memoryDb.addAuditLog(entry);
     if (this.useMemory) return;
 
     try {
@@ -1280,19 +1491,19 @@ class OmniRAGDatabase {
 
   // Tool Calls
   async getToolCalls(tenantId: string): Promise<MCPToolCall[]> {
-    if (this.useMemory) return memoryDb.getToolCalls(tenantId);
+    if (this.useMemory) return await memoryDb.getToolCalls(tenantId);
     try {
       await ensureSeeded();
-      if (this.useMemory) return memoryDb.getToolCalls(tenantId);
+      if (this.useMemory) return await memoryDb.getToolCalls(tenantId);
       return await getPostgresToolCalls(tenantId);
     } catch (e) {
       this.handleDatabaseError(e, 'getToolCalls');
     }
-    return memoryDb.getToolCalls(tenantId);
+    return await memoryDb.getToolCalls(tenantId);
   }
 
   async addToolCall(tc: MCPToolCall): Promise<void> {
-    memoryDb.addToolCall(tc);
+    await memoryDb.addToolCall(tc);
     if (this.useMemory) return;
 
     try {
@@ -1306,10 +1517,10 @@ class OmniRAGDatabase {
 
   // Conversations & Messages
   async getConversations(tenantId: string): Promise<Conversation[]> {
-    if (this.useMemory) return memoryDb.getConversations(tenantId);
+    if (this.useMemory) return await memoryDb.getConversations(tenantId);
     try {
       await ensureSeeded();
-      if (this.useMemory) return memoryDb.getConversations(tenantId);
+      if (this.useMemory) return await memoryDb.getConversations(tenantId);
       const convs = await getPostgresConversations(tenantId);
       if (convs.length > 0) return convs;
 
@@ -1332,7 +1543,8 @@ class OmniRAGDatabase {
         tenantId,
         conversationId: defaultConv.id,
         role: 'assistant',
-        content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
+        content:
+          'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
         createdAt: new Date().toISOString(),
         modelUsed: 'gemini-3.7-flash',
       };
@@ -1342,23 +1554,23 @@ class OmniRAGDatabase {
     } catch (e) {
       this.handleDatabaseError(e, 'getConversations');
     }
-    return memoryDb.getConversations(tenantId);
+    return await memoryDb.getConversations(tenantId);
   }
 
   async getConversationById(id: string, tenantId: string): Promise<Conversation | null> {
-    if (this.useMemory) return memoryDb.getConversationById(id, tenantId);
+    if (this.useMemory) return await memoryDb.getConversationById(id, tenantId);
     try {
       await ensureSeeded();
-      if (this.useMemory) return memoryDb.getConversationById(id, tenantId);
+      if (this.useMemory) return await memoryDb.getConversationById(id, tenantId);
       return await getPostgresConversationById(id, tenantId);
     } catch (e) {
       this.handleDatabaseError(e, 'getConversationById');
     }
-    return memoryDb.getConversationById(id, tenantId);
+    return await memoryDb.getConversationById(id, tenantId);
   }
 
   async saveConversation(conv: Conversation): Promise<void> {
-    memoryDb.saveConversation(conv);
+    await memoryDb.saveConversation(conv);
     if (this.useMemory) return;
 
     try {
@@ -1371,7 +1583,7 @@ class OmniRAGDatabase {
   }
 
   async deleteConversation(id: string, tenantId: string): Promise<void> {
-    memoryDb.deleteConversation(id, tenantId);
+    await memoryDb.deleteConversation(id, tenantId);
     if (this.useMemory) return;
 
     try {
@@ -1384,10 +1596,10 @@ class OmniRAGDatabase {
   }
 
   async getMessages(conversationId: string, tenantId: string): Promise<Message[]> {
-    if (this.useMemory) return memoryDb.getMessages(conversationId, tenantId);
+    if (this.useMemory) return await memoryDb.getMessages(conversationId, tenantId);
     try {
       await ensureSeeded();
-      if (this.useMemory) return memoryDb.getMessages(conversationId, tenantId);
+      if (this.useMemory) return await memoryDb.getMessages(conversationId, tenantId);
       const msgs = await getPostgresMessages(conversationId, tenantId);
       if (msgs.length === 0 && conversationId.startsWith('conv-init')) {
         const welcomeMsg: Message = {
@@ -1395,7 +1607,8 @@ class OmniRAGDatabase {
           tenantId,
           conversationId,
           role: 'assistant',
-          content: 'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
+          content:
+            'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
           createdAt: new Date().toISOString(),
           modelUsed: 'gemini-3.7-flash',
         };
@@ -1406,11 +1619,11 @@ class OmniRAGDatabase {
     } catch (e) {
       this.handleDatabaseError(e, 'getMessages');
     }
-    return memoryDb.getMessages(conversationId, tenantId);
+    return await memoryDb.getMessages(conversationId, tenantId);
   }
 
   async addMessage(msg: Message): Promise<void> {
-    memoryDb.addMessage(msg);
+    await memoryDb.addMessage(msg);
     if (this.useMemory) return;
 
     try {
@@ -1422,7 +1635,12 @@ class OmniRAGDatabase {
         const conv = await getPostgresConversationById(msg.conversationId, msg.tenantId);
         if (conv) {
           conv.updatedAt = new Date().toISOString();
-          if (msg.role === 'user' && (conv.title.startsWith('محادثة جديدة') || conv.title.startsWith('New Conversation') || conv.title === 'جلسة استفسارات السياسات والأمن')) {
+          if (
+            msg.role === 'user' &&
+            (conv.title.startsWith('محادثة جديدة') ||
+              conv.title.startsWith('New Conversation') ||
+              conv.title === 'جلسة استفسارات السياسات والأمن')
+          ) {
             conv.title = msg.content.length > 35 ? msg.content.substring(0, 35) + '...' : msg.content;
           }
           await insertPostgresConversation(conv);
@@ -1436,4 +1654,17 @@ class OmniRAGDatabase {
   }
 }
 
-export const db = new OmniRAGDatabase();
+/**
+ * Concrete singleton used internally by this module for lifecycle control
+ * (memory-fallback toggling, pool reset) that is intentionally absent from the
+ * public `IOmniRAGDatabase` contract.
+ */
+const dbInstance = new OmniRAGDatabase();
+
+/**
+ * Singleton storage instance. Typed against the contract so call sites depend
+ * on `IOmniRAGDatabase` rather than the concrete Postgres-backed class — this
+ * keeps routes/libraries decoupled from the backend and enables swapping to a
+ * Firestore implementation or a test double without editing consumers.
+ */
+export const db: IOmniRAGDatabase = dbInstance;

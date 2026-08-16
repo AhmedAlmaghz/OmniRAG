@@ -1,20 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const dynamic = 'force-dynamic';
+
+export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
-    const { id } = await params;
-    const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get('tenantId') || req.headers.get('x-tenant-id') || 'tenant-alpha-001';
+    const { id } = await (props as { params: Promise<{ id: string }> }).params;
+    const tenantId = authCtx.tenantId;
 
     const servers = await db.getMcpServers(tenantId);
     const server = servers.find((s) => s.id === id);
 
     if (!server) {
-      return NextResponse.json(
-        { success: false, error: `خادم ה-MCP المعرف بـ (${id}) غير موجود` },
-        { status: 404 }
-      );
+      return NextResponse.json({ success: false, error: `خادم MCP المعرف بـ (${id}) غير موجود` }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -23,27 +22,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       server,
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message || 'فشل جلب تفاصيل خادم الـ MCP' },
-      { status: 500 }
-    );
+    console.error('[api/v1/mcp/servers/[id]] GET error:', err);
+    return NextResponse.json({ success: false, error: 'فشل جلب تفاصيل خادم الـ MCP' }, { status: 500 });
   }
-}
+});
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
-    const { id } = await params;
+    const { id } = await (props as { params: Promise<{ id: string }> }).params;
     const body = await req.json();
-    const tenantId = body.tenantId || req.headers.get('x-tenant-id') || 'tenant-alpha-001';
+    const tenantId = authCtx.tenantId;
 
     const servers = await db.getMcpServers(tenantId);
     const server = servers.find((s) => s.id === id);
 
     if (!server) {
-      return NextResponse.json(
-        { success: false, error: `خادم الـ MCP غير موجود` },
-        { status: 404 }
-      );
+      return NextResponse.json({ success: false, error: `خادم الـ MCP غير موجود` }, { status: 404 });
     }
 
     // Update server properties
@@ -61,18 +55,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       server,
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message || 'فشل تحديث بيانات خادم الـ MCP' },
-      { status: 500 }
-    );
+    console.error('[api/v1/mcp/servers/[id]] PATCH error:', err);
+    return NextResponse.json({ success: false, error: 'فشل تحديث بيانات خادم الـ MCP' }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
-    const { id } = await params;
-    const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get('tenantId') || req.headers.get('x-tenant-id') || 'tenant-alpha-001';
+    const { id } = await (props as { params: Promise<{ id: string }> }).params;
+    const tenantId = authCtx.tenantId;
 
     await db.deleteMcpServer(id, tenantId);
 
@@ -93,9 +84,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       message: `تم حذف خادم الـ MCP (${id}) بنجاح`,
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { success: false, error: err.message || 'فشل حذف خادم الـ MCP' },
-      { status: 500 }
-    );
+    console.error('[api/v1/mcp/servers/[id]] DELETE error:', err);
+    return NextResponse.json({ success: false, error: 'فشل حذف خادم الـ MCP' }, { status: 500 });
   }
-}
+});

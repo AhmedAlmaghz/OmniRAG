@@ -58,7 +58,9 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     return fallback;
   }
 
-  const candidateModels = Array.from(new Set([primaryModel, 'gemini-embedding-2', 'text-embedding-004', 'embedding-001']));
+  const candidateModels = Array.from(
+    new Set([primaryModel, 'gemini-embedding-2', 'text-embedding-004', 'embedding-001']),
+  );
 
   for (const modelName of candidateModels) {
     try {
@@ -85,6 +87,40 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 }
 
 /**
+ * Maximum number of concurrent embedding API requests in a batch. Bounded so a
+ * large ingestion (50+ chunks) parallelizes without overwhelming Gemini quotas.
+ */
+const EMBED_BATCH_CONCURRENCY = 5;
+
+/**
+ * Generates embeddings for many texts in parallel with a bounded concurrency.
+ *
+ * Designed for the ingestion hot path: previously each chunk issued a serial
+ * `generateEmbedding` round-trip, so 50 chunks cost 50 sequential API calls.
+ * This runs them in waves of `EMBED_BATCH_CONCURRENCY`, reusing the same LRU
+ * cache and fallback logic as the single-text path — so cached/mocked texts
+ * resolve instantly and only misses hit the network in parallel.
+ *
+ * Returns vectors in the SAME order as the input texts.
+ */
+export async function embedBatch(texts: string[], concurrency: number = EMBED_BATCH_CONCURRENCY): Promise<number[][]> {
+  const results: number[][] = new Array(texts.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= texts.length) return;
+      results[i] = await generateEmbedding(texts[i]);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, texts.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+/**
  * Ensures vectors returned to Qdrant or internal stores consistently match 3072 dimensions.
  */
 function normalizeTo3072(values: number[]): number[] {
@@ -103,7 +139,7 @@ function normalizeTo3072(values: number[]): number[] {
  */
 function generateFallbackVector(text: string): number[] {
   const vector: number[] = new Array(3072).fill(0);
-  
+
   for (let i = 0; i < text.length; i++) {
     const charCode = text.charCodeAt(i);
     const index = (i * 31 + charCode) % 3072;

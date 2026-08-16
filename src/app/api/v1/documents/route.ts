@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { Document, DocumentChunk, SourceConnector, SourceType } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,15 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     return NextResponse.json({ documents: docs });
   } catch (error: any) {
     console.error('API Error in documents GET:', error);
-    return NextResponse.json({ documents: [], chunks: [], error: error.message || String(error) }, { status: 500 });
+    return NextResponse.json(
+      {
+        documents: [],
+        chunks: [],
+        error: 'حدث خطأ داخلي في الخادم. يرجى المحاولة مرة أخرى لاحقاً.',
+        code: 'INTERNAL_ERROR',
+      },
+      { status: 500 },
+    );
   }
 });
 
@@ -69,16 +78,35 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     if (sourceId) {
       sourceObj = await db.getSourceById(sourceId, tenantId);
       if (sourceObj) {
-        await db.updateSource(sourceId, {
-          documentCount: (sourceObj.documentCount || 0) + 1,
-          lastSyncAt: new Date().toISOString(),
-          status: 'healthy',
-        }, tenantId);
+        await db.updateSource(
+          sourceId,
+          {
+            documentCount: (sourceObj.documentCount || 0) + 1,
+            lastSyncAt: new Date().toISOString(),
+            status: 'healthy',
+          },
+          tenantId,
+        );
       }
     }
 
     if (!sourceObj) {
-      const validSourceType: SourceType = (['file', 'youtube', 'web', 'github', 'database', 'notion', 'gdrive', 'slack', 's3', 'api', 'custom_mcp', 'pdf'] as SourceType[]).includes(sourceType as SourceType)
+      const validSourceType: SourceType = (
+        [
+          'file',
+          'youtube',
+          'web',
+          'github',
+          'database',
+          'notion',
+          'gdrive',
+          'slack',
+          's3',
+          'api',
+          'custom_mcp',
+          'pdf',
+        ] as SourceType[]
+      ).includes(sourceType as SourceType)
         ? (sourceType as SourceType)
         : 'file';
 
@@ -160,26 +188,23 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     newDoc.chunkCount = chunkTextList.length;
     await db.addDocument(newDoc);
 
-    for (let index = 0; index < chunkTextList.length; index++) {
-      const text = chunkTextList[index];
-      const chunk: DocumentChunk = {
-        id: `chunk-${docId}-${index + 1}`,
-        tenantId,
-        documentId: docId,
-        documentTitle: title,
-        content: text,
-        chunkIndex: index,
-        pageNumber: 1,
-        language,
-        metadata: {
-          sourceId: sourceObj.id,
-          position: index,
-          strategy,
-          tokenCount: Math.round(text.length / 2.8),
-        },
-      };
-      await db.addChunk(chunk);
-    }
+    const chunks: DocumentChunk[] = chunkTextList.map((text, index) => ({
+      id: `chunk-${docId}-${index + 1}`,
+      tenantId,
+      documentId: docId,
+      documentTitle: title,
+      content: text,
+      chunkIndex: index,
+      pageNumber: 1,
+      language,
+      metadata: {
+        sourceId: sourceObj.id,
+        position: index,
+        strategy,
+        tokenCount: Math.round(text.length / 2.8),
+      },
+    }));
+    await db.addChunks(chunks);
 
     // Register sync log for visual feedback in Sources Manager
     await db.addSyncLog({
@@ -194,15 +219,17 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       timestamp: new Date().toISOString(),
     });
 
-    return NextResponse.json({
-      success: true,
-      document: newDoc,
-      source: sourceObj,
-      chunkCount: chunkTextList.length,
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        success: true,
+        document: newDoc,
+        source: sourceObj,
+        chunkCount: chunkTextList.length,
+      },
+      { status: 201 },
+    );
   } catch (err: any) {
-    console.error('API Error in documents POST:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return serverErrorResponse('documents POST', err);
   }
 });
 

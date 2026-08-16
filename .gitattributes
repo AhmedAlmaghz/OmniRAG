@@ -1,0 +1,29 @@
+# Line-ending policy: repository stores LF, working tree is CRLF (Windows-native).
+* text=auto eol=crlf
+
+# Binary assets — never normalize or touch line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.avif  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.mp4   binary
+*.webm  binary
+*.mov   binary
+*.mp3   binary
+*.wav   binary
+*.ogg   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.7z    binary
+*.lock  binary
+*.tsbuildinfo binary

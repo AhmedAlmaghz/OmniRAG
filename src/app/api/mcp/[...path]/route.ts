@@ -1,17 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { processMcpProtocolRequest } from '@/lib/mcp/server-factory';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 /**
  * MCP Gateway Stateless Protocol Endpoint per SPEC 2026-07-28
- * Supports GET, POST, DELETE with X-Tenant-ID header isolation
+ * Supports GET, POST, DELETE with authenticated tenant isolation.
+ * Tenant identity is derived exclusively from the verified auth context.
  */
 
-export async function POST(req: NextRequest) {
+export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
-    const tenantId = req.headers.get('x-tenant-id') || 'tenant-alpha-001';
-    const userId = req.headers.get('x-user-id') || undefined;
+    const tenantId = authCtx.tenantId;
+    const userId = authCtx.userId;
 
     const body = await req.json();
 
@@ -27,27 +30,28 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err: any) {
+    console.error('[api/mcp/[...path]] POST error:', err);
     return NextResponse.json(
       {
         jsonrpc: '2.0',
         id: 1,
         error: {
           code: -32603,
-          message: err.message || 'خطأ غير متوقع في خادم MCP Gateway',
+          message: 'خطأ غير متوقع في خادم MCP Gateway',
         },
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
-}
+});
 
-export async function GET(req: NextRequest) {
-  const tenantId = req.headers.get('x-tenant-id') || 'tenant-alpha-001';
+export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
+  const tenantId = authCtx.tenantId;
 
   // Return protocol capabilities and active gateway information
   const initInfo = await processMcpProtocolRequest(
     { jsonrpc: '2.0', id: 'get-init', method: 'initialize' },
-    { tenantId }
+    { tenantId },
   );
 
   return NextResponse.json(initInfo.result, {
@@ -56,12 +60,12 @@ export async function GET(req: NextRequest) {
       'X-MCP-Protocol-Version': '2026-07-28',
     },
   });
-}
+});
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   return NextResponse.json({
     jsonrpc: '2.0',
     id: 'del-1',
     result: { message: 'تم إغلاق وتفريغ جلسة MCP عديمة الحالة بنجاح' },
   });
-}
+});

@@ -1,6 +1,7 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
+import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,8 +28,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx) => {
       versions,
     });
   } catch (error: any) {
-    console.error('API Error in document versions GET:', error);
-    return NextResponse.json({ error: error.message || String(error) }, { status: 500 });
+    return serverErrorResponse('document versions GET', error);
   }
 });
 
@@ -76,7 +76,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
           changeSummary,
           createdBy,
         },
-        tenantId
+        tenantId,
       );
 
       if (!result) {
@@ -96,7 +96,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
 
     return NextResponse.json({ error: 'Invalid action. Supported actions: revert, create' }, { status: 400 });
   } catch (error: any) {
-    console.error('API Error in document versions POST:', error);
-    return NextResponse.json({ error: error.message || String(error) }, { status: 500 });
+    return serverErrorResponse('document versions POST', error);
   }
 });

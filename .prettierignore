@@ -1,0 +1,8 @@
+node_modules
+.next
+dist
+coverage
+package-lock.json
+bun.lock
+src/data
+public

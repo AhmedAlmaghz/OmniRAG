@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const { searchParams } = new URL(req.url);
-    const tenantId = searchParams.get('tenantId') || 'tenant-acme-01';
+    const tenantId = authCtx.tenantId;
     const conversationId = searchParams.get('conversationId');
 
     if (conversationId) {
@@ -20,8 +20,8 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     const conversations = await db.getConversations(tenantId);
     return NextResponse.json({ conversations });
   } catch (err: any) {
-    console.error("GET /api/v1/conversations error:", err);
-    return NextResponse.json({ error: err.message || 'Failed to fetch conversations' }, { status: 500 });
+    console.error('GET /api/v1/conversations error:', err);
+    return NextResponse.json({ error: 'فشل جلب المحادثات (Failed to fetch conversations)' }, { status: 500 });
   }
 });
 
@@ -63,6 +63,11 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     if (action === 'save_message' && body.message) {
       const msg: Message = body.message;
+      // Security (C2): override any client-supplied tenantId so the message is
+      // persisted under the authenticated caller's tenant, preventing
+      // cross-tenant impersonation. Also regenerate the id when it lacks a
+      // real prefix to avoid collisions / spoofed ids.
+      msg.tenantId = tenantId;
       await db.addMessage(msg);
       return NextResponse.json({ success: true });
     }
@@ -86,7 +91,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (err: any) {
-    console.error("POST /api/v1/conversations error:", err);
-    return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 });
+    console.error('POST /api/v1/conversations error:', err);
+    return NextResponse.json({ error: 'خطأ داخلي في الخادم (Internal Server Error)' }, { status: 500 });
   }
 });

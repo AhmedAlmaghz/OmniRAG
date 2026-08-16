@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { getPostgresPool } from '@/lib/storage/postgres';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { serverErrorResponse } from '@/lib/api/safeError';
 import { QdrantClient } from '@qdrant/js-client-rest';
 
 export const dynamic = 'force-dynamic';
@@ -103,6 +104,7 @@ async function runPostgresDiagnostic(req?: any) {
       client.release();
     }
   } catch (err: any) {
+    console.error('[diagnostics] PostgreSQL connection failed:', err);
     return {
       service: 'postgresql',
       name: 'PostgreSQL Database',
@@ -110,10 +112,9 @@ async function runPostgresDiagnostic(req?: any) {
       latencyMs: Date.now() - startTime,
       configured: true,
       maskedUrl: maskConnectionString(connStr),
-      message: `PostgreSQL connection error: ${err.message}`,
+      message: 'فشل الاتصال بقاعدة بيانات PostgreSQL. تحقق من الرابط وبيانات الاعتماد في سجلات الخادم.',
       details: {
-        error: err.message,
-        code: err.code,
+        code: typeof err?.code === 'string' ? err.code : undefined,
       },
     };
   }
@@ -181,6 +182,7 @@ async function runQdrantDiagnostic(req?: any) {
         : 'Qdrant cluster connected. Ready to provision "omnirag_chunks" collection on first insert.',
     };
   } catch (err: any) {
+    console.error('[diagnostics] Qdrant connection failed:', err);
     return {
       service: 'qdrant',
       name: 'Qdrant Vector Engine',
@@ -189,9 +191,9 @@ async function runQdrantDiagnostic(req?: any) {
       configured: true,
       maskedUrl: maskUrl(url),
       hasApiKey: !!apiKey,
-      message: `Qdrant cluster connection failed: ${err.message}`,
+      message: 'تعذر الاتصال بمجموعة Qdrant. تحقق من الرابط في سجلات الخادم.',
       details: {
-        error: err.message,
+        code: typeof err?.code === 'string' ? err.code : undefined,
       },
     };
   }
@@ -211,7 +213,8 @@ async function runMistralDiagnostic(req?: any) {
       maskedApiKey: null,
       message: 'MISTRAL_API_KEY environment variable is not configured.',
       details: {
-        recommendation: 'Set MISTRAL_API_KEY in environment variables to enable Mistral OCR, Document AI parsing, and embedding capabilities.',
+        recommendation:
+          'Set MISTRAL_API_KEY in environment variables to enable Mistral OCR, Document AI parsing, and embedding capabilities.',
       },
     };
   }
@@ -220,8 +223,8 @@ async function runMistralDiagnostic(req?: any) {
     const res = await fetch('https://api.mistral.ai/v1/models', {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Accept': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
       },
     });
 
@@ -241,7 +244,9 @@ async function runMistralDiagnostic(req?: any) {
         maskedApiKey: maskKey(apiKey),
         modelsCount: rawModels.length,
         availableModels: modelIds.slice(0, 8),
-        hasOcrSupport: modelIds.some((id: string) => id.includes('ocr') || id.includes('embed') || id.includes('pixtral')),
+        hasOcrSupport: modelIds.some(
+          (id: string) => id.includes('ocr') || id.includes('embed') || id.includes('pixtral'),
+        ),
         message: 'Mistral API key authenticated successfully. Document AI, OCR & parsing models ready.',
       };
     } else {
@@ -263,6 +268,7 @@ async function runMistralDiagnostic(req?: any) {
       };
     }
   } catch (err: any) {
+    console.error('[diagnostics] Mistral endpoint check failed:', err);
     return {
       service: 'mistral',
       name: 'Mistral Document AI',
@@ -270,9 +276,9 @@ async function runMistralDiagnostic(req?: any) {
       latencyMs: Date.now() - startTime,
       configured: true,
       maskedApiKey: maskKey(apiKey),
-      message: `Failed to reach Mistral API endpoint: ${err.message}`,
+      message: 'تعذر الوصول إلى واجهة Mistral. تحقق من المفتاح والرابط في سجلات الخادم.',
       details: {
-        error: err.message,
+        code: typeof err?.code === 'string' ? err.code : undefined,
       },
     };
   }
@@ -289,7 +295,7 @@ function runEnvAudit(req?: any) {
     { name: 'UNSTRUCTURED_API_KEY', category: 'Document AI', desc: 'Unstructured.io Parsing Key', required: false },
   ];
 
-  return envVars.map(v => {
+  return envVars.map((v) => {
     const val = getEnv(v.name, req);
     const present = !!val && val !== 'null' && val !== 'undefined' && val.trim() !== '';
     let preview = 'Not Set';
@@ -379,6 +385,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       result,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Diagnostic execution failed' }, { status: 500 });
+    return serverErrorResponse('diagnostics POST', err);
   }
 });

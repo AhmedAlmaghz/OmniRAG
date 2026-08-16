@@ -88,39 +88,63 @@ export async function upsertQdrantChunk(params: {
     [key: string]: any;
   };
 }) {
+  await upsertQdrantChunks([{ id: params.id, vector: params.vector, payload: params.payload }]);
+}
+
+/**
+ * Coerces an arbitrary chunk id string into a Qdrant-compatible point id.
+ * Standard UUIDs are used as-is; other strings are reduced to a pseudo-UUID via
+ * hex cleaning or hashing so Qdrant accepts the upsert.
+ */
+function toQdrantPointId(rawId: string): string {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId)) {
+    return rawId;
+  }
+  const cleaned = rawId.replace(/[^a-f0-9]/gi, '');
+  if (cleaned.length >= 32) {
+    return `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20, 32)}`;
+  }
+  // Fallback: create a 32-char hex string
+  const hash = Array.from(rawId).reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0);
+  const hex = Math.abs(hash).toString(16).padStart(32, '0');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * Upserts many chunk points to Qdrant in a SINGLE request. The per-chunk
+ * `upsertQdrantChunk` path issued one round-trip per point, so ingesting 50
+ * chunks meant 50 sequential Qdrant writes. This batches them into one
+ * multi-point upsert, the intended Qdrant bulk-write shape.
+ */
+export async function upsertQdrantChunks(
+  points: Array<{
+    id: string;
+    vector: number[];
+    payload: {
+      tenantId: string;
+      documentId: string;
+      documentTitle: string;
+      content: string;
+      chunkIndex: number;
+      pageNumber: number;
+      language: string;
+      collectionIds?: string[];
+      [key: string]: any;
+    };
+  }>,
+) {
+  if (points.length === 0) return;
   await ensureQdrantCollection();
   const qc = getQdrantClient();
   if (!qc) return;
 
   try {
-    // Generate an integer or standard UUID hash from the string ID, Qdrant supports both string UUIDs and 64-bit integers.
-    // If the string id doesn't match a standard UUID format, we can use a hash-based pseudo UUID.
-    let pointId = params.id;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pointId)) {
-      // Create a valid pseudo-UUID by hashing the string ID
-      const cleaned = pointId.replace(/[^a-f0-9]/gi, '');
-      if (cleaned.length >= 32) {
-        pointId = `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20, 32)}`;
-      } else {
-        // Fallback: create a 32-char hex string
-        const hash = Array.from(pointId).reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0);
-        const hex = Math.abs(hash).toString(16).padStart(32, '0');
-        pointId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-      }
-    }
-
     await qc.upsert(COLLECTION_NAME, {
       wait: true,
-      points: [
-        {
-          id: pointId,
-          vector: params.vector,
-          payload: params.payload,
-        },
-      ],
+      points: points.map((p) => ({ id: toQdrantPointId(p.id), vector: p.vector, payload: p.payload })),
     });
   } catch (error) {
-    console.error(`Failed to upsert point ${params.id} into Qdrant:`, error);
+    console.error(`Failed to upsert ${points.length} point(s) into Qdrant:`, error);
   }
 }
 
@@ -149,7 +173,11 @@ export async function deleteQdrantChunk(id: string) {
   }
 }
 
-export async function updateQdrantDocumentPayload(documentId: string, tenantId: string, payloadUpdates: Record<string, any>) {
+export async function updateQdrantDocumentPayload(
+  documentId: string,
+  tenantId: string,
+  payloadUpdates: Record<string, any>,
+) {
   await ensureQdrantCollection();
   const qc = getQdrantClient();
   if (!qc) return;
@@ -195,25 +223,25 @@ export async function searchQdrantSemantic(params: {
   collectionIds?: string[];
   limit: number;
   scoreThreshold?: number;
-}): Promise<Array<{
-  id: string;
-  documentId: string;
-  documentTitle: string;
-  content: string;
-  chunkIndex: number;
-  pageNumber: number;
-  language: string;
-  semanticScore: number;
-}>> {
+}): Promise<
+  Array<{
+    id: string;
+    documentId: string;
+    documentTitle: string;
+    content: string;
+    chunkIndex: number;
+    pageNumber: number;
+    language: string;
+    semanticScore: number;
+  }>
+> {
   await ensureQdrantCollection();
   const qc = getQdrantClient();
   if (!qc) return [];
 
   try {
     // Mandatory isolation filter + optional collectionIds filters
-    const filterConditions: any[] = [
-      { key: 'tenantId', match: { value: params.tenantId } },
-    ];
+    const filterConditions: any[] = [{ key: 'tenantId', match: { value: params.tenantId } }];
 
     if (params.collectionIds && params.collectionIds.length > 0) {
       filterConditions.push({
@@ -234,7 +262,7 @@ export async function searchQdrantSemantic(params: {
         score_threshold: params.scoreThreshold,
         with_payload: true,
       });
-      results = Array.isArray(qRes) ? qRes : (qRes?.points || []);
+      results = Array.isArray(qRes) ? qRes : qRes?.points || [];
     } else if (typeof (qc as any).search === 'function') {
       const sRes = await (qc as any).search(COLLECTION_NAME, {
         vector: params.vector,
@@ -245,7 +273,7 @@ export async function searchQdrantSemantic(params: {
         score_threshold: params.scoreThreshold,
         with_payload: true,
       });
-      results = Array.isArray(sRes) ? sRes : (sRes?.points || []);
+      results = Array.isArray(sRes) ? sRes : sRes?.points || [];
     }
 
     return results.map((r: any) => {

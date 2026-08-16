@@ -2,16 +2,14 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDocumentCache } from '@/hooks/useDocumentCache';
-import {
-  OcrCacheEntry,
-} from '@/lib/cache/mistralOcrCache';
+import { OcrCacheEntry } from '@/lib/cache/mistralOcrCache';
 import {
   SourceConnector,
   SyncLogEntry,
   McpResourceItem,
   Collection,
   Document,
-  DocumentChunk
+  DocumentChunk,
 } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { AddSourceWizard } from './sources/AddSourceWizard';
@@ -86,20 +84,9 @@ interface KeysStatus {
 }
 
 type TabType =
-  | 'dashboard'
-  | 'documents'
-  | 'collections'
-  | 'upload'
-  | 'ocr_cache'
-  | 'connectors'
-  | 'youtube'
-  | 'keys'
-  | 'mcp';
+  'dashboard' | 'documents' | 'collections' | 'upload' | 'ocr_cache' | 'connectors' | 'youtube' | 'keys' | 'mcp';
 
-export default function KnowledgeBase({
-  tenantId = 'tenant-acme-01',
-  lang = 'ar',
-}: KnowledgeBaseProps) {
+export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar' }: KnowledgeBaseProps) {
   const isRtl = lang === 'ar';
 
   // Primary active tab
@@ -154,22 +141,34 @@ export default function KnowledgeBase({
     setIsLoading(true);
     try {
       const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
-        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(() => ({
-          ok: false,
-          json: async () => ({ sources: [], syncLogs: [], mcpResources: [] }),
-        } as Response)),
-        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(() => ({
-          ok: false,
-          json: async () => ({ collections: [] }),
-        } as Response)),
-        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(() => ({
-          ok: false,
-          json: async () => ({ documents: [] }),
-        } as Response)),
-        fetchWithAuth('/api/v1/sources/system-status').catch(() => ({
-          ok: false,
-          json: async () => ({}),
-        } as Response)),
+        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(
+          () =>
+            ({
+              ok: false,
+              json: async () => ({ sources: [], syncLogs: [], mcpResources: [] }),
+            }) as Response,
+        ),
+        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(
+          () =>
+            ({
+              ok: false,
+              json: async () => ({ collections: [] }),
+            }) as Response,
+        ),
+        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(
+          () =>
+            ({
+              ok: false,
+              json: async () => ({ documents: [] }),
+            }) as Response,
+        ),
+        fetchWithAuth('/api/v1/sources/system-status').catch(
+          () =>
+            ({
+              ok: false,
+              json: async () => ({}),
+            }) as Response,
+        ),
       ]);
 
       let sourcesData: any = {};
@@ -236,8 +235,8 @@ export default function KnowledgeBase({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tenantId }),
-          })
-        )
+          }),
+        ),
       );
       await fetchKnowledgeData();
     } catch (err) {
@@ -249,7 +248,14 @@ export default function KnowledgeBase({
 
   // Delete source
   const handleDeleteSource = async (sourceId: string) => {
-    if (!confirm(isRtl ? 'هل أنت متأكد من حذف هذا الموصل وإلغاء فهرسة مستنداته؟' : 'Are you sure you want to delete this source connector?')) return;
+    if (
+      !confirm(
+        isRtl
+          ? 'هل أنت متأكد من حذف هذا الموصل وإلغاء فهرسة مستنداته؟'
+          : 'Are you sure you want to delete this source connector?',
+      )
+    )
+      return;
     try {
       const res = await fetchWithAuth(`/api/v1/sources?id=${sourceId}&tenantId=${tenantId}`, {
         method: 'DELETE',
@@ -264,7 +270,14 @@ export default function KnowledgeBase({
 
   // Delete Document
   const handleDeleteDocument = async (docId: string) => {
-    if (!confirm(isRtl ? 'هل تود حذف هذا المستند ومتجهاته نهائياً من Qdrant؟' : 'Permanently delete this document and its Qdrant vectors?')) return;
+    if (
+      !confirm(
+        isRtl
+          ? 'هل تود حذف هذا المستند ومتجهاته نهائياً من Qdrant؟'
+          : 'Permanently delete this document and its Qdrant vectors?',
+      )
+    )
+      return;
     try {
       const res = await fetchWithAuth(`/api/v1/documents?id=${docId}&tenantId=${tenantId}`, {
         method: 'DELETE',
@@ -298,7 +311,7 @@ export default function KnowledgeBase({
     await fetchWithAuth(`/api/v1/sources/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tenantId, updates }),
+      body: JSON.stringify({ tenantId, ...updates }),
     });
     fetchKnowledgeData();
     setEditingSource(null);
@@ -307,7 +320,9 @@ export default function KnowledgeBase({
   // Compute stats
   const totalDocsCount = documents.length;
   const totalChunksCount = documents.reduce((sum, d) => sum + (d.chunkCount || 0), 0);
-  const indexedDocsCount = documents.filter((d) => d.status === 'indexed' || (d.status as string) === 'success' || !d.status).length;
+  const indexedDocsCount = documents.filter(
+    (d) => d.status === 'indexed' || (d.status as string) === 'success' || !d.status,
+  ).length;
   const healthPercentage = totalDocsCount > 0 ? Math.round((indexedDocsCount / totalDocsCount) * 100) : 100;
   const avgChunksPerDoc = totalDocsCount > 0 ? (totalChunksCount / totalDocsCount).toFixed(1) : '0';
   const healthySourcesCount = sources.filter((s) => s.status === 'healthy').length;
@@ -325,52 +340,55 @@ export default function KnowledgeBase({
 
   // Filtered & sorted documents
   const filteredDocuments = useMemo(() => {
-    return documents.filter((doc) => {
-      // Search
-      const matchSearch =
-        !searchQuery.trim() ||
-        doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (doc.content && doc.content.toLowerCase().includes(searchQuery.toLowerCase()));
+    return documents
+      .filter((doc) => {
+        // Search
+        const matchSearch =
+          !searchQuery.trim() ||
+          doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (doc.content && doc.content.toLowerCase().includes(searchQuery.toLowerCase()));
 
-      // Collection
-      const matchCollection =
-        filterCollection === 'all' ||
-        (doc.collectionIds && doc.collectionIds.includes(filterCollection)) ||
-        doc.metadata?.collectionId === filterCollection;
+        // Collection
+        const matchCollection =
+          filterCollection === 'all' ||
+          (doc.collectionIds && doc.collectionIds.includes(filterCollection)) ||
+          doc.metadata?.collectionId === filterCollection;
 
-      // Type
-      const srcType = doc.metadata?.connectorType || doc.sourceType || 'file';
-      const matchType =
-        filterType === 'all' ||
-        (filterType === 'pdf' && (doc.title.toLowerCase().endsWith('.pdf') || doc.metadata?.fileType === 'application/pdf')) ||
-        (filterType === 'markdown' && (doc.title.toLowerCase().endsWith('.md') || doc.title.toLowerCase().endsWith('.txt'))) ||
-        (filterType === 'web' && srcType === 'url') ||
-        (filterType === 'youtube' && srcType === 'youtube') ||
-        (filterType === 'github' && srcType === 'github') ||
-        (filterType === 'database' && srcType === 'database');
+        // Type
+        const srcType = doc.metadata?.connectorType || doc.sourceType || 'file';
+        const matchType =
+          filterType === 'all' ||
+          (filterType === 'pdf' &&
+            (doc.title.toLowerCase().endsWith('.pdf') || doc.metadata?.fileType === 'application/pdf')) ||
+          (filterType === 'markdown' &&
+            (doc.title.toLowerCase().endsWith('.md') || doc.title.toLowerCase().endsWith('.txt'))) ||
+          (filterType === 'web' && srcType === 'url') ||
+          (filterType === 'youtube' && srcType === 'youtube') ||
+          (filterType === 'github' && srcType === 'github') ||
+          (filterType === 'database' && srcType === 'database');
 
-      // Health status
-      const matchHealth =
-        filterHealth === 'all' ||
-        (filterHealth === 'indexed' && (doc.status === 'indexed' || (doc.status as string) === 'success' || !doc.status)) ||
-        (filterHealth === 'processing' && (doc.status === 'processing' || doc.status === 'pending')) ||
-        (filterHealth === 'failed' && (doc.status === 'failed' || (doc.status as string) === 'error'));
+        // Health status
+        const matchHealth =
+          filterHealth === 'all' ||
+          (filterHealth === 'indexed' &&
+            (doc.status === 'indexed' || (doc.status as string) === 'success' || !doc.status)) ||
+          (filterHealth === 'processing' && (doc.status === 'processing' || doc.status === 'pending')) ||
+          (filterHealth === 'failed' && (doc.status === 'failed' || (doc.status as string) === 'error'));
 
-      return matchSearch && matchCollection && matchType && matchHealth;
-    }).sort((a, b) => {
-      if (sortBy === 'date') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      if (sortBy === 'name') return a.title.localeCompare(b.title);
-      if (sortBy === 'chunks') return (b.chunkCount || 0) - (a.chunkCount || 0);
-      if (sortBy === 'size') return (b.content?.length || 0) - (a.content?.length || 0);
-      return 0;
-    });
+        return matchSearch && matchCollection && matchType && matchHealth;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'date') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        if (sortBy === 'name') return a.title.localeCompare(b.title);
+        if (sortBy === 'chunks') return (b.chunkCount || 0) - (a.chunkCount || 0);
+        if (sortBy === 'size') return (b.content?.length || 0) - (a.content?.length || 0);
+        return 0;
+      });
   }, [documents, searchQuery, filterCollection, filterType, filterHealth, sortBy]);
 
   // Recent files (top 6 newest)
   const recentFiles = useMemo(() => {
-    return [...documents]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 6);
+    return [...documents].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 6);
   }, [documents]);
 
   // Helper to find collection name
@@ -467,9 +485,11 @@ export default function KnowledgeBase({
         >
           <Layers className="w-4 h-4" />
           <span>{isRtl ? 'بطاقات المستندات' : 'Document Cards'}</span>
-          <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-            activeTab === 'documents' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
-          }`}>
+          <span
+            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+              activeTab === 'documents' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
             {documents.length}
           </span>
         </button>
@@ -484,9 +504,11 @@ export default function KnowledgeBase({
         >
           <Folder className="w-4 h-4" />
           <span>{isRtl ? 'المجموعات المعرفية' : 'Collections Map'}</span>
-          <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-            activeTab === 'collections' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
-          }`}>
+          <span
+            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+              activeTab === 'collections' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
             {collections.length}
           </span>
         </button>
@@ -516,9 +538,13 @@ export default function KnowledgeBase({
         >
           <Zap className="w-4 h-4 text-amber-500 fill-amber-500/20" />
           <span>{isRtl ? 'ذاكرة OCR المؤقتة' : 'Mistral OCR Cache'}</span>
-          <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-            activeTab === 'ocr_cache' ? 'bg-indigo-700 text-white' : 'bg-amber-50 text-amber-700 border border-amber-200'
-          }`}>
+          <span
+            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+              activeTab === 'ocr_cache'
+                ? 'bg-indigo-700 text-white'
+                : 'bg-amber-50 text-amber-700 border border-amber-200'
+            }`}
+          >
             {ocrCacheEntries.length}
           </span>
         </button>
@@ -533,9 +559,11 @@ export default function KnowledgeBase({
         >
           <Database className="w-4 h-4" />
           <span>{isRtl ? 'الموصلات الآلية' : 'Connectors'}</span>
-          <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-            activeTab === 'connectors' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
-          }`}>
+          <span
+            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+              activeTab === 'connectors' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
             {sources.length}
           </span>
         </button>
@@ -669,7 +697,9 @@ export default function KnowledgeBase({
                       {isRtl ? 'مهام الاستيعاب وخط المعالجة المباشر' : 'Active Ingestion Jobs & Live Pipeline'}
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      {isRtl ? 'مراقبة فورية لمراحل التقطيع، استخراج النصوص بـ OCR، وتوليد المتجهات' : 'Real-time monitoring of document chunking, OCR parsing, and vector indexing'}
+                      {isRtl
+                        ? 'مراقبة فورية لمراحل التقطيع، استخراج النصوص بـ OCR، وتوليد المتجهات'
+                        : 'Real-time monitoring of document chunking, OCR parsing, and vector indexing'}
                     </p>
                   </div>
                 </div>
@@ -687,7 +717,9 @@ export default function KnowledgeBase({
                 <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                   <span className="flex items-center gap-1.5">
                     <Cpu className="w-4 h-4 text-indigo-600" />
-                    <span>{isRtl ? 'مسار استيعاب ملفات الـ PDF الكبيرة (دفعات 50 صفحة)' : '50-Page PDF Partition Pipeline'}</span>
+                    <span>
+                      {isRtl ? 'مسار استيعاب ملفات الـ PDF الكبيرة (دفعات 50 صفحة)' : '50-Page PDF Partition Pipeline'}
+                    </span>
                   </span>
                   <span className="text-[10px] font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
                     4-Stage Pipeline
@@ -722,9 +754,7 @@ export default function KnowledgeBase({
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                   <span>{isRtl ? 'سجل أحداث الفهرسة والمزامنة الأخيرة' : 'Recent Ingestion & Sync Events'}</span>
-                  <span className="text-[10px] font-mono text-slate-400">
-                    {syncLogs.length} events logged
-                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">{syncLogs.length} events logged</span>
                 </div>
 
                 {syncLogs.length === 0 ? (
@@ -758,11 +788,13 @@ export default function KnowledgeBase({
                             </div>
                           </div>
 
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase shrink-0 ${
-                            isSuccess
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-amber-50 text-amber-700 border border-amber-200'
-                          }`}>
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase shrink-0 ${
+                              isSuccess
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
+                            }`}
+                          >
                             {log.status}
                           </span>
                         </div>
@@ -805,9 +837,7 @@ export default function KnowledgeBase({
                   <span className="text-xs font-bold text-emerald-950">
                     {isRtl ? 'تغطية الفضاء المتجهي' : 'Vector Index Coverage'}
                   </span>
-                  <span className="text-sm font-mono font-black text-emerald-700">
-                    {healthPercentage}%
-                  </span>
+                  <span className="text-sm font-mono font-black text-emerald-700">{healthPercentage}%</span>
                 </div>
                 {/* Progress Bar */}
                 <div className="w-full bg-emerald-200/60 rounded-full h-2 overflow-hidden">
@@ -880,7 +910,9 @@ export default function KnowledgeBase({
                     {isRtl ? 'أحدث الملفات والمستندات المضافة' : 'Recently Ingested Documents'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    {isRtl ? 'معاينة سريعة للوثائق مع إمكانية فحص متجهات المقاطع فوراً' : 'Instant preview of latest additions with one-click vector inspector'}
+                    {isRtl
+                      ? 'معاينة سريعة للوثائق مع إمكانية فحص متجهات المقاطع فوراً'
+                      : 'Instant preview of latest additions with one-click vector inspector'}
                   </p>
                 </div>
               </div>
@@ -1074,7 +1106,9 @@ export default function KnowledgeBase({
                 {isRtl ? 'لم يتم العثور على أي مستندات تطابق معايير البحث' : 'No documents matching your criteria'}
               </h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                {isRtl ? 'جرب تغيير كلمات البحث أو إعادة ضبط الفلاتر لعرض كافة الملفات المفهرسة.' : 'Try adjusting your search terms or reset the filters to see all indexed documents.'}
+                {isRtl
+                  ? 'جرب تغيير كلمات البحث أو إعادة ضبط الفلاتر لعرض كافة الملفات المفهرسة.'
+                  : 'Try adjusting your search terms or reset the filters to see all indexed documents.'}
               </p>
               <button
                 onClick={() => setActiveTab('upload')}
@@ -1120,9 +1154,7 @@ export default function KnowledgeBase({
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h4 className="text-xs font-bold text-slate-900 truncate">
-                              {doc.title}
-                            </h4>
+                            <h4 className="text-xs font-bold text-slate-900 truncate">{doc.title}</h4>
                             <span className="text-[9px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200 font-mono flex items-center gap-0.5">
                               <GitBranch className="w-2.5 h-2.5" />
                               <span>v{doc.version || 1}</span>
@@ -1214,7 +1246,9 @@ export default function KnowledgeBase({
                 {isRtl ? 'لا توجد مجموعات معرفية حالياً' : 'No collections created yet'}
               </h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                {isRtl ? 'أنشئ مجموعات لتنظيم مستنداتك حسب الأقسام أو المشاريع المعرفية.' : 'Create collections to group and isolate documents by domain or project.'}
+                {isRtl
+                  ? 'أنشئ مجموعات لتنظيم مستنداتك حسب الأقسام أو المشاريع المعرفية.'
+                  : 'Create collections to group and isolate documents by domain or project.'}
               </p>
               <button
                 onClick={() => setIsCreateColModalOpen(true)}
@@ -1228,9 +1262,7 @@ export default function KnowledgeBase({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {collections.map((col) => {
                 const colDocs = documents.filter(
-                  (d) =>
-                    (d.collectionIds && d.collectionIds.includes(col.id)) ||
-                    d.metadata?.collectionId === col.id
+                  (d) => (d.collectionIds && d.collectionIds.includes(col.id)) || d.metadata?.collectionId === col.id,
                 );
                 const colChunks = colDocs.reduce((sum, d) => sum + (d.chunkCount || 0), 0);
 
@@ -1249,9 +1281,7 @@ export default function KnowledgeBase({
                         </span>
                       </div>
 
-                      <h4 className="text-sm font-extrabold text-slate-900 pt-1">
-                        {col.name}
-                      </h4>
+                      <h4 className="text-sm font-extrabold text-slate-900 pt-1">{col.name}</h4>
                       <p className="text-xs text-slate-500 line-clamp-2">
                         {col.description || (isRtl ? 'مجموعة معرفية مخصصة' : 'Custom knowledge collection')}
                       </p>
@@ -1261,7 +1291,9 @@ export default function KnowledgeBase({
                       <span className="font-bold text-indigo-700">
                         {colDocs.length} {isRtl ? 'مستندات' : 'documents'}
                       </span>
-                      <span>{colChunks} {isRtl ? 'مقطع' : 'chunks'}</span>
+                      <span>
+                        {colChunks} {isRtl ? 'مقطع' : 'chunks'}
+                      </span>
                     </div>
                   </div>
                 );
@@ -1296,7 +1328,11 @@ export default function KnowledgeBase({
                 </span>
                 <div>
                   <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                    <span>{isRtl ? 'ذاكرة تخزين نتائج OCR لميسترال (Mistral Document AI Cache)' : 'Mistral OCR Caching Layer'}</span>
+                    <span>
+                      {isRtl
+                        ? 'ذاكرة تخزين نتائج OCR لميسترال (Mistral Document AI Cache)'
+                        : 'Mistral OCR Caching Layer'}
+                    </span>
                     <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                       SHA-256 Active
@@ -1322,7 +1358,13 @@ export default function KnowledgeBase({
 
               <button
                 onClick={() => {
-                  if (confirm(isRtl ? 'هل تريد مسح جميع نتائج الـ OCR المخزنة في الذاكرة المؤقتة؟' : 'Clear all cached Mistral OCR results?')) {
+                  if (
+                    confirm(
+                      isRtl
+                        ? 'هل تريد مسح جميع نتائج الـ OCR المخزنة في الذاكرة المؤقتة؟'
+                        : 'Clear all cached Mistral OCR results?',
+                    )
+                  ) {
                     clearAllOcrCache();
                     refreshOcrCache();
                   }
@@ -1342,9 +1384,7 @@ export default function KnowledgeBase({
               <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
                 {isRtl ? 'المستندات المخزنة' : 'Cached Documents'}
               </span>
-              <div className="text-xl font-extrabold text-slate-900 font-mono">
-                {ocrCacheStats.count}
-              </div>
+              <div className="text-xl font-extrabold text-slate-900 font-mono">{ocrCacheStats.count}</div>
               <span className="text-[10px] text-slate-500 font-medium">
                 {ocrCacheStats.totalPages} {isRtl ? 'صفحات محفوظة' : 'pages total'}
               </span>
@@ -1372,18 +1412,14 @@ export default function KnowledgeBase({
               <div className="text-xl font-extrabold text-indigo-600 font-mono">
                 ~{ocrCacheStats.savedTokens.toLocaleString()}
               </div>
-              <span className="text-[10px] text-indigo-600/80 font-medium font-mono">
-                Mistral Document AI
-              </span>
+              <span className="text-[10px] text-indigo-600/80 font-medium font-mono">Mistral Document AI</span>
             </div>
 
             <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-3xs space-y-1">
               <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
                 {isRtl ? 'الحجم الإجمالي' : 'Cache Memory Size'}
               </span>
-              <div className="text-xl font-extrabold text-slate-900 font-mono">
-                {ocrCacheStats.sizeKb} KB
-              </div>
+              <div className="text-xl font-extrabold text-slate-900 font-mono">{ocrCacheStats.sizeKb} KB</div>
               <span className="text-[10px] text-slate-500 font-medium">
                 {(ocrCacheStats.savedBytes / (1024 * 1024)).toFixed(1)} MB {isRtl ? 'ملفات معالجة' : 'files cached'}
               </span>
@@ -1437,9 +1473,7 @@ export default function KnowledgeBase({
 
                         <div className="min-w-0 space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h5 className="font-extrabold text-slate-900 truncate max-w-xs">
-                              {entry.fileName}
-                            </h5>
+                            <h5 className="font-extrabold text-slate-900 truncate max-w-xs">{entry.fileName}</h5>
                             <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200">
                               {(entry.fileSize / (1024 * 1024)).toFixed(2)} MB
                             </span>
@@ -1514,7 +1548,9 @@ export default function KnowledgeBase({
                 <span>{isRtl ? 'موصلات البيانات ومصادر المزامنة' : 'Automated Data Connectors'}</span>
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                {isRtl ? 'ربط مباشر مع مواقع الويب، مستودعات GitHub، وقواعد البيانات الخارجية.' : 'Continuous live sync with Web URLs, GitHub repositories, and SQL DBs.'}
+                {isRtl
+                  ? 'ربط مباشر مع مواقع الويب، مستودعات GitHub، وقواعد البيانات الخارجية.'
+                  : 'Continuous live sync with Web URLs, GitHub repositories, and SQL DBs.'}
               </p>
             </div>
 
@@ -1545,7 +1581,9 @@ export default function KnowledgeBase({
                 {isRtl ? 'لا توجد موصلات نشطة حالياً' : 'No connectors configured'}
               </h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                {isRtl ? 'أضف موصلات لسحب البيانات تلقائياً من المواقع أو GitHub أو Google Drive.' : 'Add connectors to automatically ingest and vectorize remote content.'}
+                {isRtl
+                  ? 'أضف موصلات لسحب البيانات تلقائياً من المواقع أو GitHub أو Google Drive.'
+                  : 'Add connectors to automatically ingest and vectorize remote content.'}
               </p>
               <button
                 onClick={() => setIsAddSourceOpen(true)}
@@ -1565,20 +1603,24 @@ export default function KnowledgeBase({
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
-                        {src.type === 'youtube' ? <Youtube className="w-5 h-5 text-rose-600" /> :
-                         src.type === 'url' ? <Globe className="w-5 h-5 text-blue-600" /> :
-                         src.type === 'github' ? <Github className="w-5 h-5 text-slate-800" /> :
-                         src.type === 'database' ? <Database className="w-5 h-5 text-amber-600" /> :
-                         <Server className="w-5 h-5 text-violet-600" />}
+                        {src.type === 'youtube' ? (
+                          <Youtube className="w-5 h-5 text-rose-600" />
+                        ) : src.type === 'url' ? (
+                          <Globe className="w-5 h-5 text-blue-600" />
+                        ) : src.type === 'github' ? (
+                          <Github className="w-5 h-5 text-slate-800" />
+                        ) : src.type === 'database' ? (
+                          <Database className="w-5 h-5 text-amber-600" />
+                        ) : (
+                          <Server className="w-5 h-5 text-violet-600" />
+                        )}
                       </div>
                       <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase font-mono">
                         {src.status || 'HEALTHY'}
                       </span>
                     </div>
 
-                    <h4 className="text-sm font-extrabold text-slate-900 pt-1 truncate">
-                      {src.name}
-                    </h4>
+                    <h4 className="text-sm font-extrabold text-slate-900 pt-1 truncate">{src.name}</h4>
                     <p className="text-xs text-slate-500 font-mono text-[11px] truncate">
                       {src.config?.url || src.type}
                     </p>
@@ -1644,7 +1686,9 @@ export default function KnowledgeBase({
           <div>
             <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
               <Key className="w-4 h-4 text-indigo-600" />
-              <span>{isRtl ? 'حالة ربط الخدمات الخارجية ومفاتيح الـ AI' : 'External Services & API Key Configurations'}</span>
+              <span>
+                {isRtl ? 'حالة ربط الخدمات الخارجية ومفاتيح الـ AI' : 'External Services & API Key Configurations'}
+              </span>
             </h3>
             <p className="text-xs text-slate-500 mt-1">
               {isRtl
@@ -1658,20 +1702,22 @@ export default function KnowledgeBase({
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-900">Google Gemini API</span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  keysStatus?.geminiActive
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-200'
-                }`}>
-                  {keysStatus?.geminiActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : (isRtl ? 'معلق ⚠' : 'Missing ⚠')}
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    keysStatus?.geminiActive
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}
+                >
+                  {keysStatus?.geminiActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : isRtl ? 'معلق ⚠' : 'Missing ⚠'}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                {isRtl ? 'المحرك الدلالي الأساسي وتوليد متجهات text-embedding-004.' : 'Core semantic search and text-embedding-004 vectors.'}
+                {isRtl
+                  ? 'المحرك الدلالي الأساسي وتوليد متجهات text-embedding-004.'
+                  : 'Core semantic search and text-embedding-004 vectors.'}
               </p>
-              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">
-                GEMINI_API_KEY
-              </div>
+              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">GEMINI_API_KEY</div>
             </div>
 
             {/* Qdrant DB */}
@@ -1683,51 +1729,55 @@ export default function KnowledgeBase({
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                {isRtl ? 'تخزين وفهرسة الفضاء المتجهي المعزول لكل مستأجر.' : 'Vector cluster storage for multi-tenant segment points.'}
+                {isRtl
+                  ? 'تخزين وفهرسة الفضاء المتجهي المعزول لكل مستأجر.'
+                  : 'Vector cluster storage for multi-tenant segment points.'}
               </p>
-              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">
-                QDRANT_API_KEY / URL
-              </div>
+              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">QDRANT_API_KEY / URL</div>
             </div>
 
             {/* Mistral OCR */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-900">Mistral Document AI</span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  keysStatus?.mistralActive
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-200'
-                }`}>
-                  {keysStatus?.mistralActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : (isRtl ? 'اختياري ⚠' : 'Optional ⚠')}
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    keysStatus?.mistralActive
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}
+                >
+                  {keysStatus?.mistralActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : isRtl ? 'اختياري ⚠' : 'Optional ⚠'}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                {isRtl ? 'محرك استخراج النصوص المتقدم لملفات الـ PDF المعقدة والمسح الضوئي.' : 'High-precision visual OCR and complex table parser.'}
+                {isRtl
+                  ? 'محرك استخراج النصوص المتقدم لملفات الـ PDF المعقدة والمسح الضوئي.'
+                  : 'High-precision visual OCR and complex table parser.'}
               </p>
-              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">
-                MISTRAL_API_KEY
-              </div>
+              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">MISTRAL_API_KEY</div>
             </div>
 
             {/* Unstructured Transform */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-900">Unstructured API</span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  keysStatus?.unstructuredActive
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                    : 'bg-amber-50 text-amber-700 border border-amber-200'
-                }`}>
-                  {keysStatus?.unstructuredActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : (isRtl ? 'اختياري ⚠' : 'Optional ⚠')}
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    keysStatus?.unstructuredActive
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}
+                >
+                  {keysStatus?.unstructuredActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : isRtl ? 'اختياري ⚠' : 'Optional ⚠'}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                {isRtl ? 'تفكيك مستندات Word و PPTX و HTML إلى صيغ هيكلية.' : 'Multi-format document parsing and table AST mapping.'}
+                {isRtl
+                  ? 'تفكيك مستندات Word و PPTX و HTML إلى صيغ هيكلية.'
+                  : 'Multi-format document parsing and table AST mapping.'}
               </p>
-              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">
-                UNSTRUCTURED_API_KEY
-              </div>
+              <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">UNSTRUCTURED_API_KEY</div>
             </div>
           </div>
         </div>
@@ -1739,7 +1789,9 @@ export default function KnowledgeBase({
           <div className="border-b border-slate-100 pb-3">
             <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
               <Zap className="w-5 h-5 text-amber-500" />
-              <span>{isRtl ? 'موارد بروتوكول سياق النموذج (MCP Resources Inspector)' : 'MCP Context Resources Inspector'}</span>
+              <span>
+                {isRtl ? 'موارد بروتوكول سياق النموذج (MCP Resources Inspector)' : 'MCP Context Resources Inspector'}
+              </span>
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               {isRtl
@@ -1878,9 +1930,7 @@ export default function KnowledgeBase({
                   <Zap className="w-4 h-4 fill-amber-500" />
                 </span>
                 <div>
-                  <h4 className="text-xs font-extrabold text-slate-900">
-                    {previewOcrEntry.fileName}
-                  </h4>
+                  <h4 className="text-xs font-extrabold text-slate-900">{previewOcrEntry.fileName}</h4>
                   <span className="text-[10px] font-mono text-slate-400">
                     Mistral OCR Cache • {previewOcrEntry.extractedText.length.toLocaleString()} characters
                   </span>
@@ -1900,9 +1950,7 @@ export default function KnowledgeBase({
             </div>
 
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
-              <span className="text-slate-500 font-mono text-[11px]">
-                Engine: {previewOcrEntry.engineUsed}
-              </span>
+              <span className="text-slate-500 font-mono text-[11px]">Engine: {previewOcrEntry.engineUsed}</span>
 
               <div className="flex items-center gap-2">
                 <button

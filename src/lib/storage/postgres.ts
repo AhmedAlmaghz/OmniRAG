@@ -32,7 +32,9 @@ let initialized = false;
 
 export function resetPostgresPool() {
   if (pool) {
-    try { pool.end(); } catch (e) {}
+    try {
+      pool.end();
+    } catch (e) {}
   }
   pool = null;
   initialized = false;
@@ -47,19 +49,22 @@ export function getPostgresPool(req?: any): any {
 
   const connectionString = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
   if (!connectionString) {
-    console.warn('PostgreSQL Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.');
+    console.warn(
+      'PostgreSQL Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.',
+    );
     return null;
   }
 
   try {
     const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+    const sslMode = new URL(connectionString).searchParams.get('sslmode');
+    const strictTls = process.env.PG_TLS_REJECT_UNAUTHORIZED !== 'false';
     pool = new Pool({
       connectionString,
-      ssl: isLocal
-        ? false
-        : {
-            rejectUnauthorized: false, // compatible with Supabase/Neon/etc without requiring custom certificates
-          },
+      // Local dev: no TLS. Managed clouds (Supabase/Neon) advertise their own
+      // CA via the driver's bundled certs; only loosen verification when
+      // explicitly allowed via env (rare, staged migrations only).
+      ssl: isLocal ? false : strictTls ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 8000,
@@ -193,7 +198,9 @@ export async function ensurePostgresTables() {
 
       // Run instant migrations to fix any missing columns on existing tables in PostgreSQL
       try {
-        await client.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NOT NULL DEFAULT 'file';`);
+        await client.query(
+          `ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NOT NULL DEFAULT 'file';`,
+        );
         await client.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_count INT DEFAULT 0;`);
         await client.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS collection_ids JSONB;`);
         await client.query(`ALTER TABLE chunks ADD COLUMN IF NOT EXISTS document_title TEXT NOT NULL DEFAULT '';`);
@@ -313,7 +320,7 @@ async function seedPostgresData(client: any) {
         await client.query(
           `INSERT INTO collections (id, tenant_id, name, description, document_count, created_at)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [col.id, col.tenantId, col.name, col.description, col.documentCount, col.createdAt]
+          [col.id, col.tenantId, col.name, col.description, col.documentCount, col.createdAt],
         );
       }
     }
@@ -338,7 +345,7 @@ async function seedPostgresData(client: any) {
             docObj.createdAt,
             JSON.stringify(docObj.metadata || {}),
             JSON.stringify(docObj.collectionIds || []),
-          ]
+          ],
         );
       }
     }
@@ -361,7 +368,7 @@ async function seedPostgresData(client: any) {
             chunk.pageNumber || 1,
             chunk.language,
             JSON.stringify(chunk.metadata || {}),
-          ]
+          ],
         );
       }
     }
@@ -394,7 +401,7 @@ async function seedPostgresData(client: any) {
             s.transportType || 'http',
             JSON.stringify(s.config || {}),
             JSON.stringify(s.customToolSchemas || {}),
-          ]
+          ],
         );
       }
     }
@@ -420,7 +427,7 @@ async function seedPostgresData(client: any) {
             s.lastError || '',
             s.createdAt,
             JSON.stringify(s.collectionIds || []),
-          ]
+          ],
         );
       }
     }
@@ -433,7 +440,17 @@ async function seedPostgresData(client: any) {
         await client.query(
           `INSERT INTO sync_logs (id, tenant_id, source_id, source_name, status, items_processed, duration_ms, message, timestamp)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [log.id, log.tenantId, log.sourceId, log.sourceName, log.status, log.itemsProcessed, log.durationMs, log.message, log.timestamp]
+          [
+            log.id,
+            log.tenantId,
+            log.sourceId,
+            log.sourceName,
+            log.status,
+            log.itemsProcessed,
+            log.durationMs,
+            log.message,
+            log.timestamp,
+          ],
         );
       }
     }
@@ -446,7 +463,17 @@ async function seedPostgresData(client: any) {
         await client.query(
           `INSERT INTO audit_logs (id, tenant_id, actor_id, action, resource_type, resource_id, status, details, timestamp)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [entry.id, entry.tenantId, entry.actorId, entry.action, entry.resourceType, entry.resourceId, entry.status, entry.details, entry.timestamp]
+          [
+            entry.id,
+            entry.tenantId,
+            entry.actorId,
+            entry.action,
+            entry.resourceType,
+            entry.resourceId,
+            entry.status,
+            entry.details,
+            entry.timestamp,
+          ],
         );
       }
     }
@@ -581,7 +608,7 @@ export async function insertPostgresDocument(doc: {
         doc.createdAt,
         JSON.stringify(enrichedMetadata),
         JSON.stringify(doc.collectionIds || []),
-      ]
+      ],
     );
     await client.query('COMMIT');
   } catch (error) {
@@ -679,7 +706,7 @@ export async function insertPostgresChunk(chunk: {
         chunk.pageNumber,
         chunk.language,
         JSON.stringify(chunk.metadata || {}),
-      ]
+      ],
     );
     await client.query('COMMIT');
   } catch (error) {
@@ -781,7 +808,7 @@ export async function insertPostgresSource(source: SourceConnector) {
         source.lastError || '',
         source.createdAt,
         JSON.stringify(source.collectionIds || []),
-      ]
+      ],
     );
   } catch (error) {
     console.error('Failed to insert Postgres source:', error);
@@ -855,7 +882,17 @@ export async function insertPostgresSyncLog(log: SyncLogEntry) {
        ON CONFLICT (id) DO UPDATE 
        SET status = EXCLUDED.status, items_processed = EXCLUDED.items_processed, 
            duration_ms = EXCLUDED.duration_ms, message = EXCLUDED.message, timestamp = EXCLUDED.timestamp;`,
-      [log.id, log.tenantId, log.sourceId, log.sourceName, log.status, log.itemsProcessed, log.durationMs, log.message, log.timestamp]
+      [
+        log.id,
+        log.tenantId,
+        log.sourceId,
+        log.sourceName,
+        log.status,
+        log.itemsProcessed,
+        log.durationMs,
+        log.message,
+        log.timestamp,
+      ],
     );
   } catch (error) {
     console.error('Failed to insert Postgres sync log:', error);
@@ -873,7 +910,9 @@ export async function getPostgresCollections(tenantId: string): Promise<Collecti
 
   const client = await p.connect();
   try {
-    const res = await client.query('SELECT * FROM collections WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
+    const res = await client.query('SELECT * FROM collections WHERE tenant_id = $1 ORDER BY created_at DESC', [
+      tenantId,
+    ]);
     return res.rows.map((row: any) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -902,7 +941,7 @@ export async function insertPostgresCollection(col: Collection) {
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (id) DO UPDATE 
        SET name = EXCLUDED.name, description = EXCLUDED.description, document_count = EXCLUDED.document_count;`,
-      [col.id, col.tenantId, col.name, col.description, col.documentCount, col.createdAt]
+      [col.id, col.tenantId, col.name, col.description, col.documentCount, col.createdAt],
     );
   } catch (error) {
     console.error('Failed to insert Postgres collection:', error);
@@ -920,7 +959,9 @@ export async function getPostgresMcpServers(tenantId: string): Promise<MCPServer
 
   const client = await p.connect();
   try {
-    const res = await client.query('SELECT * FROM mcp_servers WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
+    const res = await client.query('SELECT * FROM mcp_servers WHERE tenant_id = $1 ORDER BY created_at DESC', [
+      tenantId,
+    ]);
     return res.rows.map((row: any) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -988,7 +1029,7 @@ export async function insertPostgresMcpServer(s: MCPServerConfig) {
         s.transportType || 'http',
         JSON.stringify(s.config || {}),
         JSON.stringify(s.customToolSchemas || {}),
-      ]
+      ],
     );
   } catch (error) {
     console.error('Failed to insert Postgres MCP server:', error);
@@ -1050,7 +1091,17 @@ export async function insertPostgresAuditLog(entry: AuditLogEntry) {
     await client.query(
       `INSERT INTO audit_logs (id, tenant_id, actor_id, action, resource_type, resource_id, status, details, timestamp)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [entry.id, entry.tenantId, entry.actorId, entry.action, entry.resourceType, entry.resourceId, entry.status, entry.details || '', entry.timestamp]
+      [
+        entry.id,
+        entry.tenantId,
+        entry.actorId,
+        entry.action,
+        entry.resourceType,
+        entry.resourceId,
+        entry.status,
+        entry.details || '',
+        entry.timestamp,
+      ],
     );
   } catch (error) {
     console.error('Failed to insert Postgres audit log:', error);
@@ -1114,7 +1165,7 @@ export async function insertPostgresToolCall(tc: MCPToolCall) {
         tc.hasSideEffect || false,
         tc.userConfirmed || false,
         tc.timestamp,
-      ]
+      ],
     );
   } catch (error) {
     console.error('Failed to insert Postgres tool call:', error);
@@ -1131,7 +1182,9 @@ export async function getPostgresConversations(tenantId: string): Promise<Conver
 
   const client = await p.connect();
   try {
-    const res = await client.query('SELECT * FROM conversations WHERE tenant_id = $1 ORDER BY updated_at DESC', [tenantId]);
+    const res = await client.query('SELECT * FROM conversations WHERE tenant_id = $1 ORDER BY updated_at DESC', [
+      tenantId,
+    ]);
     return res.rows.map((row: any) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -1204,7 +1257,7 @@ export async function insertPostgresConversation(conv: Conversation) {
         JSON.stringify(conv.enabledMcpServers || []),
         conv.createdAt,
         conv.updatedAt,
-      ]
+      ],
     );
   } catch (error) {
     console.error('Failed to insert Postgres conversation:', error);
@@ -1242,7 +1295,7 @@ export async function getPostgresMessages(conversationId: string, tenantId: stri
   try {
     const res = await client.query(
       'SELECT * FROM messages WHERE conversation_id = $1 AND tenant_id = $2 ORDER BY created_at ASC',
-      [conversationId, tenantId]
+      [conversationId, tenantId],
     );
     return res.rows.map((row: any) => ({
       id: row.id,
@@ -1291,7 +1344,7 @@ export async function insertPostgresMessage(msg: Message) {
         JSON.stringify(msg.toolCalls || []),
         msg.hasPiiRedacted || false,
         msg.createdAt,
-      ]
+      ],
     );
   } catch (error) {
     console.error('Failed to insert Postgres message:', error);
@@ -1304,16 +1357,18 @@ export async function insertPostgresMessage(msg: Message) {
 export async function searchPostgresLexical(
   queryText: string,
   tenantId: string,
-  limitVal: number = 10
-): Promise<Array<{
-  id: string;
-  documentId: string;
-  content: string;
-  chunkIndex: number;
-  pageNumber: number;
-  language: string;
-  lexicalScore: number;
-}>> {
+  limitVal: number = 10,
+): Promise<
+  Array<{
+    id: string;
+    documentId: string;
+    content: string;
+    chunkIndex: number;
+    pageNumber: number;
+    language: string;
+    lexicalScore: number;
+  }>
+> {
   await ensurePostgresTables();
   const p = getPostgresPool();
   if (!p) return [];
@@ -1326,7 +1381,10 @@ export async function searchPostgresLexical(
     const cleanQuery = queryText.replace(/['"&|!()*:<>\s]+/g, ' ').trim();
     if (!cleanQuery) return [];
 
-    const ftsQuery = cleanQuery.split(' ').map(w => `${w}:*`).join(' & ');
+    const ftsQuery = cleanQuery
+      .split(' ')
+      .map((w) => `${w}:*`)
+      .join(' & ');
 
     let result;
     try {
@@ -1340,7 +1398,7 @@ export async function searchPostgresLexical(
          WHERE to_tsvector($1, content) @@ to_tsquery($1, $2)
          ORDER BY rank DESC
          LIMIT $3`,
-        [dict, ftsQuery, limitVal]
+        [dict, ftsQuery, limitVal],
       );
     } catch (ftsError) {
       console.warn('FTS query failed, falling back to ILIKE text search:', ftsError);
@@ -1350,7 +1408,7 @@ export async function searchPostgresLexical(
          FROM chunks
          WHERE (content ILIKE $1 OR content ILIKE $2)
          LIMIT $3`,
-        [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, limitVal]
+        [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, limitVal],
       );
     }
 

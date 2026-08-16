@@ -31,7 +31,7 @@ export interface UseDocumentCacheReturn {
   getCache: (
     fileOrHash: File | Blob | ArrayBuffer | string,
     fileName?: string,
-    fileSize?: number
+    fileSize?: number,
   ) => Promise<{ entry: OcrCacheEntry | null; cacheKey: string }>;
   saveCache: (entry: OcrCacheEntry) => Promise<void>;
   deleteCache: (cacheKey: string) => Promise<void>;
@@ -89,9 +89,9 @@ export function useDocumentCache(): UseDocumentCacheReturn {
     async (
       fileOrHash: File | Blob | ArrayBuffer | string,
       fileName: string = '',
-      fileSize: number = 0
+      fileSize: number = 0,
     ): Promise<{ entry: OcrCacheEntry | null; cacheKey: string }> => {
-      let cacheKey =
+      const cacheKey =
         typeof fileOrHash === 'string' && fileOrHash.length >= 32 && !fileOrHash.includes(' ')
           ? fileOrHash
           : await generateFileHash(fileOrHash, fileName, fileSize);
@@ -109,7 +109,7 @@ export function useDocumentCache(): UseDocumentCacheReturn {
 
       return { entry, cacheKey };
     },
-    []
+    [],
   );
 
   const saveCache = useCallback(
@@ -120,7 +120,7 @@ export function useDocumentCache(): UseDocumentCacheReturn {
       }
       refreshCache();
     },
-    [refreshCache]
+    [refreshCache],
   );
 
   const deleteCache = useCallback(
@@ -131,7 +131,7 @@ export function useDocumentCache(): UseDocumentCacheReturn {
       }
       refreshCache();
     },
-    [refreshCache]
+    [refreshCache],
   );
 
   const clearCache = useCallback(async (): Promise<void> => {

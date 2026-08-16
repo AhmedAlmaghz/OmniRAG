@@ -10,13 +10,10 @@ export async function runMigrations() {
 
   console.log('Starting PostgreSQL schema migrations...');
   const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+  const strictTls = process.env.PG_TLS_REJECT_UNAUTHORIZED !== 'false';
   const pool = new Pool({
     connectionString,
-    ssl: isLocal
-      ? false
-      : {
-          rejectUnauthorized: false,
-        },
+    ssl: isLocal ? false : strictTls ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
     max: 1,
   });
 

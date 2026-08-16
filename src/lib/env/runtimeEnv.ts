@@ -1,8 +1,20 @@
 const globalServerEnvStore: Record<string, string> = {};
 
 /**
+ * Header-supplied environment variables are a client-side credential injection
+ * vector (e.g. redirecting DATABASE_URL to an attacker server). They are only
+ * honored in development, or when explicitly enabled via ALLOW_CLIENT_ENV.
+ */
+function isClientEnvAllowed(): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.ALLOW_CLIENT_ENV === 'true';
+  }
+  return true;
+}
+
+/**
  * Get an environment variable from:
- * 1. Request headers (x-env-<key>)
+ * 1. Request headers (x-env-<key>) — non-production only, see isClientEnvAllowed
  * 2. In-memory runtime store (globalServerEnvStore)
  * 3. System process.env
  */
@@ -20,8 +32,8 @@ export function getEnv(key: string, reqOrHeaders?: any): string {
 
   const headerKey = `x-env-${key.toLowerCase().replace(/_/g, '-')}`;
 
-  // 1. Check request headers
-  if (reqOrHeaders) {
+  // 1. Check request headers (blocked in production unless explicitly enabled)
+  if (reqOrHeaders && isClientEnvAllowed()) {
     let headerVal: string | null = null;
     try {
       if (reqOrHeaders.headers && typeof reqOrHeaders.headers.get === 'function') {
@@ -91,7 +103,16 @@ export function setServerEnvs(envs: Record<string, string>): void {
 }
 
 export function getAllRuntimeEnvs(): Record<string, string> {
-  const keys = ['DATABASE_URL', 'POSTGRES_URL', 'QDRANT_URL', 'QDRANT_API_KEY', 'MISTRAL_API_KEY', 'UNSTRUCTURED_API_KEY', 'GEMINI_API_KEY', 'APP_URL'];
+  const keys = [
+    'DATABASE_URL',
+    'POSTGRES_URL',
+    'QDRANT_URL',
+    'QDRANT_API_KEY',
+    'MISTRAL_API_KEY',
+    'UNSTRUCTURED_API_KEY',
+    'GEMINI_API_KEY',
+    'APP_URL',
+  ];
   const res: Record<string, string> = {};
   keys.forEach((k) => {
     res[k] = getEnv(k);

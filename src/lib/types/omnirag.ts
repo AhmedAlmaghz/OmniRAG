@@ -198,7 +198,14 @@ export interface SourceConnector {
   name: string;
   type: SourceType;
   status: SourceStatus;
+  /**
+   * Connector configuration. Credential-bearing keys (apiKey, token, password,
+   * secret, connectionString) are stored AES-256-GCM encrypted at rest via
+   * {@link encryptSourceConfig}; decrypted lazily for sync execution only.
+   */
   config: Record<string, any>;
+  /** Set true once {@link config} has been encrypted at rest. */
+  configEncrypted?: boolean;
   syncSchedule: string; // Cron e.g. "0 */6 * * *" or "manual"
   lastSyncAt?: string;
   nextSyncAt?: string;
