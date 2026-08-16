@@ -1,5 +1,3 @@
-import { auth } from './firebaseAuth';
-
 export function resolveUrl(url: string): string {
   if (!url || !url.startsWith('/')) {
     return url;
@@ -70,30 +68,16 @@ function wrapResponseWithSafeJson(res: Response): Response {
   return res;
 }
 
+/**
+ * Authenticated client fetch. Auth is cookie-based: the opaque session token
+ * lives in an httpOnly cookie set by the server, so the browser attaches it
+ * automatically (via `credentials: 'same-origin'`). `X-Requested-With` is set
+ * so state-changing routes can refuse cross-site forged requests (CSRF guard).
+ */
 export async function fetchWithAuth(url: string | URL | Request, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
 
-  // Auth is strictly Firebase-only. There is no demo/tenant fallback: callers
-  // run only after onAuthStateChanged reports a Firebase user (MainApp gates
-  // the UI behind auth), so a missing currentUser is a real error — surface
-  // it instead of impersonating a tenant.
-  if (!auth || !auth.currentUser) {
-    throw new Error('omnirag-auth-required');
-  }
-
-  let token: string;
-  try {
-    let timeoutId: NodeJS.Timeout | undefined;
-    const timeoutPromise = new Promise<string>(
-      (_, reject) => (timeoutId = setTimeout(() => reject(new Error('Auth token timeout')), 1500)),
-    );
-    token = await Promise.race([auth.currentUser.getIdToken(), timeoutPromise]);
-    if (timeoutId) clearTimeout(timeoutId);
-  } catch (e) {
-    console.warn('Firebase ID token retrieval failed — aborting request:', e);
-    throw new Error('omnirag-auth-required');
-  }
-  headers.set('Authorization', `Bearer ${token}`);
+  headers.set('X-Requested-With', 'XMLHttpRequest');
 
   // Attach client-saved environment variables for runtime backend execution
   if (typeof window !== 'undefined') {
@@ -122,11 +106,14 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
   const rawUrl = typeof url === 'string' ? url : url.toString();
   const resolvedUrl = resolveUrl(rawUrl);
 
+  const fetchOptions: RequestInit = {
+    ...options,
+    headers,
+    credentials: options.credentials ?? 'same-origin',
+  };
+
   try {
-    const response = await fetch(resolvedUrl, {
-      ...options,
-      headers,
-    });
+    const response = await fetch(resolvedUrl, fetchOptions);
     return wrapResponseWithSafeJson(response);
   } catch (primaryError) {
     console.warn(`Primary fetch to ${resolvedUrl} failed, trying relative/fallback URL:`, primaryError);
@@ -140,10 +127,7 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
 
     if (fallbackUrl !== resolvedUrl) {
       try {
-        const response = await fetch(fallbackUrl, {
-          ...options,
-          headers,
-        });
+        const response = await fetch(fallbackUrl, fetchOptions);
         return wrapResponseWithSafeJson(response);
       } catch (fallbackError) {
         console.warn(`Fallback fetch to ${fallbackUrl} also failed:`, fallbackError);

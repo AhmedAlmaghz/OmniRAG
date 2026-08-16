@@ -12,9 +12,8 @@ import AnalyticsCenter from '@/components/AnalyticsCenter';
 import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
 import FirstLaunchEnvModal from '@/components/env/FirstLaunchEnvModal';
-import { auth, logOutUser } from '@/lib/auth/firebaseAuth';
+import { logOutUser, getSession } from '@/lib/auth/authClient';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
-import { onAuthStateChanged } from 'firebase/auth';
 
 import {
   MessageSquare,
@@ -63,11 +62,12 @@ export default function MainApp() {
         setActiveTab(savedTab);
       }
 
-      // Faith/HUD mitigation: `savedAuth` only shortens the login-screen flash — it
+      // Flash-reduction: `savedAuth` only shortens the login-screen flash — it
       // is a yes/no flag, never an identity. tenantId and userEmail are derived
-      // EXCLUSIVELY from the onAuthStateChanged handler below, so a tampered
-      // localStorage cannot impersonate a tenant; a forged session flag can only
-      // briefly delay the auth gate, which Firebase then reopens to the true user.
+      // EXCLUSIVELY from the server session (getSession boot, below), so a
+      // tampered localStorage cannot impersonate a tenant; a forged flag can
+      // only briefly delay the auth gate, which the server reopens to the true
+      // session holder.
       if (savedAuth === 'true') {
         setIsAuthenticated(true);
         if (savedEmail) setUserEmail(savedEmail);
@@ -156,44 +156,40 @@ export default function MainApp() {
     fetchTenantName();
   }, [tenantId, userEmail, lang]);
 
-  // Subscribe to Firebase Auth state changes
+  // Rehydrate auth state from the server-side session (Postgres-only, cookie-based).
+  // The httpOnly cookie is opaque, so identity can only be recovered via the
+  // session route. We do NOT trust localStorage for identity — it stays a
+  // yes/no flash-reduction flag (set above); tenantId/email come from the server.
   useEffect(() => {
-    if (!auth) return;
-
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        const tid = `tenant-${user.uid}`;
-        const email = user.email || '';
+    let cancelled = false;
+    (async () => {
+      const session = await getSession();
+      if (cancelled) return;
+      if (session.authenticated) {
         setIsAuthenticated(true);
-        setTenantId(tid);
-        setUserEmail(email);
+        setTenantId(session.tenantId);
+        setUserEmail(session.userEmail);
         if (typeof window !== 'undefined') {
           localStorage.setItem('omnirag-auth', 'true');
-          localStorage.setItem('omnirag-user-email', email);
+          localStorage.setItem('omnirag-user-email', session.userEmail);
         }
       } else {
-        // If Firebase auth user is null, check if a valid local storage session exists before forcing logout
+        setIsAuthenticated(false);
+        setUserEmail(null);
         if (typeof window !== 'undefined') {
-          const savedAuth = localStorage.getItem('omnirag-auth');
-          if (savedAuth !== 'true') {
-            setIsAuthenticated(false);
-            setUserEmail(null);
-          }
-        } else {
-          setIsAuthenticated(false);
-          setUserEmail(null);
+          localStorage.removeItem('omnirag-auth');
+          localStorage.removeItem('omnirag-user-email');
         }
       }
-    });
-
-    return () => unsubscribe();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleLogOut = async () => {
     try {
-      if (auth) {
-        await logOutUser();
-      }
+      await logOutUser();
     } catch (e) {
       console.error('Logout error:', e);
     } finally {

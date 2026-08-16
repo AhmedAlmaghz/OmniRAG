@@ -90,7 +90,7 @@ export function randomInt(maxExclusive: number): number {
 /**
  * random alphanumeric plus a guaranteed digit and symbol so it passes naive
  * complexity validators. For demo/guest credentials only — production auth
- * flows use Firebase.
+ * flows hash credentials server-side with Argon2id.
  */
 export function randomPassword(length = 12): string {
   const base = randomAlphaNum(length - 2);

@@ -39,7 +39,15 @@ import {
   FolderKanban,
   Clock,
 } from 'lucide-react';
-import { Message, ChatMode, Citation, MCPToolCall, MCPServerConfig, Conversation, Collection } from '@/lib/types/omnirag';
+import {
+  Message,
+  ChatMode,
+  Citation,
+  MCPToolCall,
+  MCPServerConfig,
+  Conversation,
+  Collection,
+} from '@/lib/types/omnirag';
 import { RichMessageRenderer } from '@/components/chat/RichMessageRenderer';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
@@ -50,7 +58,7 @@ interface ChatStudioProps {
 }
 
 export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudioProps) {
-  // Durable Firestore Conversation & Messages States
+  // Durable PostgreSQL Conversation & Messages States
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>('conv-init');
   const [showHistoryDrawer, setShowHistoryDrawer] = useState<boolean>(false);
@@ -99,7 +107,7 @@ Supported rich formatting capabilities:
   const [pendingToolApproval, setPendingToolApproval] = useState<MCPToolCall | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
   const [mcpApprovalSuccess, setMcpApprovalSuccess] = useState<string | null>(null);
-  
+
   // Real-time workspace inspection states
   const [activeRightTab, setActiveRightTab] = useState<'citations' | 'mcp' | 'logs'>('mcp');
   const [mcpServers, setMcpServers] = useState<MCPServerConfig[]>([]);
@@ -133,7 +141,7 @@ Supported rich formatting capabilities:
     return () => clearTimeout(timer);
   }, [inputPrompt, tenantId, activeConversationId]);
 
-  // Load conversations from Firestore
+  // Load conversations from PostgreSQL
   const fetchConversations = async (autoSelectFirst = true) => {
     setIsLoadingConversations(true);
     try {
@@ -211,7 +219,7 @@ Supported rich formatting capabilities:
         updated = [...prev, colId];
       }
 
-      // Save updated collectionIds to current conversation in Firestore
+      // Save updated collectionIds to current conversation in PostgreSQL
       if (activeConversationId) {
         const activeConv = conversations.find((c) => c.id === activeConversationId);
         if (activeConv) {
@@ -228,7 +236,7 @@ Supported rich formatting capabilities:
               model: activeConv.model,
               collectionIds: updated,
             }),
-          }).catch((err) => console.error("Error saving updated collectionIds to conversation:", err));
+          }).catch((err) => console.error('Error saving updated collectionIds to conversation:', err));
         }
       }
 
@@ -245,7 +253,7 @@ Supported rich formatting capabilities:
     setSelectedCollectionIds([]);
   };
 
-  // Create a new chat session in Firestore
+  // Create a new chat session in PostgreSQL
   const handleCreateNewConversation = async () => {
     try {
       const res = await fetchWithAuth('/api/v1/conversations', {
@@ -256,7 +264,10 @@ Supported rich formatting capabilities:
           tenantId,
           title: lang === 'ar' ? 'محادثة جديدة' : 'New Conversation',
           mode: selectedMode,
-          welcomeText: lang === 'ar' ? 'مرحباً بك في الجلسة الجديدة. كيف يمكنني مساعدتك اليوم؟' : 'Welcome to the new session. How can I help you today?',
+          welcomeText:
+            lang === 'ar'
+              ? 'مرحباً بك في الجلسة الجديدة. كيف يمكنني مساعدتك اليوم؟'
+              : 'Welcome to the new session. How can I help you today?',
         }),
       });
       if (res.ok) {
@@ -272,10 +283,17 @@ Supported rich formatting capabilities:
     }
   };
 
-  // Delete a chat session from Firestore
+  // Delete a chat session from PostgreSQL
   const handleDeleteConversation = async (convId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(lang === 'ar' ? 'هل أنت تأكد من حذف هذه المحادثة بالكامل من قاعدة البيانات؟' : 'Are you sure you want to delete this chat session?')) return;
+    if (
+      !confirm(
+        lang === 'ar'
+          ? 'هل أنت تأكد من حذف هذه المحادثة بالكامل من قاعدة البيانات؟'
+          : 'Are you sure you want to delete this chat session?',
+      )
+    )
+      return;
     try {
       const res = await fetchWithAuth('/api/v1/conversations', {
         method: 'POST',
@@ -305,7 +323,7 @@ Supported rich formatting capabilities:
     }
   };
 
-  // Rename a chat session in Firestore
+  // Rename a chat session in PostgreSQL
   const handleRenameConversation = async (convId: string) => {
     if (!editingTitle.trim()) return;
     try {
@@ -330,10 +348,22 @@ Supported rich formatting capabilities:
   };
 
   const modeDescriptions = {
-    private: lang === 'ar' ? 'وضع خاص: حظر البحث المباشر في الويب وقصر النطاق على المستندات المحلية فقط مع عزل أدوات MCP الخارجية' : 'Private: Strict local documents only with external MCP tool containment',
-    hybrid: lang === 'ar' ? 'وضع هجين: دمج الاسترجاع المتجهي مع المعجمي وRRF مع تفعيل أدوات MCP' : 'Hybrid: Vector + Lexical RRF Fusion with authorized MCP tools',
-    general: lang === 'ar' ? 'وضع عام: المعرفة العامة المباشرة دون العودة للمستندات المحلية' : 'General: Direct Model Knowledge without local document context',
-    analysis: lang === 'ar' ? 'وضع التحليل المعمق: استخدام نماذج الاستدلال المتقدم للتحليل الشامل للملفات والأدوات' : 'Analysis: Deep Reasoning Model utilizing all documents and active tools',
+    private:
+      lang === 'ar'
+        ? 'وضع خاص: حظر البحث المباشر في الويب وقصر النطاق على المستندات المحلية فقط مع عزل أدوات MCP الخارجية'
+        : 'Private: Strict local documents only with external MCP tool containment',
+    hybrid:
+      lang === 'ar'
+        ? 'وضع هجين: دمج الاسترجاع المتجهي مع المعجمي وRRF مع تفعيل أدوات MCP'
+        : 'Hybrid: Vector + Lexical RRF Fusion with authorized MCP tools',
+    general:
+      lang === 'ar'
+        ? 'وضع عام: المعرفة العامة المباشرة دون العودة للمستندات المحلية'
+        : 'General: Direct Model Knowledge without local document context',
+    analysis:
+      lang === 'ar'
+        ? 'وضع التحليل المعمق: استخدام نماذج الاستدلال المتقدم للتحليل الشامل للملفات والأدوات'
+        : 'Analysis: Deep Reasoning Model utilizing all documents and active tools',
   };
 
   const fetchMcpServers = async () => {
@@ -347,7 +377,7 @@ Supported rich formatting capabilities:
         }
       }
     } catch (err) {
-      console.error("Error fetching MCP servers in ChatStudio:", err);
+      console.error('Error fetching MCP servers in ChatStudio:', err);
     } finally {
       setIsRefreshingServers(false);
     }
@@ -368,7 +398,7 @@ Supported rich formatting capabilities:
         await fetchMcpServers();
       }
     } catch (err) {
-      console.error("Error toggling tool:", err);
+      console.error('Error toggling tool:', err);
     }
   };
 
@@ -384,7 +414,7 @@ Supported rich formatting capabilities:
         await fetchMcpServers();
       }
     } catch (err) {
-      console.error("Error pinging server:", err);
+      console.error('Error pinging server:', err);
     } finally {
       setPingingServerId(null);
     }
@@ -411,10 +441,10 @@ Supported rich formatting capabilities:
   };
 
   const handleExportChat = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(messages, null, 2));
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(messages, null, 2));
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `omnirag-chat-${tenantId}-${Date.now()}.json`);
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `omnirag-chat-${tenantId}-${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -432,7 +462,7 @@ Supported rich formatting capabilities:
       tenantId,
       conversationId: activeConversationId,
       role: 'user',
-      content: approvedToolCall 
+      content: approvedToolCall
         ? `${lang === 'ar' ? '✓ موافقة وتفويض تشغيل أداة الـ MCP:' : '✓ Approved and Authorized MCP Tool:'} ${approvedToolCall.scopedToolName}`
         : textPrompt,
       createdAt: new Date().toISOString(),
@@ -442,7 +472,7 @@ Supported rich formatting capabilities:
     if (!promptToSend) setInputPrompt('');
     setIsLoading(true);
 
-    // Persist User Message to Firestore
+    // Persist User Message to PostgreSQL
     fetchWithAuth('/api/v1/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -451,7 +481,7 @@ Supported rich formatting capabilities:
         tenantId,
         message: userMsg,
       }),
-    }).catch((err) => console.error("Firestore user message save error:", err));
+    }).catch((err) => console.error('PostgreSQL user message save error:', err));
 
     try {
       const res = await fetchWithAuth('/api/v1/chat/completions', {
@@ -495,7 +525,7 @@ Supported rich formatting capabilities:
             tenantId,
             message: blockedMsg,
           }),
-        }).catch((err) => console.error("Firestore blocked message save error:", err));
+        }).catch((err) => console.error('PostgreSQL blocked message save error:', err));
 
         setIsLoading(false);
         return;
@@ -507,7 +537,7 @@ Supported rich formatting capabilities:
         // Switch to logs tab to draw user's attention
         setActiveRightTab('logs');
         setSessionToolCalls((prev) => {
-          const exists = prev.some(tc => tc.id === data.pendingToolCall.id);
+          const exists = prev.some((tc) => tc.id === data.pendingToolCall.id);
           if (exists) return prev;
           return [...prev, data.pendingToolCall];
         });
@@ -516,7 +546,7 @@ Supported rich formatting capabilities:
       // Merge executed tool calls if any
       if (data.toolCalls && data.toolCalls.length > 0) {
         setSessionToolCalls((prev) => {
-          const existingIds = new Set(prev.map(t => t.id));
+          const existingIds = new Set(prev.map((t) => t.id));
           const newCalls = data.toolCalls.filter((tc: any) => !existingIds.has(tc.id));
           return [...prev, ...newCalls];
         });
@@ -538,7 +568,7 @@ Supported rich formatting capabilities:
 
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // Persist Assistant Message to Firestore
+      // Persist Assistant Message to PostgreSQL
       fetchWithAuth('/api/v1/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -547,9 +577,11 @@ Supported rich formatting capabilities:
           tenantId,
           message: assistantMsg,
         }),
-      }).then(() => {
-        fetchConversations(false);
-      }).catch((err) => console.error("Firestore assistant message save error:", err));
+      })
+        .then(() => {
+          fetchConversations(false);
+        })
+        .catch((err) => console.error('PostgreSQL assistant message save error:', err));
 
       // If citations exist, auto-select Citations tab
       if (data.citations && data.citations.length > 0) {
@@ -582,7 +614,7 @@ Supported rich formatting capabilities:
     };
     setPendingToolApproval(mockCall);
     setSessionToolCalls((prev) => {
-      const exists = prev.some(t => t.id === mockCall.id);
+      const exists = prev.some((t) => t.id === mockCall.id);
       if (exists) return prev;
       return [...prev, mockCall];
     });
@@ -591,14 +623,14 @@ Supported rich formatting capabilities:
 
   const handleApproveTool = (toolCall: MCPToolCall) => {
     const approvedCall = { ...toolCall, status: 'approved' as const };
-    setMcpApprovalSuccess(lang === 'ar' ? 'تمت الموافقة على الأداة وتحديث سجلات التدقيق!' : 'Tool approved and authorized!');
+    setMcpApprovalSuccess(
+      lang === 'ar' ? 'تمت الموافقة على الأداة وتحديث سجلات التدقيق!' : 'Tool approved and authorized!',
+    );
     setPendingToolApproval(null);
     setTimeout(() => setMcpApprovalSuccess(null), 4000);
 
     // Update in logs
-    setSessionToolCalls((prev) =>
-      prev.map(t => t.id === toolCall.id ? { ...t, status: 'approved' } : t)
-    );
+    setSessionToolCalls((prev) => prev.map((t) => (t.id === toolCall.id ? { ...t, status: 'approved' } : t)));
 
     // Trigger actual approved tool execution on backend
     handleSendMessage(inputPrompt || 'تأكيد موافقة أداة الـ MCP', approvedCall);
@@ -608,10 +640,22 @@ Supported rich formatting capabilities:
   const getDynamicSuggestions = (msgList: Message[], language: 'ar' | 'en') => {
     if (!msgList || msgList.length <= 1) {
       return [
-        { label: language === 'ar' ? '📜 اتفاقية NDA لعام 2026' : '📜 NDA Terms', query: 'ما هي شروط اتفاقية عدم الإفصاح والسرية NDA؟' },
-        { label: language === 'ar' ? '🛡️ سياسة أمن ISO27001' : '🛡️ ISO27001 Security', query: 'ما هي سياسة الاستجابة للحوادث السيبرانية والمعلوماتية ISO27001؟' },
-        { label: language === 'ar' ? '🔍 بحث حقيقي بالويب (MCP)' : '🔍 Live Web Search', query: 'ابحث في الويب عن أحدث معايير الأمن السيبراني لعام 2026' },
-        { label: language === 'ar' ? '📊 استعلام قاعدة البيانات (MCP)' : '📊 Database Query', query: 'استعلم عن سجلات الامتثال المتاحة في قاعدة البيانات' },
+        {
+          label: language === 'ar' ? '📜 اتفاقية NDA لعام 2026' : '📜 NDA Terms',
+          query: 'ما هي شروط اتفاقية عدم الإفصاح والسرية NDA؟',
+        },
+        {
+          label: language === 'ar' ? '🛡️ سياسة أمن ISO27001' : '🛡️ ISO27001 Security',
+          query: 'ما هي سياسة الاستجابة للحوادث السيبرانية والمعلوماتية ISO27001؟',
+        },
+        {
+          label: language === 'ar' ? '🔍 بحث حقيقي بالويب (MCP)' : '🔍 Live Web Search',
+          query: 'ابحث في الويب عن أحدث معايير الأمن السيبراني لعام 2026',
+        },
+        {
+          label: language === 'ar' ? '📊 استعلام قاعدة البيانات (MCP)' : '📊 Database Query',
+          query: 'استعلم عن سجلات الامتثال المتاحة في قاعدة البيانات',
+        },
       ];
     }
 
@@ -620,61 +664,163 @@ Supported rich formatting capabilities:
     const textContext = ((lastAssistant?.content || '') + ' ' + (lastUser?.content || '')).toLowerCase();
 
     // Legal / NDA Context
-    if (textContext.includes('nda') || textContext.includes('سرية') || textContext.includes('عقد') || textContext.includes('اتفاقية')) {
+    if (
+      textContext.includes('nda') ||
+      textContext.includes('سرية') ||
+      textContext.includes('عقد') ||
+      textContext.includes('اتفاقية')
+    ) {
       return [
-        { label: language === 'ar' ? '⚖️ الالتزامات والغرائم' : '⚖️ Liabilities & Penalties', query: 'ما هي الغرامات والالتزامات المالية المنصوص عليها عند الإخلال ببنود السرية؟' },
-        { label: language === 'ar' ? '⏳ مدة صلاحية العقد' : '⏳ Validity Duration', query: 'كم تبلغ مدة سريان التزامات حفظ السرية بعد انتهاء سريان العقد؟' },
-        { label: language === 'ar' ? '🛡️ الاستثناءات المصرح بها' : '🛡️ Allowed Exceptions', query: 'ما هي الحالات والاستثناءات التي يُسمح فيها بالإفصاح عن المعلومات دون مخالفة العقد؟' },
-        { label: language === 'ar' ? '📝 تلخيص النقاط الجوهرية' : '📝 Summarize Key Terms', query: 'لخص أهم 3 نقاط جوهرية في اتفاقية عدم الإفصاح بأسلوب نقاط موجزة' },
+        {
+          label: language === 'ar' ? '⚖️ الالتزامات والغرائم' : '⚖️ Liabilities & Penalties',
+          query: 'ما هي الغرامات والالتزامات المالية المنصوص عليها عند الإخلال ببنود السرية؟',
+        },
+        {
+          label: language === 'ar' ? '⏳ مدة صلاحية العقد' : '⏳ Validity Duration',
+          query: 'كم تبلغ مدة سريان التزامات حفظ السرية بعد انتهاء سريان العقد؟',
+        },
+        {
+          label: language === 'ar' ? '🛡️ الاستثناءات المصرح بها' : '🛡️ Allowed Exceptions',
+          query: 'ما هي الحالات والاستثناءات التي يُسمح فيها بالإفصاح عن المعلومات دون مخالفة العقد؟',
+        },
+        {
+          label: language === 'ar' ? '📝 تلخيص النقاط الجوهرية' : '📝 Summarize Key Terms',
+          query: 'لخص أهم 3 نقاط جوهرية في اتفاقية عدم الإفصاح بأسلوب نقاط موجزة',
+        },
       ];
     }
 
     // Security & ISO27001 Context
-    if (textContext.includes('iso') || textContext.includes('أمن') || textContext.includes('security') || textContext.includes('تشفير') || textContext.includes('حقن')) {
+    if (
+      textContext.includes('iso') ||
+      textContext.includes('أمن') ||
+      textContext.includes('security') ||
+      textContext.includes('تشفير') ||
+      textContext.includes('حقن')
+    ) {
       return [
-        { label: language === 'ar' ? '🔑 سياسات إدارة المفاتيح' : '🔑 Key Management', query: 'ما هي المعايير المعتمدة لتدوير وتشفير مفاتيح API وعزل بيئات المستأجرين؟' },
-        { label: language === 'ar' ? '🚨 الاستجابة للحوادث' : '🚨 Incident Response', query: 'ما هي خطوات الاستجابة للحوادث السيبرانية المعتمدة وفق ISO27001؟' },
-        { label: language === 'ar' ? '🛡️ الوقاية من Prompt Injection' : '🛡️ Prevent Injection', query: 'كيف يحظر نظام OmniRAG محاولات اختراق السياق وهجمات الحقن حتمياً؟' },
-        { label: language === 'ar' ? '📋 قائمة تحقق الامتثال' : '📋 Compliance Checklist', query: 'أعطني قائمة تحقق سريعة لضمان التوافق التام مع معايير الأمان السيبراني' },
+        {
+          label: language === 'ar' ? '🔑 سياسات إدارة المفاتيح' : '🔑 Key Management',
+          query: 'ما هي المعايير المعتمدة لتدوير وتشفير مفاتيح API وعزل بيئات المستأجرين؟',
+        },
+        {
+          label: language === 'ar' ? '🚨 الاستجابة للحوادث' : '🚨 Incident Response',
+          query: 'ما هي خطوات الاستجابة للحوادث السيبرانية المعتمدة وفق ISO27001؟',
+        },
+        {
+          label: language === 'ar' ? '🛡️ الوقاية من Prompt Injection' : '🛡️ Prevent Injection',
+          query: 'كيف يحظر نظام OmniRAG محاولات اختراق السياق وهجمات الحقن حتمياً؟',
+        },
+        {
+          label: language === 'ar' ? '📋 قائمة تحقق الامتثال' : '📋 Compliance Checklist',
+          query: 'أعطني قائمة تحقق سريعة لضمان التوافق التام مع معايير الأمان السيبراني',
+        },
       ];
     }
 
     // Code & Programming Context
-    if (textContext.includes('كود') || textContext.includes('برمج') || textContext.includes('code') || textContext.includes('function') || textContext.includes('typescript') || textContext.includes('python')) {
+    if (
+      textContext.includes('كود') ||
+      textContext.includes('برمج') ||
+      textContext.includes('code') ||
+      textContext.includes('function') ||
+      textContext.includes('typescript') ||
+      textContext.includes('python')
+    ) {
       return [
-        { label: language === 'ar' ? '🧪 كتابة اختبارات وحدات' : '🧪 Write Unit Tests', query: 'اكتب اختبارات وحدة (Unit Tests) شاملة لهذا الكود للتحقق من أداء الشفرة البرمجية' },
-        { label: language === 'ar' ? '⚡ تحسين الكفاءة والأداء' : '⚡ Optimize Code', query: 'كيف يمكن إعادة صياغة هذا الكود لتقليل زمن التنفيذ وتحسين الاستهلاك؟' },
-        { label: language === 'ar' ? '💬 إضافة تعليقات وتوثيق' : '💬 Add JSDoc Comments', query: 'قم بإضافة تعليقات وتوثيق تفصيلي لكل دالة ومعامل في الشفرة البرمجية' },
-        { label: language === 'ar' ? '🛡️ فحص الأمان والثغرات' : '🛡️ Security Audit', query: 'افحص الشفرة البرمجية السابقة للتأكد من خلوها من أي ثغرات أمنية أو تسريب بيانات' },
+        {
+          label: language === 'ar' ? '🧪 كتابة اختبارات وحدات' : '🧪 Write Unit Tests',
+          query: 'اكتب اختبارات وحدة (Unit Tests) شاملة لهذا الكود للتحقق من أداء الشفرة البرمجية',
+        },
+        {
+          label: language === 'ar' ? '⚡ تحسين الكفاءة والأداء' : '⚡ Optimize Code',
+          query: 'كيف يمكن إعادة صياغة هذا الكود لتقليل زمن التنفيذ وتحسين الاستهلاك؟',
+        },
+        {
+          label: language === 'ar' ? '💬 إضافة تعليقات وتوثيق' : '💬 Add JSDoc Comments',
+          query: 'قم بإضافة تعليقات وتوثيق تفصيلي لكل دالة ومعامل في الشفرة البرمجية',
+        },
+        {
+          label: language === 'ar' ? '🛡️ فحص الأمان والثغرات' : '🛡️ Security Audit',
+          query: 'افحص الشفرة البرمجية السابقة للتأكد من خلوها من أي ثغرات أمنية أو تسريب بيانات',
+        },
       ];
     }
 
     // Math & Equations Context
-    if (textContext.includes('معادلة') || textContext.includes('رياضيات') || textContext.includes('math') || textContext.includes('تكامل') || textContext.includes('احصاء')) {
+    if (
+      textContext.includes('معادلة') ||
+      textContext.includes('رياضيات') ||
+      textContext.includes('math') ||
+      textContext.includes('تكامل') ||
+      textContext.includes('احصاء')
+    ) {
       return [
-        { label: language === 'ar' ? '🧮 تحويل لرموز MathJax4Arabic' : '🧮 Convert to Arabic Math', query: 'أعد صياغة المعادلة السابقة باستخدام الرموز والمصطلحات الرياضية العربية الأصيلة' },
-        { label: language === 'ar' ? '📐 شرح الاستنتاج بالتفصيل' : '📐 Step-by-Step Proof', query: 'اشرح الاستنتاج والخطوات الرياضية بالتفصيل المبرهن' },
-        { label: language === 'ar' ? '📈 التطبيقات العملية والفيزيائية' : '📈 Practical Applications', query: 'ما هي التطبيقات العملية والفيزيائية لهذه المعادلة في الواقع؟' },
-        { label: language === 'ar' ? '💡 مسألة إضافية محلولة' : '💡 Practice Example', query: 'اعطني مسألة تطبيقية محلولة مع الحل النموذجي بناءً على هذه القاعدة' },
+        {
+          label: language === 'ar' ? '🧮 تحويل لرموز MathJax4Arabic' : '🧮 Convert to Arabic Math',
+          query: 'أعد صياغة المعادلة السابقة باستخدام الرموز والمصطلحات الرياضية العربية الأصيلة',
+        },
+        {
+          label: language === 'ar' ? '📐 شرح الاستنتاج بالتفصيل' : '📐 Step-by-Step Proof',
+          query: 'اشرح الاستنتاج والخطوات الرياضية بالتفصيل المبرهن',
+        },
+        {
+          label: language === 'ar' ? '📈 التطبيقات العملية والفيزيائية' : '📈 Practical Applications',
+          query: 'ما هي التطبيقات العملية والفيزيائية لهذه المعادلة في الواقع؟',
+        },
+        {
+          label: language === 'ar' ? '💡 مسألة إضافية محلولة' : '💡 Practice Example',
+          query: 'اعطني مسألة تطبيقية محلولة مع الحل النموذجي بناءً على هذه القاعدة',
+        },
       ];
     }
 
     // MCP Tools Context
-    if (textContext.includes('mcp') || textContext.includes('slack') || textContext.includes('github') || textContext.includes('postgres') || textContext.includes('أداة')) {
+    if (
+      textContext.includes('mcp') ||
+      textContext.includes('slack') ||
+      textContext.includes('github') ||
+      textContext.includes('postgres') ||
+      textContext.includes('أداة')
+    ) {
       return [
-        { label: language === 'ar' ? '💬 إرسال تنبيه عبر Slack' : '💬 Send Slack Alert', query: 'أرسل رسالة تنبيه وملخص للعمليات الأخيرة إلى قناة #security-alerts' },
-        { label: language === 'ar' ? '💻 بحث في كود GitHub' : '💻 GitHub Code Search', query: 'ابحث في مستودع GitHub المصدري عن ملفات التهيئة والمستندات التقنية' },
-        { label: language === 'ar' ? '📊 استعلام PostgreSQL' : '📊 Query Postgres DB', query: 'استعلم عن سجلات الأمان وحالة المجموعات في قاعدة البيانات' },
-        { label: language === 'ar' ? '🛡️ صلاحيات أدوات MCP' : '🛡️ MCP Tool Access', query: 'ما هي الأدوات المتاحة حالياً وما هي الصلاحيات القياسية الممنوحة لها؟' },
+        {
+          label: language === 'ar' ? '💬 إرسال تنبيه عبر Slack' : '💬 Send Slack Alert',
+          query: 'أرسل رسالة تنبيه وملخص للعمليات الأخيرة إلى قناة #security-alerts',
+        },
+        {
+          label: language === 'ar' ? '💻 بحث في كود GitHub' : '💻 GitHub Code Search',
+          query: 'ابحث في مستودع GitHub المصدري عن ملفات التهيئة والمستندات التقنية',
+        },
+        {
+          label: language === 'ar' ? '📊 استعلام PostgreSQL' : '📊 Query Postgres DB',
+          query: 'استعلم عن سجلات الأمان وحالة المجموعات في قاعدة البيانات',
+        },
+        {
+          label: language === 'ar' ? '🛡️ صلاحيات أدوات MCP' : '🛡️ MCP Tool Access',
+          query: 'ما هي الأدوات المتاحة حالياً وما هي الصلاحيات القياسية الممنوحة لها؟',
+        },
       ];
     }
 
     // Fallback Contextual Follow-ups
     return [
-      { label: language === 'ar' ? '📝 تلخيص الإجابة بنقاط' : '📝 Summary Points', query: 'لخص الإجابة السابقة في 3 نقاط محددة وسهلة المراجعة' },
-      { label: language === 'ar' ? '🔍 التعمق والتوسع في التفاصيل' : '🔍 Deep Dive Details', query: 'اشرح المزيد من التفاصيل والحياديات التقنية حول هذا الموضوع' },
-      { label: language === 'ar' ? '💡 أمثلة ونماذج تطبيقية' : '💡 Practical Examples', query: 'أعطني أمثلة وحالات استخدام عملية لتوضيح الفكرة بأسلوب تطبيقي' },
-      { label: language === 'ar' ? '🌐 البحث عن التحديثات' : '🌐 Live Web Search', query: 'ابحث في الويب عن أحدث التحديثات والمواضيع المتعلقة بهذا النطاق' },
+      {
+        label: language === 'ar' ? '📝 تلخيص الإجابة بنقاط' : '📝 Summary Points',
+        query: 'لخص الإجابة السابقة في 3 نقاط محددة وسهلة المراجعة',
+      },
+      {
+        label: language === 'ar' ? '🔍 التعمق والتوسع في التفاصيل' : '🔍 Deep Dive Details',
+        query: 'اشرح المزيد من التفاصيل والحياديات التقنية حول هذا الموضوع',
+      },
+      {
+        label: language === 'ar' ? '💡 أمثلة ونماذج تطبيقية' : '💡 Practical Examples',
+        query: 'أعطني أمثلة وحالات استخدام عملية لتوضيح الفكرة بأسلوب تطبيقي',
+      },
+      {
+        label: language === 'ar' ? '🌐 البحث عن التحديثات' : '🌐 Live Web Search',
+        query: 'ابحث في الويب عن أحدث التحديثات والمواضيع المتعلقة بهذا النطاق',
+      },
     ];
   };
 
@@ -759,14 +905,16 @@ Supported rich formatting capabilities:
           </div>
         </div>
 
-        {/* Chat History Panel (Firestore Persistent Storage) */}
+        {/* Chat History Panel (PostgreSQL Persistent Storage) */}
         {showHistoryDrawer && (
           <div className="p-4 bg-indigo-950/95 text-white border-b border-indigo-800 animate-fadeIn">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-emerald-400 animate-pulse" />
                 <h4 className="text-xs font-bold text-slate-100">
-                  {lang === 'ar' ? 'سجل المحادثات المحفوظة دائمياً في Firestore:' : 'Persistent Firestore Conversations Archive:'}
+                  {lang === 'ar'
+                    ? 'سجل المحادثات المحفوظة دائمياً في PostgreSQL:'
+                    : 'Persistent PostgreSQL Conversations Archive:'}
                 </h4>
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono">
                   {lang === 'ar' ? 'حفظ تلقائي مفعّل' : 'Auto-Save Active'}
@@ -785,11 +933,15 @@ Supported rich formatting capabilities:
             {isLoadingConversations ? (
               <div className="py-4 text-center text-xs text-indigo-300 flex items-center justify-center gap-2">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                <span>{lang === 'ar' ? 'جاري تحميل السجل من Firestore...' : 'Loading history from Firestore...'}</span>
+                <span>
+                  {lang === 'ar' ? 'جاري تحميل السجل من PostgreSQL...' : 'Loading history from PostgreSQL...'}
+                </span>
               </div>
             ) : conversations.length === 0 ? (
               <p className="text-xs text-indigo-300 py-2">
-                {lang === 'ar' ? 'لا توجد محادثات سابقة. يمكنك إنشاء محادثة جديدة.' : 'No saved conversations. Start a new chat.'}
+                {lang === 'ar'
+                  ? 'لا توجد محادثات سابقة. يمكنك إنشاء محادثة جديدة.'
+                  : 'No saved conversations. Start a new chat.'}
               </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
@@ -831,7 +983,9 @@ Supported rich formatting capabilities:
                           </div>
                         ) : (
                           <span className="font-semibold truncate flex-1 flex items-center gap-1.5">
-                            <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-emerald-400' : 'text-indigo-400'}`} />
+                            <MessageSquare
+                              className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-emerald-400' : 'text-indigo-400'}`}
+                            />
                             <span className="truncate">{conv.title}</span>
                           </span>
                         )}
@@ -886,12 +1040,18 @@ Supported rich formatting capabilities:
               <div className="flex items-center gap-2">
                 <FolderKanban className="w-4 h-4 text-amber-400" />
                 <h4 className="text-xs font-bold text-slate-100">
-                  {lang === 'ar' ? 'تحديد وتحديث مصادر ومجموعات المعرفة النشطة للمحادثة:' : 'Select & Update Active Knowledge Collections for Chat:'}
+                  {lang === 'ar'
+                    ? 'تحديد وتحديث مصادر ومجموعات المعرفة النشطة للمحادثة:'
+                    : 'Select & Update Active Knowledge Collections for Chat:'}
                 </h4>
                 <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono">
                   {selectedCollectionIds.length === 0
-                    ? (lang === 'ar' ? 'البحث شامل لكافة المجموعات' : 'Querying All Collections')
-                    : (lang === 'ar' ? `تم تضييق النطاق لـ ${selectedCollectionIds.length} مجموعات` : `Filtered to ${selectedCollectionIds.length} collections`)}
+                    ? lang === 'ar'
+                      ? 'البحث شامل لكافة المجموعات'
+                      : 'Querying All Collections'
+                    : lang === 'ar'
+                      ? `تم تضييق النطاق لـ ${selectedCollectionIds.length} مجموعات`
+                      : `Filtered to ${selectedCollectionIds.length} collections`}
                 </span>
               </div>
 
@@ -960,7 +1120,8 @@ Supported rich formatting capabilities:
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400 line-clamp-2 leading-tight">
-                          {col.description || (lang === 'ar' ? 'مجموعة بيانات ومعارف مستوردة' : 'Imported knowledge base collection')}
+                          {col.description ||
+                            (lang === 'ar' ? 'مجموعة بيانات ومعارف مستوردة' : 'Imported knowledge base collection')}
                         </p>
                       </div>
                     </div>
@@ -990,9 +1151,13 @@ Supported rich formatting capabilities:
                   </div>
                 )}
 
-                <div className={`max-w-3xl rounded-2xl p-4 text-sm leading-relaxed ${
-                  isAssistant ? 'bg-white border border-slate-200/80 text-slate-800 shadow-3xs' : 'bg-indigo-600 text-white font-normal shadow-3xs'
-                }`}>
+                <div
+                  className={`max-w-3xl rounded-2xl p-4 text-sm leading-relaxed ${
+                    isAssistant
+                      ? 'bg-white border border-slate-200/80 text-slate-800 shadow-3xs'
+                      : 'bg-indigo-600 text-white font-normal shadow-3xs'
+                  }`}
+                >
                   <RichMessageRenderer
                     content={msg.content}
                     role={msg.role}
@@ -1021,7 +1186,9 @@ Supported rich formatting capabilities:
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-indigo-100 hover:border-indigo-400 text-indigo-700 text-xs font-medium shadow-3xs transition cursor-pointer"
                           >
                             <BookOpen className="w-3 h-3" />
-                            <span>[{cit.index}] {cit.documentTitle}</span>
+                            <span>
+                              [{cit.index}] {cit.documentTitle}
+                            </span>
                           </button>
                         ))}
                       </div>
@@ -1035,11 +1202,7 @@ Supported rich formatting capabilities:
                         <Cpu className="w-3 h-3 text-indigo-500" />
                         {msg.modelUsed}
                       </span>
-                      {msg.tokensUsed && (
-                        <span>
-                          {msg.tokensUsed.input + msg.tokensUsed.output} tokens
-                        </span>
-                      )}
+                      {msg.tokensUsed && <span>{msg.tokensUsed.input + msg.tokensUsed.output} tokens</span>}
                     </div>
                   )}
                 </div>
@@ -1063,10 +1226,14 @@ Supported rich formatting capabilities:
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-amber-900">
-                      {lang === 'ar' ? 'طلب موافقة بشرية لتشغيل أداة MCP (SideEffectGate)' : 'Human Approval Required for MCP Tool'}
+                      {lang === 'ar'
+                        ? 'طلب موافقة بشرية لتشغيل أداة MCP (SideEffectGate)'
+                        : 'Human Approval Required for MCP Tool'}
                     </h4>
                     <p className="text-[11px] text-amber-800">
-                      {lang === 'ar' ? 'الأداة المطلوبة ذات أثر جانبي ويتطلب تنفيذها تفويضاً صريحاً' : 'Tool execution modifies external state and requires your authorization'}
+                      {lang === 'ar'
+                        ? 'الأداة المطلوبة ذات أثر جانبي ويتطلب تنفيذها تفويضاً صريحاً'
+                        : 'Tool execution modifies external state and requires your authorization'}
                     </p>
                   </div>
                 </div>
@@ -1109,7 +1276,11 @@ Supported rich formatting capabilities:
               <div className="w-8 h-8 rounded-xl bg-indigo-100 flex items-center justify-center animate-pulse">
                 <Sparkles className="w-4 h-4 text-indigo-600" />
               </div>
-              <span>{lang === 'ar' ? 'جاري استدعاء أدوات الـ MCP واستجابة جيميناي...' : 'Executing MCP tools and awaiting Gemini response...'}</span>
+              <span>
+                {lang === 'ar'
+                  ? 'جاري استدعاء أدوات الـ MCP واستجابة جيميناي...'
+                  : 'Executing MCP tools and awaiting Gemini response...'}
+              </span>
             </div>
           )}
         </div>
@@ -1242,7 +1413,11 @@ Supported rich formatting capabilities:
             </form>
             <div className="mt-2 text-center flex items-center justify-center gap-2 text-[10px] text-slate-400 font-mono">
               <Sparkles className="w-3 h-3 text-indigo-400" />
-              <span>{lang === 'ar' ? `OmniRAG v${APP_VERSION} - الذكاء المعرفي` : `OmniRAG v${APP_VERSION} Intelligence Engine`}</span>
+              <span>
+                {lang === 'ar'
+                  ? `OmniRAG v${APP_VERSION} - الذكاء المعرفي`
+                  : `OmniRAG v${APP_VERSION} Intelligence Engine`}
+              </span>
             </div>
           </div>
         </div>
@@ -1295,7 +1470,6 @@ Supported rich formatting capabilities:
 
           {/* Active Tab Content Area */}
           <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
-            
             {/* TAB 1: MCP SERVERS GATEWAY */}
             {activeRightTab === 'mcp' && (
               <div className="space-y-4 animate-fadeIn">
@@ -1321,19 +1495,28 @@ Supported rich formatting capabilities:
                   <div className="space-y-3">
                     {mcpServers.map((server) => {
                       const isExpanded = expandedServerId === server.id;
-                      const hasExternalTools = server.enabledTools.some(t => 
-                        ['slack_', 'github_', 'web_', 'fetch_'].some(p => t.startsWith(p))
+                      const hasExternalTools = server.enabledTools.some((t) =>
+                        ['slack_', 'github_', 'web_', 'fetch_'].some((p) => t.startsWith(p)),
                       );
                       const isContainmentActive = selectedMode === 'private' && hasExternalTools;
 
                       return (
-                        <div key={server.id} className="bg-white rounded-xl border border-slate-200 shadow-3xs overflow-hidden">
+                        <div
+                          key={server.id}
+                          className="bg-white rounded-xl border border-slate-200 shadow-3xs overflow-hidden"
+                        >
                           {/* Server Header */}
                           <div className="p-3 flex items-center justify-between bg-slate-50/50">
                             <div className="flex items-center gap-2">
-                              <span className={`w-2.5 h-2.5 rounded-full ${
-                                server.status === 'healthy' ? 'bg-emerald-500' : server.status === 'degraded' ? 'bg-amber-500' : 'bg-rose-500'
-                              }`} />
+                              <span
+                                className={`w-2.5 h-2.5 rounded-full ${
+                                  server.status === 'healthy'
+                                    ? 'bg-emerald-500'
+                                    : server.status === 'degraded'
+                                      ? 'bg-amber-500'
+                                      : 'bg-rose-500'
+                                }`}
+                              />
                               <div>
                                 <h4 className="text-xs font-bold text-slate-800">{server.name}</h4>
                                 <span className="text-[10px] text-slate-400 font-mono">{server.latencyMs}ms</span>
@@ -1346,13 +1529,19 @@ Supported rich formatting capabilities:
                                 className="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-indigo-600 transition"
                                 title="فحص الاتصال"
                               >
-                                <RefreshCw className={`w-3 h-3 ${pingingServerId === server.id ? 'animate-spin' : ''}`} />
+                                <RefreshCw
+                                  className={`w-3 h-3 ${pingingServerId === server.id ? 'animate-spin' : ''}`}
+                                />
                               </button>
                               <button
                                 onClick={() => setExpandedServerId(isExpanded ? null : server.id)}
                                 className="p-1 rounded-md hover:bg-slate-200 text-slate-500 transition"
                               >
-                                {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                {isExpanded ? (
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -1361,12 +1550,12 @@ Supported rich formatting capabilities:
                           {isExpanded && (
                             <div className="p-3 border-t border-slate-100 bg-white space-y-2.5 animate-fadeIn">
                               <p className="text-[11px] text-slate-500">{server.description}</p>
-                              
+
                               <div className="pt-2 border-t border-slate-100">
                                 <span className="text-[10px] font-bold text-slate-400 block mb-1.5 uppercase">
                                   {lang === 'ar' ? 'الأدوات المتوفرة' : 'Available Tools'}
                                 </span>
-                                
+
                                 {server.enabledTools.length === 0 ? (
                                   <p className="text-[10px] text-slate-400 italic">
                                     {lang === 'ar' ? 'لا توجد أدوات مفعلة.' : 'No tools enabled.'}
@@ -1374,14 +1563,21 @@ Supported rich formatting capabilities:
                                 ) : (
                                   <div className="space-y-1.5">
                                     {server.enabledTools.map((tool) => {
-                                      const isExternal = ['slack_', 'github_', 'web_', 'fetch_'].some(p => tool.startsWith(p));
+                                      const isExternal = ['slack_', 'github_', 'web_', 'fetch_'].some((p) =>
+                                        tool.startsWith(p),
+                                      );
                                       const isBlockedByPrivateMode = selectedMode === 'private' && isExternal;
                                       const isRequiredConf = server.requireConfirmationTools?.includes(tool);
 
                                       return (
-                                        <div key={tool} className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50/50 border border-slate-100 text-xs">
+                                        <div
+                                          key={tool}
+                                          className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50/50 border border-slate-100 text-xs"
+                                        >
                                           <div className="flex flex-col">
-                                            <span className={`font-mono text-[11px] font-semibold ${isBlockedByPrivateMode ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                                            <span
+                                              className={`font-mono text-[11px] font-semibold ${isBlockedByPrivateMode ? 'line-through text-slate-400' : 'text-slate-700'}`}
+                                            >
                                               {tool}
                                             </span>
                                             {isRequiredConf && (
@@ -1391,7 +1587,7 @@ Supported rich formatting capabilities:
                                               </span>
                                             )}
                                           </div>
-                                          
+
                                           <div className="flex items-center gap-1.5">
                                             {isBlockedByPrivateMode ? (
                                               <span className="px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-600 text-[9px] font-bold border border-rose-100 flex items-center gap-0.5">
@@ -1421,7 +1617,11 @@ Supported rich formatting capabilities:
                           {isContainmentActive && !isExpanded && (
                             <div className="px-3 py-1.5 bg-rose-50 text-rose-700 text-[10px] font-semibold flex items-center gap-1 border-t border-rose-100 font-sans">
                               <Lock className="w-3 h-3 text-rose-600" />
-                              <span>{lang === 'ar' ? 'تم عزل الأدوات الخارجية بالكامل في الوضع الخاص' : 'External tools fully contained in Private Mode'}</span>
+                              <span>
+                                {lang === 'ar'
+                                  ? 'تم عزل الأدوات الخارجية بالكامل في الوضع الخاص'
+                                  : 'External tools fully contained in Private Mode'}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -1449,14 +1649,16 @@ Supported rich formatting capabilities:
                         Match: {(activeCitation.score * 100).toFixed(0)}%
                       </span>
                     </div>
-                    
+
                     <div className="flex items-center gap-1.5 text-slate-800 font-semibold text-xs">
                       <FileText className="w-4 h-4 text-slate-400 shrink-0" />
                       <h4>{activeCitation.documentTitle}</h4>
                     </div>
 
                     <div className="text-[11px] font-mono text-slate-400 block">
-                      {lang === 'ar' ? `رقم الصفحة: ${activeCitation.pageNumber || 1}` : `Page Number: ${activeCitation.pageNumber || 1}`}
+                      {lang === 'ar'
+                        ? `رقم الصفحة: ${activeCitation.pageNumber || 1}`
+                        : `Page Number: ${activeCitation.pageNumber || 1}`}
                     </div>
 
                     <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100 font-mono whitespace-pre-wrap">
@@ -1493,7 +1695,9 @@ Supported rich formatting capabilities:
 
                 {sessionToolCalls.length === 0 ? (
                   <p className="text-xs text-slate-400 bg-white p-4 rounded-xl border border-slate-200/60 text-center">
-                    {lang === 'ar' ? 'لم يتم تشغيل أي أدوات MCP في هذه الجلسة حتى الآن.' : 'No MCP tool executions recorded in this session yet.'}
+                    {lang === 'ar'
+                      ? 'لم يتم تشغيل أي أدوات MCP في هذه الجلسة حتى الآن.'
+                      : 'No MCP tool executions recorded in this session yet.'}
                   </p>
                 ) : (
                   <div className="space-y-3">
@@ -1501,36 +1705,43 @@ Supported rich formatting capabilities:
                       const isExpanded = expandedToolCallId === tc.id;
                       const isPending = tc.status === 'pending';
                       const isCompleted = tc.status === 'completed' || tc.status === 'approved';
-                      
+
                       return (
-                        <div key={tc.id} className={`rounded-xl border shadow-3xs overflow-hidden transition ${
-                          isPending 
-                            ? 'bg-amber-50/50 border-amber-300' 
-                            : tc.status === 'failed' || tc.status === 'rejected'
-                              ? 'bg-rose-50/50 border-rose-300'
-                              : 'bg-white border-slate-200'
-                        }`}>
+                        <div
+                          key={tc.id}
+                          className={`rounded-xl border shadow-3xs overflow-hidden transition ${
+                            isPending
+                              ? 'bg-amber-50/50 border-amber-300'
+                              : tc.status === 'failed' || tc.status === 'rejected'
+                                ? 'bg-rose-50/50 border-rose-300'
+                                : 'bg-white border-slate-200'
+                          }`}
+                        >
                           {/* Log Card Header */}
                           <div className="p-3 flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className={`w-2 h-2 rounded-full ${
-                                isPending 
-                                  ? 'bg-amber-500 animate-pulse' 
-                                  : tc.status === 'failed' || tc.status === 'rejected'
-                                    ? 'bg-rose-500' 
-                                    : 'bg-emerald-500'
-                              }`} />
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  isPending
+                                    ? 'bg-amber-500 animate-pulse'
+                                    : tc.status === 'failed' || tc.status === 'rejected'
+                                      ? 'bg-rose-500'
+                                      : 'bg-emerald-500'
+                                }`}
+                              />
                               <div>
                                 <span className="font-mono text-xs font-bold text-slate-800">{tc.scopedToolName}</span>
                                 <div className="flex items-center gap-1.5 mt-0.5">
-                                  <span className="text-[9px] text-slate-400 font-mono">{(tc.latencyMs || 0)}ms</span>
-                                  <span className={`text-[9px] px-1 rounded font-semibold ${
-                                    isPending 
-                                      ? 'bg-amber-100 text-amber-800' 
-                                      : tc.status === 'completed'
-                                        ? 'bg-emerald-100 text-emerald-800'
-                                        : 'bg-slate-100 text-slate-600'
-                                  }`}>
+                                  <span className="text-[9px] text-slate-400 font-mono">{tc.latencyMs || 0}ms</span>
+                                  <span
+                                    className={`text-[9px] px-1 rounded font-semibold ${
+                                      isPending
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : tc.status === 'completed'
+                                          ? 'bg-emerald-100 text-emerald-800'
+                                          : 'bg-slate-100 text-slate-600'
+                                    }`}
+                                  >
                                     {tc.status}
                                   </span>
                                 </div>
@@ -1574,7 +1785,9 @@ Supported rich formatting capabilities:
                           {isPending && (
                             <div className="p-3 bg-amber-50/80 border-t border-amber-200 space-y-2">
                               <p className="text-[11px] text-amber-900 font-medium leading-relaxed">
-                                {lang === 'ar' ? '⚠️ مطلوب تصريح تشغيل بشري (مستوى H5)' : '⚠️ Action requires human validation (Level H5)'}
+                                {lang === 'ar'
+                                  ? '⚠️ مطلوب تصريح تشغيل بشري (مستوى H5)'
+                                  : '⚠️ Action requires human validation (Level H5)'}
                               </p>
                               <div className="flex gap-2">
                                 <button
@@ -1587,7 +1800,9 @@ Supported rich formatting capabilities:
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setSessionToolCalls(prev => prev.map(t => t.id === tc.id ? { ...t, status: 'rejected' } : t));
+                                    setSessionToolCalls((prev) =>
+                                      prev.map((t) => (t.id === tc.id ? { ...t, status: 'rejected' } : t)),
+                                    );
                                     if (pendingToolApproval?.id === tc.id) setPendingToolApproval(null);
                                   }}
                                   className="flex-1 py-1 bg-slate-200 text-slate-700 rounded-md text-[11px] font-bold hover:bg-slate-300 transition cursor-pointer"
@@ -1604,7 +1819,6 @@ Supported rich formatting capabilities:
                 )}
               </div>
             )}
-
           </div>
         </div>
 

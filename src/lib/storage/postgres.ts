@@ -1,5 +1,7 @@
 import {
   Tenant,
+  User,
+  SessionRecord,
   Document,
   DocumentChunk,
   Collection,
@@ -273,6 +275,47 @@ export async function ensurePostgresTables() {
           feedback VARCHAR(50),
           tool_calls JSONB DEFAULT '[]'::jsonb,
           has_pii_redacted BOOLEAN DEFAULT FALSE,
+          created_at VARCHAR(100) NOT NULL
+        );
+      `);
+
+      // 11. Auth tables (Postgres-only auth — replaces Firebase Auth)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id VARCHAR(100) PRIMARY KEY,
+          email VARCHAR(255) NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          tenant_id VARCHAR(100) NOT NULL,
+          created_at VARCHAR(100) NOT NULL
+        );
+      `);
+
+      // Backfill tenant_id onto any pre-existing users table from a prior
+      // deployment. CREATE TABLE IF NOT EXISTS is a no-op when the table
+      // already exists, so it wouldn't add the column; this ALTER does. The
+      // DEFAULT '' satisfies NOT NULL for legacy rows that had no tenant.
+      try {
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100) NOT NULL DEFAULT '';`);
+      } catch (e) {
+        console.warn('Postgres ALTER users.tenant_id migration skipped or failed:', e);
+      }
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tenants (
+          id VARCHAR(100) PRIMARY KEY,
+          name VARCHAR(200) NOT NULL,
+          plan VARCHAR(50) NOT NULL DEFAULT 'starter',
+          created_at VARCHAR(100) NOT NULL,
+          settings JSONB
+        );
+      `);
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          token VARCHAR(100) PRIMARY KEY,
+          user_id VARCHAR(100) NOT NULL,
+          tenant_id VARCHAR(100) NOT NULL,
+          expires_at VARCHAR(100) NOT NULL,
           created_at VARCHAR(100) NOT NULL
         );
       `);
@@ -1427,6 +1470,218 @@ export async function searchPostgresLexical(
     await client.query('ROLLBACK');
     console.error('PostgreSQL lexical search failed:', error);
     return [];
+  } finally {
+    client.release();
+  }
+}
+
+// -----------------------------------------------------------------
+// Postgres Auth Handlers (Postgres-only auth — replaces Firebase Auth)
+// -----------------------------------------------------------------
+
+const DEFAULT_TENANT_SETTINGS = {
+  chunkSize: 500,
+  chunkOverlap: 50,
+  hybridWeights: { semantic: 0.7, lexical: 0.3 },
+  defaultModel: 'gemini-3.7-flash',
+  dataRetentionDays: 90,
+  enablePiiRedaction: true,
+  enablePromptSanitizer: true,
+};
+
+export async function getPostgresUserByEmail(email: string): Promise<User | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query(
+      'SELECT id, email, password_hash, tenant_id, created_at FROM users WHERE email = $1 LIMIT 1',
+      [email.toLowerCase()],
+    );
+    if (res.rows.length === 0) return undefined;
+    const row = res.rows[0];
+    return {
+      id: row.id,
+      email: row.email,
+      passwordHash: row.password_hash,
+      tenantId: row.tenant_id,
+      createdAt: row.created_at,
+    };
+  } catch (error) {
+    console.error('Failed to get Postgres user by email:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function insertPostgresUser(user: User): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query(
+      `INSERT INTO users (id, email, password_hash, tenant_id, created_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO NOTHING;`,
+      [user.id, user.email.toLowerCase(), user.passwordHash, user.tenantId, user.createdAt],
+    );
+  } catch (error) {
+    console.error('Failed to insert user into Postgres:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresUserById(id: string): Promise<User | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query(
+      'SELECT id, email, password_hash, tenant_id, created_at FROM users WHERE id = $1 LIMIT 1',
+      [id],
+    );
+    if (res.rows.length === 0) return undefined;
+    const row = res.rows[0];
+    return {
+      id: row.id,
+      email: row.email,
+      passwordHash: row.password_hash,
+      tenantId: row.tenant_id,
+      createdAt: row.created_at,
+    };
+  } catch (error) {
+    console.error('Failed to get Postgres user by id:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresTenant(tenantId: string): Promise<Tenant | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query('SELECT * FROM tenants WHERE id = $1 LIMIT 1', [tenantId]);
+    if (res.rows.length === 0) return undefined;
+    const row = res.rows[0];
+    return {
+      id: row.id,
+      name: row.name,
+      plan: row.plan || 'starter',
+      createdAt: row.created_at,
+      settings: row.settings || DEFAULT_TENANT_SETTINGS,
+    };
+  } catch (error) {
+    console.error('Failed to get Postgres tenant:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function insertPostgresTenant(tenant: Tenant): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query(
+      `INSERT INTO tenants (id, name, plan, created_at, settings)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO UPDATE
+       SET name = EXCLUDED.name, plan = EXCLUDED.plan, settings = EXCLUDED.settings;`,
+      [
+        tenant.id,
+        tenant.name,
+        tenant.plan || 'starter',
+        tenant.createdAt,
+        JSON.stringify(tenant.settings || DEFAULT_TENANT_SETTINGS),
+      ],
+    );
+  } catch (error) {
+    console.error('Failed to insert tenant into Postgres:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresSession(token: string): Promise<SessionRecord | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query('SELECT * FROM sessions WHERE token = $1 LIMIT 1', [token]);
+    if (res.rows.length === 0) return undefined;
+    const row = res.rows[0];
+    return {
+      token: row.token,
+      userId: row.user_id,
+      tenantId: row.tenant_id,
+      expiresAt: row.expires_at,
+      createdAt: row.created_at,
+    };
+  } catch (error) {
+    console.error('Failed to get Postgres session:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function insertPostgresSession(session: SessionRecord): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query(
+      `INSERT INTO sessions (token, user_id, tenant_id, expires_at, created_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (token) DO NOTHING;`,
+      [session.token, session.userId, session.tenantId, session.expiresAt, session.createdAt],
+    );
+  } catch (error) {
+    console.error('Failed to insert session into Postgres:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deletePostgresSession(token: string): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('DELETE FROM sessions WHERE token = $1', [token]);
+  } catch (error) {
+    console.error('Failed to delete Postgres session:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteExpiredPostgresSessions(): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('DELETE FROM sessions WHERE expires_at < $1', [new Date().toISOString()]);
+  } catch (error) {
+    console.error('Failed to delete expired Postgres sessions:', error);
   } finally {
     client.release();
   }

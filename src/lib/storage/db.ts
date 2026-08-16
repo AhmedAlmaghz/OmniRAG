@@ -1,5 +1,7 @@
 import {
   Tenant,
+  User,
+  SessionRecord,
   Document,
   DocumentVersion,
   DocumentChunk,
@@ -43,6 +45,15 @@ import {
   getPostgresMessages,
   insertPostgresMessage,
   resetPostgresPool,
+  getPostgresUserByEmail,
+  getPostgresUserById,
+  insertPostgresUser,
+  getPostgresTenant,
+  insertPostgresTenant,
+  getPostgresSession,
+  insertPostgresSession,
+  deletePostgresSession,
+  deleteExpiredPostgresSessions,
 } from './postgres';
 import { upsertQdrantChunk, upsertQdrantChunks, deleteQdrantDocument, updateQdrantDocumentPayload } from './qdrant';
 import { generateEmbedding, embedBatch } from '../rag/embedding';
@@ -77,6 +88,9 @@ export class MemoryDatabase implements IOmniRAGDatabase {
   toolCalls: MCPToolCall[] = [];
   conversations: Conversation[] = [];
   messages: Message[] = [];
+  // Auth state (Postgres-only auth — replaces Firebase Auth)
+  users: User[] = [];
+  sessions: SessionRecord[] = [];
 
   constructor() {
     this.mcpServers = [...INITIAL_MCP_SERVERS];
@@ -95,6 +109,8 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     this.toolCalls = [];
     this.conversations = [];
     this.messages = [];
+    this.users = [];
+    this.sessions = [];
   }
 
   async getSources(tenantId: string): Promise<SourceConnector[]> {
@@ -181,8 +197,8 @@ export class MemoryDatabase implements IOmniRAGDatabase {
       .filter((d) => d.tenantId === tenantId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    // Dev-only data auto-seed: after Demo Auth removal, real Firebase tenants
-    // (`tenant-<uid>`) no longer collide with the seeded `tenant-acme-01` /
+    // Dev-only data auto-seed: after Demo Auth removal, real local-auth tenants
+    // (`tenant-<id>`) no longer collide with the seeded `tenant-acme-01` /
     // `tenant-health-02` demo data. Without this, a fresh dev user (e.g. the
     // AuthScreen "Sandbox Guest") would see an empty Knowledge Base in the
     // memory-only path. In production, returns whatever exists (empty allowed).
@@ -433,6 +449,48 @@ export class MemoryDatabase implements IOmniRAGDatabase {
       }
     }
   }
+
+  // Auth (Postgres-only — user, tenant, and opaque session lifecycle)
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const lower = email.toLowerCase();
+    return this.users.find((u) => u.email.toLowerCase() === lower);
+  }
+
+  async getUserById(id: string): Promise<User | undefined> {
+    return this.users.find((u) => u.id === id);
+  }
+
+  async createUser(user: User): Promise<void> {
+    this.users = this.users.filter((u) => u.id !== user.id && u.email.toLowerCase() !== user.email.toLowerCase());
+    this.users.push({ ...user, email: user.email.toLowerCase() });
+  }
+
+  async createTenant(tenant: Tenant): Promise<void> {
+    this.tenants = this.tenants.filter((t) => t.id !== tenant.id);
+    this.tenants.push(tenant);
+  }
+
+  async getTenant(tenantId: string): Promise<Tenant | undefined> {
+    return this.tenants.find((t) => t.id === tenantId);
+  }
+
+  async createSession(session: SessionRecord): Promise<void> {
+    this.sessions = this.sessions.filter((s) => s.token !== session.token);
+    this.sessions.push(session);
+  }
+
+  async getSession(token: string): Promise<SessionRecord | undefined> {
+    return this.sessions.find((s) => s.token === token);
+  }
+
+  async deleteSession(token: string): Promise<void> {
+    this.sessions = this.sessions.filter((s) => s.token !== token);
+  }
+
+  async deleteExpiredSessions(): Promise<void> {
+    const now = Date.now();
+    this.sessions = this.sessions.filter((s) => new Date(s.expiresAt).getTime() > now);
+  }
 }
 
 export const memoryDb = new MemoryDatabase();
@@ -470,7 +528,7 @@ async function ensureSeeded(): Promise<void> {
   return seedingPromise;
 }
 
-// Durable Postgres Database Singleton Store (Bypassing Firestore completely as requested)
+// Durable Postgres Database Singleton Store (the production backend)
 class OmniRAGDatabase implements IOmniRAGDatabase {
   private useMemory = false;
 
@@ -1652,6 +1710,120 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       this.handleDatabaseError(e, 'addMessage');
     }
   }
+
+  // Auth (Postgres-only — user, tenant, and opaque session lifecycle)
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    if (this.useMemory) return await memoryDb.getUserByEmail(email);
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return await memoryDb.getUserByEmail(email);
+      const user = await getPostgresUserByEmail(email);
+      if (user) return user;
+    } catch (e) {
+      this.handleDatabaseError(e, 'getUserByEmail');
+    }
+    return await memoryDb.getUserByEmail(email);
+  }
+
+  async getUserById(id: string): Promise<User | undefined> {
+    if (this.useMemory) return await memoryDb.getUserById(id);
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return await memoryDb.getUserById(id);
+      const user = await getPostgresUserById(id);
+      if (user) return user;
+    } catch (e) {
+      this.handleDatabaseError(e, 'getUserById');
+    }
+    return await memoryDb.getUserById(id);
+  }
+
+  async createUser(user: User): Promise<void> {
+    await memoryDb.createUser(user);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await insertPostgresUser(user);
+    } catch (e) {
+      this.handleDatabaseError(e, 'createUser');
+    }
+  }
+
+  async createTenant(tenant: Tenant): Promise<void> {
+    await memoryDb.createTenant(tenant);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await insertPostgresTenant(tenant);
+    } catch (e) {
+      this.handleDatabaseError(e, 'createTenant');
+    }
+  }
+
+  async getTenant(tenantId: string): Promise<Tenant | undefined> {
+    const memTenant = await memoryDb.getTenant(tenantId);
+    if (this.useMemory) return memTenant;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return memTenant;
+      const t = await getPostgresTenant(tenantId);
+      return t ?? memTenant;
+    } catch (e) {
+      this.handleDatabaseError(e, 'getTenant');
+      return memTenant;
+    }
+  }
+
+  async createSession(session: SessionRecord): Promise<void> {
+    await memoryDb.createSession(session);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await insertPostgresSession(session);
+    } catch (e) {
+      this.handleDatabaseError(e, 'createSession');
+    }
+  }
+
+  async getSession(token: string): Promise<SessionRecord | undefined> {
+    if (this.useMemory) return await memoryDb.getSession(token);
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return await memoryDb.getSession(token);
+      const session = await getPostgresSession(token);
+      return session;
+    } catch (e) {
+      this.handleDatabaseError(e, 'getSession');
+      return await memoryDb.getSession(token);
+    }
+  }
+
+  async deleteSession(token: string): Promise<void> {
+    await memoryDb.deleteSession(token);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await deletePostgresSession(token);
+    } catch (e) {
+      this.handleDatabaseError(e, 'deleteSession');
+    }
+  }
+
+  async deleteExpiredSessions(): Promise<void> {
+    await memoryDb.deleteExpiredSessions();
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await deleteExpiredPostgresSessions();
+    } catch (e) {
+      this.handleDatabaseError(e, 'deleteExpiredSessions');
+    }
+  }
 }
 
 /**
@@ -1665,6 +1837,6 @@ const dbInstance = new OmniRAGDatabase();
  * Singleton storage instance. Typed against the contract so call sites depend
  * on `IOmniRAGDatabase` rather than the concrete Postgres-backed class — this
  * keeps routes/libraries decoupled from the backend and enables swapping to a
- * Firestore implementation or a test double without editing consumers.
+ * test double without editing consumers.
  */
 export const db: IOmniRAGDatabase = dbInstance;

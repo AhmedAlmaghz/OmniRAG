@@ -1,8 +1,8 @@
 /**
  * The canonical storage contract for OmniRAG.
  *
- * All persistence backends (Postgres-backed production store, Firestore,
- * in-memory test/demo store) MUST implement this interface. API routes and
+ * All persistence backends (Postgres-backed production store, in-memory
+ * test/demo store) MUST implement this interface. API routes and
  * libraries depend on `IOmniRAGDatabase` rather than a concrete class so the
  * backend can be swapped, mocked in tests, or split per-tenant without
  * touching call sites.
@@ -12,6 +12,8 @@
  */
 import {
   Tenant,
+  User,
+  SessionRecord,
   Document,
   DocumentVersion,
   DocumentChunk,
@@ -95,12 +97,17 @@ export interface IOmniRAGDatabase {
   deleteConversation(id: string, tenantId: string): Promise<void>;
   getMessages(conversationId: string, tenantId: string): Promise<Message[]>;
   addMessage(msg: Message): Promise<void>;
+
+  // Auth (Postgres-only — user account, tenant, and opaque session lifecycle)
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getUserById(id: string): Promise<User | undefined>;
+  createUser(user: User): Promise<void>;
+  createTenant(tenant: Tenant): Promise<void>;
+  getTenant(tenantId: string): Promise<Tenant | undefined>;
+  createSession(session: SessionRecord): Promise<void>;
+  getSession(token: string): Promise<SessionRecord | undefined>;
+  deleteSession(token: string): Promise<void>;
+  deleteExpiredSessions(): Promise<void>;
 }
 
-/**
- * Open question (intentional non-goal for this slice): a `Tenant` read/write
- * surface lives on the concrete store today but is not yet exercised by any
- * route. It is deliberately omitted from the contract until a route depends on
- * it, to avoid advertising an unstable API.
- */
-export type { Tenant };
+export type { Tenant, User, SessionRecord };

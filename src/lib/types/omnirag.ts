@@ -23,6 +23,32 @@ export interface TenantSettings {
 
 export type ChatMode = 'private' | 'hybrid' | 'general' | 'analysis';
 
+/**
+ * Auth account (Postgres-only — replaces Firebase Auth). The password hash is
+ * stored exclusively on the server; `User` never reaches the client. Each user
+ * belongs to exactly one tenant (single-tenant-at-signup model) — `tenantId`
+ * is explicit data, reconstructed at login rather than derived by convention.
+ */
+export interface User {
+  id: string;
+  email: string;
+  passwordHash: string;
+  tenantId: string;
+  createdAt: string;
+}
+
+/**
+ * A persisted session row. `token` is an opaque random value (never a JWT),
+ * looked up verbatim against the `sessions` table to authorize requests.
+ */
+export interface SessionRecord {
+  token: string;
+  userId: string;
+  tenantId: string;
+  expiresAt: string; // ISO timestamp
+  createdAt: string;
+}
+
 export interface DocumentVersion {
   id: string;
   documentId: string;

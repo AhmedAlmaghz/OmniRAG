@@ -147,3 +147,30 @@ export const messages = pgTable('messages', {
   hasPiiRedacted: boolean('has_pii_redacted').default(false),
   createdAt: varchar('created_at', { length: 100 }).notNull(),
 });
+
+// 11. Users Table (Postgres-only auth — replaces Firebase Auth)
+export const users = pgTable('users', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 12. Tenants Table (owns tenant identity — was a string convention before)
+export const tenants = pgTable('tenants', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  name: varchar('name', { length: 200 }).notNull(),
+  plan: varchar('plan', { length: 50 }).notNull().default('starter'),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+  settings: jsonb('settings'),
+});
+
+// 13. Sessions Table (opaque session token — never a JWT)
+export const sessions = pgTable('sessions', {
+  token: varchar('token', { length: 100 }).primaryKey(),
+  userId: varchar('user_id', { length: 100 }).notNull(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  expiresAt: varchar('expires_at', { length: 100 }).notNull(),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
