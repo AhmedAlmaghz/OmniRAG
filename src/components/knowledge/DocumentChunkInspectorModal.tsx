@@ -4,21 +4,7 @@ import React, { useState } from 'react';
 import { Document, DocumentChunk } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { useAsync } from '@/hooks/useAsync';
-import {
-  X,
-  Layers,
-  Search,
-  Copy,
-  Check,
-  FileText,
-  Sparkles,
-  Loader2,
-  Database,
-  ArrowUpRight,
-  ShieldCheck,
-  Hash,
-  BookOpen,
-} from 'lucide-react';
+import { X, Layers, Search, Copy, Check, Sparkles, Loader2, Database, ShieldCheck, Hash } from 'lucide-react';
 
 interface DocumentChunkInspectorModalProps {
   document: Document;

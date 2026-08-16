@@ -2,24 +2,13 @@ import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch, generateRagCompletion } from '@/lib/rag/engine';
-import { verifyApiAuth } from '@/lib/auth/apiAuth';
-import { checkRateLimit } from '@/lib/security/rateLimiter';
 import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const dynamic = 'force-dynamic';
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
-  // Rate Limit check
-  const rateLimit = checkRateLimit(req, 30, 60000);
-  if (!rateLimit.success && rateLimit.response) {
-    return rateLimit.response;
-  }
-
-  // Auth & Tenant check
-  const auth = await verifyApiAuth(req);
-  if (!auth.authenticated && auth.response) {
-    return auth.response;
-  }
+  // The wrapper already enforced rate limits and verified auth; authCtx is the
+  // single source of identity (tenantId, userId). No redundant inner calls.
 
   // Load client-supplied dynamic environment keys from headers into process.env / global store
   getEnv('GEMINI_API_KEY', req);
@@ -32,18 +21,18 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   try {
     const body = await req.json();
-    const tenantId = auth.tenantId;
+    const tenantId = authCtx.tenantId;
     const { prompt, mode = 'hybrid', collectionIds, modelOverride, approvedToolCall, rerank } = body;
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json(
         { error: 'نص السؤال مطلوب (Prompt is required)', code: '400_MISSING_PROMPT' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     // Hook Stage 1: Pre-Auth
-    const authCheck = await HookHarness.run('pre_auth', { tenantId, userId: auth.userId });
+    const authCheck = await HookHarness.run('pre_auth', { tenantId, userId: authCtx.userId });
     if (!authCheck.allow) {
       return NextResponse.json({ error: authCheck.reason, code: authCheck.code }, { status: 403 });
     }
@@ -51,7 +40,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // Hook Stage 2: Pre-Inference (Prompt Injection Defense & Mode Guard)
     const inferenceCheck = await HookHarness.run('pre_inference', {
       tenantId,
-      userId: auth.userId,
+      userId: authCtx.userId,
       mode,
       prompt,
     });
@@ -65,7 +54,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       tenantId,
       collectionIds,
       topK: 4,
-      rerank: rerank ?? (mode === 'analysis') // Auto-rerank in analysis mode
+      rerank: rerank ?? mode === 'analysis', // Auto-rerank in analysis mode
     });
 
     // Step 2: RAG Generation
@@ -81,7 +70,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // Hook Stage 3: Post-Inference (PII Redaction & Citation Verification)
     const postCheck = await HookHarness.run('post_inference', {
       tenantId,
-      userId: auth.userId,
+      userId: authCtx.userId,
       output: ragResponse.text,
     });
 
@@ -101,7 +90,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     console.error('API Error in /api/v1/chat/completions:', err);
     return NextResponse.json(
       { error: 'حدث خطأ داخلي في المعالجة (Internal Processing Error)', code: '500_INTERNAL_ERROR' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 });
