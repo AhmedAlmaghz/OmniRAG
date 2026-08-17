@@ -330,7 +330,26 @@ export async function ensurePostgresTables() {
         console.warn('FTS index creation skipped or not supported:', e);
       }
 
-      // Ensure Row Level Security (RLS) is disabled so Drizzle, standard seeding, and raw server queries can execute seamlessly without session state issues
+      // Btree index on tenant_id for both chunks and documents. Every tenant-
+      // scoped query filters by tenant_id; without an index these are full
+      // seq-scans. Required in particular by searchPostgresLexical, which now
+      // enforces tenant isolation via an explicit `tenant_id = $N` predicate.
+      try {
+        await client.query(`CREATE INDEX IF NOT EXISTS chunks_tenant_id_idx ON chunks (tenant_id);`);
+        await client.query(`CREATE INDEX IF NOT EXISTS documents_tenant_id_idx ON documents (tenant_id);`);
+      } catch (e) {
+        console.warn('tenant_id index creation skipped:', e);
+      }
+
+      // Row Level Security is intentionally disabled. Tenant isolation is
+      // enforced at the APPLICATION layer: every persistence handler emits an
+      // explicit `WHERE tenant_id = $1` predicate and binds the server-derived
+      // tenantId (sourced from the authenticated session, never from client
+      // input). The README's claim of RLS-backed isolation is therefore
+      // aspirational, not deployed. A future hardening pass may enable RLS
+      // with `USING (tenant_id = current_setting('app.current_tenant', true))`
+      // once every query path sets the session var — re-enabling RLS now
+      // without that would silently zero-out all tenant reads.
       try {
         await client.query(`ALTER TABLE documents DISABLE ROW LEVEL SECURITY;`);
         await client.query(`ALTER TABLE chunks DISABLE ROW LEVEL SECURITY;`);
@@ -1415,14 +1434,22 @@ export async function searchPostgresLexical(
   await ensurePostgresTables();
   const p = getPostgresPool();
   if (!p) return [];
+  if (!tenantId) return [];
 
   const client = await p.connect();
   try {
     await client.query('BEGIN');
+    // Kept for forward-compatibility with a future RLS rollout; the ACTUAL
+    // tenant isolation here is the explicit `tenant_id = $N` predicate in
+    // the queries below, NOT this session variable (RLS is currently
+    // disabled — see ensurePostgresTables).
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
 
     const cleanQuery = queryText.replace(/['"&|!()*:<>\s]+/g, ' ').trim();
-    if (!cleanQuery) return [];
+    if (!cleanQuery) {
+      await client.query('COMMIT');
+      return [];
+    }
 
     const ftsQuery = cleanQuery
       .split(' ')
@@ -1434,24 +1461,29 @@ export async function searchPostgresLexical(
       const isArabic = /[\u0600-\u06FF]/.test(cleanQuery);
       const dict = isArabic ? 'arabic' : 'english';
 
+      // tenant_id filter is mandatory and authoritative. RLS is disabled at
+      // present, so without this predicate the FTS arm would return chunks
+      // from ALL tenants — a cross-tenant data leak. Bind tenantId as $3 and
+      // push LIMIT to $4.
       result = await client.query(
         `SELECT id, document_id, content, chunk_index, page_number, language,
                 ts_rank(to_tsvector($1, content), to_tsquery($1, $2)) as rank
          FROM chunks
-         WHERE to_tsvector($1, content) @@ to_tsquery($1, $2)
+         WHERE tenant_id = $3 AND to_tsvector($1, content) @@ to_tsquery($1, $2)
          ORDER BY rank DESC
-         LIMIT $3`,
-        [dict, ftsQuery, limitVal],
+         LIMIT $4`,
+        [dict, ftsQuery, tenantId, limitVal],
       );
     } catch (ftsError) {
       console.warn('FTS query failed, falling back to ILIKE text search:', ftsError);
+      // Same mandatory tenant_id predicate on the fallback path.
       result = await client.query(
         `SELECT id, document_id, content, chunk_index, page_number, language,
                 1.0 as rank
          FROM chunks
-         WHERE (content ILIKE $1 OR content ILIKE $2)
-         LIMIT $3`,
-        [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, limitVal],
+         WHERE tenant_id = $3 AND (content ILIKE $1 OR content ILIKE $2)
+         LIMIT $4`,
+        [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, tenantId, limitVal],
       );
     }
 

@@ -57,6 +57,23 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       rerank: rerank ?? mode === 'analysis', // Auto-rerank in analysis mode
     });
 
+    // Hook Stage 2b: Pre-Generation — scan retrieved chunks for indirect prompt
+    // injection before they are injected into the model context. A hostile
+    // document embedded in a tenant's corpus otherwise reaches the model with
+    // the model's full trust, making retrieved content the dominant indirect
+    // injection vector in a RAG system.
+    const preGenCheck = await HookHarness.run('pre_generation', {
+      tenantId,
+      userId: authCtx.userId,
+      retrievedChunks: searchResult.chunks.map((c) => ({
+        content: c.content,
+        documentTitle: c.documentTitle,
+      })),
+    });
+    if (!preGenCheck.allow) {
+      return NextResponse.json({ error: preGenCheck.reason, code: preGenCheck.code }, { status: 400 });
+    }
+
     // Step 2: RAG Generation
     const ragResponse = await generateRagCompletion({
       tenantId,
@@ -86,7 +103,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       pendingToolCall: ragResponse.pendingToolCall,
       toolCalls: ragResponse.toolCalls,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('API Error in /api/v1/chat/completions:', err);
     return NextResponse.json(
       { error: 'حدث خطأ داخلي في المعالجة (Internal Processing Error)', code: '500_INTERNAL_ERROR' },

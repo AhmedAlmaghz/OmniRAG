@@ -44,7 +44,7 @@
 - **لغة البرمجة:** TypeScript
 - **التنسيق والواجهات:** Tailwind CSS v4 & Lucide Icons
 - **قاعدة البيانات والتخزين الدائم:** PostgreSQL (Drizzle ORM) & Qdrant للبحث المتجهي
-- **الذكاء الاصطناعي والتضمين:** Google Gemini SDK (`@google/genai`) - نموذج `gemini-3.6-flash`
+- **الذكاء الاصطناعي والتضمين:** Google Gemini SDK (`@google/genai`) - نموذج `gemini-3.7-flash`
 
 ---
 

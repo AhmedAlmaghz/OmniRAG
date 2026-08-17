@@ -15,6 +15,7 @@ import {
   SyncLogEntry,
   McpResourceItem,
 } from '../types/omnirag';
+import { chunkTextIntoList } from '../rag/textChunker';
 import {
   ensurePostgresTables,
   getPostgresDocuments,
@@ -772,12 +773,10 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         collectionIds: source.collectionIds,
       };
 
-      const chunkSize = 1000;
-      const chunkTextList: string[] = [];
-      for (let i = 0; i < newDocContent.length; i += chunkSize) {
-        const snippet = newDocContent.substring(i, i + chunkSize).trim();
-        if (snippet) chunkTextList.push(snippet);
-      }
+      // Phase 7: route memory chunking through the shared chunker so the chunk
+      // grid matches createDocumentVersion / revertDocumentVersion (overlap
+      // preserved). Previously this path used step == size with no overlap.
+      const chunkTextList = chunkTextIntoList(newDocContent);
 
       newDoc.chunkCount = chunkTextList.length;
       await this.addDocument(newDoc);
@@ -1044,17 +1043,9 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     const newContent = params.content;
     const nowIso = new Date().toISOString();
 
-    // Re-chunk content
-    const charSize = 1000;
-    const step = 800;
-    const chunkTextList: string[] = [];
-    for (let i = 0; i < newContent.length; i += step) {
-      const snippet = newContent.substring(i, i + charSize).trim();
-      if (snippet) chunkTextList.push(snippet);
-    }
-    if (chunkTextList.length === 0 && newContent.trim()) {
-      chunkTextList.push(newContent.trim());
-    }
+    // Re-chunk content (Phase 7: uses the shared chunker geometry so all
+    // ingestion paths produce the same chunk grid).
+    const chunkTextList = chunkTextIntoList(newContent);
 
     const newVersion: DocumentVersion = {
       id: `ver-${doc.id}-v${nextVerNumber}`,
@@ -1129,16 +1120,9 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
     const nowIso = new Date().toISOString();
 
-    const charSize = 1000;
-    const step = 800;
-    const chunkTextList: string[] = [];
-    for (let i = 0; i < targetVer.content.length; i += step) {
-      const snippet = targetVer.content.substring(i, i + charSize).trim();
-      if (snippet) chunkTextList.push(snippet);
-    }
-    if (chunkTextList.length === 0 && targetVer.content.trim()) {
-      chunkTextList.push(targetVer.content.trim());
-    }
+    // Phase 7: shared chunker keeps the restored chunk grid identical to the
+    // one createDocumentVersion would produce for the same content.
+    const chunkTextList = chunkTextIntoList(targetVer.content);
 
     const updatedDoc: Document = {
       ...doc,

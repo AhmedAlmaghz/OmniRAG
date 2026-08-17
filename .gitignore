@@ -12,3 +12,7 @@ terminal_logs/
 .vscode/
 .husky
 .zcode/
+
+# TypeScript incremental build artifacts — must not be committed (stale
+# tsbuildinfo causes misleading CI typecheck results across machines).
+*.tsbuildinfo

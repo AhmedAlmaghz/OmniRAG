@@ -1,14 +1,27 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
 import { db } from '@/lib/storage/db';
 import { getAiModel } from '@/lib/config/aiModels';
+import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const dynamic = 'force-dynamic';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// The GoogleGenAI client MUST be constructed inside the handler, not at module
+// load. Building it at module top level froze `process.env.GEMINI_API_KEY` to
+// whatever was set at cold start, so env keys provisioned at runtime (via
+// x-env headers or POST /env-config) were never picked up by this route and
+// tool generation silently failed with an empty/invalid key. Constructing per
+// request is cheap (no network on construction) and reads the current env.
+function buildAiClient() {
+  return new GoogleGenAI({ apiKey: getEnv('GEMINI_API_KEY') || process.env.GEMINI_API_KEY });
+}
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
+  // Load client-supplied dynamic environment keys from headers into process.env
+  // / global store — required before constructing the Gemini client below,
+  // otherwise a runtime-provisioned key would be invisible to this route.
+  getEnv('GEMINI_API_KEY', req);
   try {
     const body = await req.json();
     const { action = 'generate', prompt, serverId, toolSchema } = body;
@@ -21,6 +34,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       }
 
       const modelName = getAiModel('chatModel');
+      const ai = buildAiClient();
 
       const systemInstruction = `أنت مهندس أدوات وأنظمة خوادم بروتوكول MCP (Model Context Protocol) للذكاء الاصطناعي.
 مهمتك تحويل الوصف النصي المعطى بلغة طبيعية (عربية أو إنجليزية) إلى مصفوفة تعريف أداة برمجة قياسية (MCP Tool Schema) متوافقة تماماً مع معايير Gemini Function Calling و MCP Protocol.
@@ -141,7 +155,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     }
 
     return NextResponse.json({ error: 'إجراء غير مدعوم' }, { status: 400 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in MCP generate-tool API:', error);
     return NextResponse.json({ error: 'فشل توليد الأداة (Failed to generate tool)' }, { status: 500 });
   }

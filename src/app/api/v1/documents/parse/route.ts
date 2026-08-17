@@ -323,11 +323,15 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantId, fileHash);
     console.log(`[Document Ingestion] File meticulously archived to disk: ${archivedPath}`);
 
-    if (!skipCache && SERVER_OCR_CACHE.has(fileHash)) {
-      const cached = SERVER_OCR_CACHE.get(fileHash)!;
+    // Cache key is scoped by tenantId: two tenants uploading identical bytes
+    // must NOT share each other's extracted text. The previous file-hash-only
+    // key leaked tenant A's OCR output to tenant B on an identical upload.
+    const ocrCacheKey = `${tenantId}:${fileHash}`;
+    if (!skipCache && SERVER_OCR_CACHE.has(ocrCacheKey)) {
+      const cached = SERVER_OCR_CACHE.get(ocrCacheKey)!;
       cached.hits += 1;
       console.log(
-        `[Document Ingestion Cache] Server OCR Cache Hit for ${fileName} (Hash: ${fileHash.substring(0, 10)}..., Hits: ${cached.hits})`,
+        `[Document Ingestion Cache] Server OCR Cache Hit for ${fileName} (Tenant: ${tenantId}, Hash: ${fileHash.substring(0, 10)}..., Hits: ${cached.hits})`,
       );
       return NextResponse.json(
         {
@@ -412,8 +416,8 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       );
     }
 
-    // Cache successful OCR result in server memory
-    SERVER_OCR_CACHE.set(fileHash, {
+    // Cache successful OCR result in server memory (scoped by tenantId + fileHash)
+    SERVER_OCR_CACHE.set(ocrCacheKey, {
       text: extractedText,
       charCount: extractedText.length,
       wordCount: extractedText.trim().split(/\s+/).length,

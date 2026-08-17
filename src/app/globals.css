@@ -1,5 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Cairo:wght@400;600;700&display=swap');
-@import "tailwindcss";
+@import 'tailwindcss';
+
+/* Tailwind v4 is CSS-first and has no tailwind.config.js by default, so the
+   `dark:` variant defaults to `@media (prefers-color-scheme: dark)` only —
+   i.e. it follows the OS setting and cannot be toggled by the app. The project
+   uses `dark:` in 60+ places against a fixed light theme, so dark styling
+   only kicked in for users whose OS was set to dark, producing an inconsistent
+   look. Re-define the variant as a class selector (`.dark`) so dark mode is
+   application-controlled and deterministic regardless of the OS preference. */
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, sans-serif;

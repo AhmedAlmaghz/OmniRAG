@@ -1,6 +1,6 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
-import { getEnv, setServerEnv, setServerEnvs } from '@/lib/env/runtimeEnv';
+import { getEnv, setServerEnvs } from '@/lib/env/runtimeEnv';
 import { resetPostgresPool } from '@/lib/storage/postgres';
 import { resetQdrantClient } from '@/lib/storage/qdrant';
 import { serverErrorResponse } from '@/lib/api/safeError';
@@ -182,30 +182,52 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       return getEnv(envKey, req) || '';
     };
 
-    // Save/Sync environment variables to global runtime server store
+    // Save/Sync environment variables to global runtime server store.
+    // setServerEnvs enforces a key allow-list and REFUSES to persist sensitive
+    // platform secrets (DB/vector/LLM) in production — those must be provided
+    // by the host runtime, never by an authenticated tenant request body.
     if (action === 'save' || action === 'sync') {
       const targetEnvs = envs || (key ? { [key]: value } : {});
-      const updatedKeys: string[] = [];
-
+      // Filter masked/empty here too so they are excluded before counting.
+      const cleanEnvs: Record<string, string> = {};
       Object.entries(targetEnvs).forEach(([k, v]) => {
         if (typeof v === 'string' && !isMaskedOrEmpty(v)) {
-          setServerEnv(k, v.trim());
-          updatedKeys.push(k);
+          cleanEnvs[k] = (v as string).trim();
         }
       });
 
-      if (updatedKeys.includes('DATABASE_URL') || updatedKeys.includes('POSTGRES_URL')) {
+      const { updated, blocked } = setServerEnvs(cleanEnvs);
+
+      // Only rebuild connection pools when a sensitive URL was actually changed.
+      // (If production refused the write, the pool must NOT be torn down — that
+      // would let a tenant DoS other tenants' DB/vector connections.)
+      if (updated.includes('DATABASE_URL') || updated.includes('POSTGRES_URL')) {
         resetPostgresPool();
       }
-      if (updatedKeys.includes('QDRANT_URL') || updatedKeys.includes('QDRANT_API_KEY')) {
+      if (updated.includes('QDRANT_URL') || updated.includes('QDRANT_API_KEY')) {
         resetQdrantClient();
+      }
+
+      const blockedByProd = blocked.some((b) => b.reason === 'write_blocked_in_production');
+      if (blockedByProd) {
+        return NextResponse.json(
+          {
+            success: false,
+            action,
+            updatedKeys: updated,
+            blockedKeys: blocked.map((b) => b.key),
+            message:
+              'لا يمكن تعديل أسرار المنصة (رابط قاعدة البيانات / Qdrant / مفاتيح الذكاء الاصطناعي) عبر الواجهة في بيئة الإنتاج. يجب تزويدها كمتغيرات بيئة من مضيف التشغيل (Cloud Run / Vercel).',
+          },
+          { status: 403 },
+        );
       }
 
       return NextResponse.json({
         success: true,
         action,
-        updatedKeys,
-        message: `تم تحديث وسفظ ${updatedKeys.length} من متغيرات البيئة في الخادم بنجاح.`,
+        updatedKeys: updated,
+        message: `تم تحديث وحفظ ${updated.length} من متغيرات البيئة في الخادم بنجاح.`,
       });
     }
 

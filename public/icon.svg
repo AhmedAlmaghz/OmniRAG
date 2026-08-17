@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- OmniRAG app icon: stacked knowledge layers in indigo, matching the
+       MainApp.tsx <Layers> Lucide glyph. Designed as SVG (≈1KB) to replace
+       a 1MB JPEG .ico/.jpg pair — a browser-fetched favicon should be tiny. -->
+  <rect width="64" height="64" rx="14" fill="#4f46e5"/>
+  <g fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M32 14 L54 24 L32 34 L10 24 Z"/>
+    <path d="M14 31 L32 40 L50 31"/>
+    <path d="M14 39 L32 48 L50 39"/>
+  </g>
+</svg>

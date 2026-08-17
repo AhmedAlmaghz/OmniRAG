@@ -59,11 +59,18 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   ).length;
   const attackRatio = totalInferenceChecks > 0 ? Number((blockedAttacks / totalInferenceChecks).toFixed(2)) : 0;
 
-  // Real MRR/Recall estimations based on actual indexed chunk ratio
+  // MRR / Recall@K estimation.
+  //
+  // The previous implementation fabricated these metrics: it returned hard-
+  // coded high values (0.85–0.97 / 0.88–0.98) scaled only by the ratio of
+  // indexed documents, which has no statistical relationship to retrieval
+  // quality. Surfacing 0.97 "MRR" gave a false impression of retrieval health
+  // to operators reading the dashboard. A proper MRR/Recall@K requires a
+  // labelled relevance set (query → known-relevant chunks) that this system
+  // does not record, so we report null and surface the fact honestly instead
+  // of inventing the number. `retrievalHealth` reports what we DO measure.
   const totalIndexedDocs = docs.filter((d) => d.status === 'indexed').length;
   const docHealthRatio = docs.length > 0 ? totalIndexedDocs / docs.length : 1.0;
-  const mrrScore = Number((0.85 + docHealthRatio * 0.12).toFixed(2));
-  const recallAtK = Number((0.88 + docHealthRatio * 0.1).toFixed(2));
 
   const stats = {
     totalDocuments: docs.length,
@@ -73,8 +80,13 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     attackRatio,
     toolCallCount: toolCalls.length,
     p95LatencyMs,
-    mrrScore,
-    recallAtK,
+    // MRR / Recall@K require a labelled relevance set (query → known-relevant
+    // chunks), which OmniRAG does not record. Report null rather than a
+    // fabricated number; retrievalHealth reports the indexed-chunk coverage
+    // we *can* measure.
+    mrrScore: null,
+    recallAtK: null,
+    retrievalHealth: Number(docHealthRatio.toFixed(2)),
     chunksPerCollection,
   };
 

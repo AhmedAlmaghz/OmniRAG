@@ -6,12 +6,19 @@ import { setSessionCookie } from '@/lib/auth/session';
 import { createSessionToken, sessionExpiryIso } from '@/lib/auth/sessionInfo';
 import { seedNewTenant } from '@/actions/seedTenantAction';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { checkRateLimit } from '@/lib/security/rateLimiter';
 import { TenantSettings } from '@/lib/types/omnirag';
+import { randomUUID } from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 8;
+
+// Stricter rate limit for registration: 5 sign-ups per minute per IP.
+// Prevents automated mass-tenant creation / resource exhaustion attacks.
+const REGISTER_RATE_LIMIT = 5;
+const REGISTER_RATE_WINDOW = 60000;
 
 const DEFAULT_TENANT_SETTINGS: TenantSettings = {
   chunkSize: 500,
@@ -29,6 +36,11 @@ const DEFAULT_TENANT_SETTINGS: TenantSettings = {
  * constraint; we pre-check for a friendlier message.
  */
 export async function POST(req: NextRequest) {
+  // Rate-limit BEFORE any work, including before CSRF/Argon2, so a flood of
+  // registration requests cannot weaponise Argon2 hashing as a CPU DoS.
+  const rl = checkRateLimit(req, REGISTER_RATE_LIMIT, REGISTER_RATE_WINDOW);
+  if (!rl.success && rl.response) return rl.response;
+
   if (!isCsrfOk(req)) return csrfDenied();
   try {
     const body = await req.json().catch(() => ({}));
@@ -67,8 +79,11 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date().toISOString();
-    const userId = `user-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
-    const tenantId = `tenant-${userId.slice(-12)}`;
+    // Use cryptographically-random UUIDs for user/tenant identifiers. The
+    // previous Date.now()+Math.random scheme was predictable and collision-
+    // prone — randomUUID is RFC 4122 v4, 122 bits of CSPRNG entropy.
+    const userId = `user-${randomUUID()}`;
+    const tenantId = `tenant-${randomUUID()}`;
 
     const passwordHash = await hashPassword(password);
 

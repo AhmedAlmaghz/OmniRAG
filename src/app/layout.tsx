@@ -9,9 +9,12 @@ export const metadata: Metadata = {
   description:
     'Enterprise Agentic RAG Platform with Hybrid Retrieval, MCP Gateway, Multi-Tenancy, and Deterministic Security Guardrails',
   icons: {
-    icon: '/icon.jpg',
-    shortcut: '/favicon.ico',
-    apple: '/icon.jpg',
+    // SVG favicon (≈1KB) replaces a 1MB JPEG/ICO pair that slowed first-byte
+    // render for every visitor. The stacked-layers glyph matches MainApp's
+    // <Layers> brand mark.
+    icon: '/icon.svg',
+    shortcut: '/icon.svg',
+    apple: '/icon.svg',
   },
 };
 
@@ -28,8 +31,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="ar" dir="rtl" className="h-full">
       <head>
-        <link rel="icon" href="/icon.jpg" type="image/jpeg" />
-        <link rel="apple-touch-icon" href="/icon.jpg" />
+        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
         <script
           dangerouslySetInnerHTML={{
             __html: `window.__APP_ORIGIN__ = ${JSON.stringify(origin)};`,

@@ -1,5 +1,6 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/storage/db';
 import { Conversation, Message } from '@/lib/types/omnirag';
 
@@ -19,7 +20,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     const conversations = await db.getConversations(tenantId);
     return NextResponse.json({ conversations });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('GET /api/v1/conversations error:', err);
     return NextResponse.json({ error: 'فشل جلب المحادثات (Failed to fetch conversations)' }, { status: 500 });
   }
@@ -63,13 +64,17 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     if (action === 'save_message' && body.message) {
       const msg: Message = body.message;
-      // Security (C2): override any client-supplied tenantId so the message is
-      // persisted under the authenticated caller's tenant, preventing
-      // cross-tenant impersonation. Also regenerate the id when it lacks a
-      // real prefix to avoid collisions / spoofed ids.
+      // Security (C2): override client-supplied tenantId so the message is
+      // persisted under the authenticated caller's tenant (cross-tenant
+      // impersonation guard). Also regenerate the id and timestamp server-side:
+      // the comment below previously promised this but the code passed the
+      // client-supplied id through unchanged, allowing spoofed ids and
+      // collisions with messages already in other conversations.
       msg.tenantId = tenantId;
+      msg.id = `msg-${randomUUID()}`;
+      msg.createdAt = msg.createdAt || new Date().toISOString();
       await db.addMessage(msg);
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, messageId: msg.id });
     }
 
     if (action === 'delete' && body.conversationId) {
@@ -90,7 +95,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('POST /api/v1/conversations error:', err);
     return NextResponse.json({ error: 'خطأ داخلي في الخادم (Internal Server Error)' }, { status: 500 });
   }

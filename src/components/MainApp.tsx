@@ -11,22 +11,10 @@ import SettingsView from '@/components/SettingsView';
 import AnalyticsCenter from '@/components/AnalyticsCenter';
 import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
-import FirstLaunchEnvModal from '@/components/env/FirstLaunchEnvModal';
 import { logOutUser, getSession } from '@/lib/auth/authClient';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 
-import {
-  MessageSquare,
-  BookOpen,
-  Plug,
-  Search,
-  ShieldCheck,
-  BarChart3,
-  Layers,
-  Home,
-  Cpu,
-  Settings,
-} from 'lucide-react';
+import { Layers } from 'lucide-react';
 
 type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'analytics' | 'settings';
 
@@ -38,7 +26,6 @@ export default function MainApp() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [showFirstLaunchEnvModal, setShowFirstLaunchEnvModal] = useState(false);
 
   // Load saved theme, session, active tab, and first launch onboarding check from localStorage
   useEffect(() => {
@@ -244,45 +231,6 @@ export default function MainApp() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const navTabs = [
-    {
-      id: 'landing',
-      label: lang === 'ar' ? 'الصفحة الرئيسية' : 'Overview Landing',
-      icon: Home,
-      badge: 'Remotion 4',
-    },
-    {
-      id: 'chat',
-      label: lang === 'ar' ? 'استوديو المحادثة المعززة' : 'Agentic Chat Studio',
-      icon: MessageSquare,
-      badge: 'Gemini 3.6',
-    },
-    {
-      id: 'knowledge',
-      label: lang === 'ar' ? 'مستودع المعرفة والاستيعاب' : 'Knowledge Pipeline',
-      icon: BookOpen,
-      badge: 'Auto Chunk',
-    },
-    {
-      id: 'mcp',
-      label: lang === 'ar' ? 'بوابة أدوات MCP' : 'MCP Gateway',
-      icon: Plug,
-      badge: 'Stateless 2026',
-    },
-    {
-      id: 'analytics',
-      label: lang === 'ar' ? 'مركز التحليلات' : 'Analytics Center',
-      icon: BarChart3,
-      badge: 'Recall & Guard',
-    },
-    {
-      id: 'settings',
-      label: lang === 'ar' ? 'الإعدادات والملف الشخصي' : 'Settings & Profile',
-      icon: Settings,
-      badge: 'User Prefs',
-    },
-  ];
-
   // 1. Prioritize displaying the landing page if activeTab is 'landing' (instantly available)
   if (activeTab === 'landing') {
     return (
@@ -301,7 +249,9 @@ export default function MainApp() {
         <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center animate-spin mb-4">
           <Layers className="w-6 h-6 text-white" />
         </div>
-        <p className="text-xs font-mono tracking-widest text-indigo-400">OMNIRAG v2.4 SECURE CONTAINER BOOTING...</p>
+        <p className="text-xs font-mono tracking-widest text-indigo-400">
+          OMNIRAG v{APP_VERSION} SECURE CONTAINER BOOTING...
+        </p>
       </div>
     );
   }
@@ -369,14 +319,6 @@ export default function MainApp() {
           <span>OmniRAG Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
         </div>
       </footer>
-
-      {/* First-Launch Environment Variables Onboarding Modal */}
-      <FirstLaunchEnvModal
-        lang={lang}
-        isOpen={showFirstLaunchEnvModal}
-        onClose={() => setShowFirstLaunchEnvModal(false)}
-        onComplete={() => setShowFirstLaunchEnvModal(false)}
-      />
     </div>
   );
 }

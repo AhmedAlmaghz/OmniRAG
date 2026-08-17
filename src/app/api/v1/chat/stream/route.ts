@@ -1,11 +1,12 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { google } from '@/lib/rag/googleProvider';
-import { streamText } from 'ai';
+import { streamText, createTextStreamResponse } from 'ai';
 import { HookHarness } from '@/lib/harness/hook-harness';
 import { performHybridSearch } from '@/lib/rag/engine';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { createPIIStreamRedactor } from '@/lib/security/piiStreamRedactor';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,18 +60,70 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       topK: 4,
     });
 
+    // Hook Stage 2b: Pre-Generation — scan retrieved chunks for indirect prompt
+    // injection before they are injected into the model context. Mirrors the
+    // chat/completions route so a hostile document in a tenant's corpus cannot
+    // override the model's instructions once it reaches the streamed response.
+    const preGenCheck = await HookHarness.run('pre_generation', {
+      tenantId,
+      userId: authCtx.userId,
+      retrievedChunks: searchResult.chunks.map((c) => ({
+        content: c.content,
+        documentTitle: c.documentTitle,
+      })),
+    });
+    if (!preGenCheck.allow) {
+      return NextResponse.json({ error: preGenCheck.reason, code: preGenCheck.code }, { status: 400 });
+    }
+
     const contextText = searchResult.chunks
       .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle}]: ${c.content}`)
       .join('\n\n');
+
+    // PII redaction on the streamed output. The chat/completions route runs the
+    // post-inference H9 PIIRedactor over the full response as one string; this
+    // route emits text deltas and would bypass H9, leaking emails/phones to
+    // the client. We pipe each delta through a buffered redactor that defers
+    // redaction of partial PII patterns until they terminate, so patterns that
+    // are split across deltas are still intercepted without leaking trailing
+    // characters.
+    const redactor = createPIIStreamRedactor();
 
     const result = streamText({
       model: google(targetModel),
       system: `أنت مساعد ذكي لمنصة OmniRAG. استعن بالمستندات المرفقة أدناه للإجابة على استفسار المستخدم بوضوح ودقة عالية:\n\nالمستندات:\n${contextText}`,
       prompt,
+      onEnd: async (event) => {
+        // Re-run post-inference on the full LLM text so audit-log entries have
+        // parity with /chat/completions. Redaction is already applied inline to
+        // the streamed output above; this hook is for the audit trail only.
+        await HookHarness.run('post_inference', {
+          tenantId,
+          userId: authCtx.userId,
+          output: event.text,
+        });
+      },
     });
 
-    return result.toTextStreamResponse();
-  } catch (err: any) {
+    const redactedTextStream = new ReadableStream<string>({
+      async start(controller) {
+        try {
+          for await (const delta of result.textStream) {
+            const safe = redactor.push(delta);
+            if (safe) controller.enqueue(safe);
+          }
+          const tail = redactor.end();
+          if (tail) controller.enqueue(tail);
+        } catch (err) {
+          controller.error(err);
+          return;
+        }
+        controller.close();
+      },
+    });
+
+    return createTextStreamResponse({ stream: redactedTextStream });
+  } catch (err: unknown) {
     return serverErrorResponse('chat/stream', err);
   }
 });

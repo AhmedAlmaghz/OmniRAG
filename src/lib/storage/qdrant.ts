@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getEnv } from '../env/runtimeEnv';
 import { QdrantClient } from '@qdrant/js-client-rest';
 
@@ -93,20 +94,30 @@ export async function upsertQdrantChunk(params: {
 
 /**
  * Coerces an arbitrary chunk id string into a Qdrant-compatible point id.
- * Standard UUIDs are used as-is; other strings are reduced to a pseudo-UUID via
- * hex cleaning or hashing so Qdrant accepts the upsert.
+ * Standard UUIDs are used as-is; other strings are reduced to a deterministic
+ * UUID via a SHA-1-derived 16-byte value (UUID v5-style). This replaces the
+ * previous 32-bit Java-string hashCode fallback, which was collision-prone:
+ * distinct chunk ids could hash to the same point id, silently overwriting one
+ * tenant's vector with another's and mis-targeting deletions. SHA-1 gives ~60
+ * bits of practical collision resistance — astronomically better than 32 bits
+ * — and is deterministic so re-upserting the same chunk id yields the same
+ * point id (idempotent writes).
  */
 function toQdrantPointId(rawId: string): string {
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId)) {
+  if (/^[0-9a-f]{8}-[-0-9a-f]{4}-[-0-9a-f]{4}-[-0-9a-f]{4}-[-0-9a-f]{12}$/i.test(rawId)) {
     return rawId;
   }
+  // Preserve hex-only ids long enough to form a UUID without altering them.
   const cleaned = rawId.replace(/[^a-f0-9]/gi, '');
   if (cleaned.length >= 32) {
     return `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20, 32)}`;
   }
-  // Fallback: create a 32-char hex string
-  const hash = Array.from(rawId).reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0);
-  const hex = Math.abs(hash).toString(16).padStart(32, '0');
+  // Deterministic UUID v5-style derivation: SHA-1(name) → version/variant bits
+  // → 8-4-4-4-12 hex. Collision-safe across realistic chunk-id cardinalities.
+  const digest = createHash('sha1').update(rawId).digest();
+  digest[6] = (digest[6] & 0x0f) | 0x50; // version 5
+  digest[8] = (digest[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = digest.toString('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 

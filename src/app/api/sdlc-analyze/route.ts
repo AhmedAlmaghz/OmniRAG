@@ -118,17 +118,21 @@ Return a strictly valid JSON response without markdown formatting with this sche
       summaryEn: `Code analyzed successfully. Overall score: ${score}/100 with rating (${rating}).`,
       recommendations,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    // Previously this catch returned HTTP 200 with a hard-coded "B" rating,
+    // which fabricated a successful analysis when the route actually failed.
+    // Surface the failure honestly with a 500 and an Arabic-safe message that
+    // does not leak the underlying error to the client.
     console.error('SDLC analyze error:', error);
     return NextResponse.json(
       {
-        score: 80,
-        securityRating: 'B',
-        summaryAr: 'تم الفحص المبدئي بنجاح.',
-        summaryEn: 'Preliminary check completed.',
+        score: 0,
+        securityRating: 'C',
+        summaryAr: 'تعذّر إجراء التحليل بسبب خطأ داخلي. يرجى المحاولة لاحقاً.',
+        summaryEn: 'Analysis could not be completed due to an internal error. Please retry later.',
         recommendations: [],
       },
-      { status: 200 },
+      { status: 500 },
     );
   }
 });
