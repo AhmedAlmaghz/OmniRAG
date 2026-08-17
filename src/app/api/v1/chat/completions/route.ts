@@ -5,6 +5,7 @@ import { performHybridSearch, generateRagCompletion } from '@/lib/rag/engine';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
+import { db } from '@/lib/storage/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,17 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     try {
       const body = await req.json();
       const tenantId = authCtx.tenantId;
-      const { prompt, mode = 'hybrid', collectionIds, modelOverride, approvedToolCall, rerank } = body;
+      const {
+        prompt,
+        mode = 'hybrid',
+        collectionIds,
+        modelOverride,
+        approvedToolCall,
+        rerank,
+        conversationId,
+        conversationHistory,
+        generateSuggestions = true,
+      } = body;
 
       if (!prompt || typeof prompt !== 'string') {
         return NextResponse.json(
@@ -82,7 +93,22 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         return NextResponse.json({ error: preGenCheck.reason, code: preGenCheck.code }, { status: 400 });
       }
 
-      // Step 2: RAG Generation
+      // Step 2: RAG Generation with conversation memory
+      // If conversationHistory is not provided but conversationId exists,
+      // fetch recent messages from the database for context
+      let history = conversationHistory || [];
+      if ((!history || history.length === 0) && conversationId) {
+        try {
+          const historyMessages = await db.getMessages(conversationId, tenantId);
+          history = historyMessages.slice(-10).map((m: any) => ({
+            role: m.role,
+            content: m.content,
+          }));
+        } catch {
+          // Silently fall back to no history
+        }
+      }
+
       const ragResponse = await generateRagCompletion({
         tenantId,
         query: prompt,
@@ -90,6 +116,8 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         modelOverride,
         contextChunks: searchResult.chunks,
         approvedToolCall,
+        conversationHistory: history,
+        generateSuggestions,
       });
 
       // Hook Stage 3: Post-Inference (PII Redaction & Citation Verification)
@@ -110,6 +138,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         latencyMs: searchResult.latencyMs,
         pendingToolCall: ragResponse.pendingToolCall,
         toolCalls: ragResponse.toolCalls,
+        suggestions: ragResponse.suggestions,
       });
     } catch (err: unknown) {
       console.error('API Error in /api/v1/chat/completions:', err);

@@ -45,3 +45,116 @@ body {
   outline: 2px solid #6366f1;
   outline-offset: 2px;
 }
+
+/* === Chat UI Animations & Polish === */
+
+/* Message appear animation */
+@keyframes message-appear {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-message-appear {
+  animation: message-appear 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Citation popover pop animation */
+@keyframes citation-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+.animate-citation-pop {
+  transform-origin: bottom center;
+  animation: citation-pop 0.2s ease-out both;
+}
+
+/* Citations dropdown animation */
+@keyframes citation-dropdown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-citation-dropdown {
+  transform-origin: top center;
+  animation: citation-dropdown 0.2s ease-out both;
+}
+
+/* Typing dots animation */
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+.animate-typing-dot {
+  animation: typing-dot 1.2s infinite ease-in-out;
+}
+
+/* Improved Arabic typography for chat messages */
+.rich-markdown-body {
+  letter-spacing: 0.005em;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+[dir='rtl'] .rich-markdown-body {
+  text-align: right;
+}
+
+[dir='ltr'] .rich-markdown-body {
+  text-align: left;
+}
+
+/* Smooth scrolling for chat containers */
+.lazy-scroll {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Custom scrollbar for chat areas */
+.lazy-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.lazy-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.lazy-scroll::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.18);
+  border-radius: 9999px;
+}
+.lazy-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.32);
+}
+
+/* Scale hover utility for interactive elements */
+.hover\:scale-102:hover {
+  transform: scale(1.02);
+}
+@media (hover: hover) {
+  .hover\:scale-102:hover {
+    transform: scale(1.02);
+  }
+}

@@ -588,6 +588,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
 /**
  * Generates an Agentic RAG Completion with Citations & MCP context using Gemini
+ * Supports conversation memory (short-term context) and AI-powered follow-up suggestions.
  */
 export async function generateRagCompletion(params: {
   tenantId: string;
@@ -596,6 +597,8 @@ export async function generateRagCompletion(params: {
   modelOverride?: string;
   contextChunks: DocumentChunk[];
   approvedToolCall?: MCPToolCall;
+  conversationHistory?: Array<{ role: string; content: string }>;
+  generateSuggestions?: boolean;
 }): Promise<{
   text: string;
   citations: Citation[];
@@ -603,8 +606,18 @@ export async function generateRagCompletion(params: {
   tokensUsed: { input: number; output: number };
   pendingToolCall?: MCPToolCall;
   toolCalls?: MCPToolCall[];
+  suggestions?: string[];
 }> {
-  const { tenantId, query, mode, modelOverride, contextChunks, approvedToolCall } = params;
+  const {
+    tenantId,
+    query,
+    mode,
+    modelOverride,
+    contextChunks,
+    approvedToolCall,
+    conversationHistory = [],
+    generateSuggestions = false,
+  } = params;
   const modelToUse = modelOverride || selectSmartModel(query, mode);
 
   // Format context block with citations
@@ -612,7 +625,17 @@ export async function generateRagCompletion(params: {
     .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle} (صفحة ${c.pageNumber || 1})]:\n${c.content}`)
     .join('\n\n');
 
-  let promptText = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
+  // Build conversation memory context (last 10 messages for short-term memory)
+  const MAX_HISTORY_MESSAGES = 10;
+  const recentHistory = conversationHistory.slice(-MAX_HISTORY_MESSAGES);
+  const historyContext =
+    recentHistory.length > 0
+      ? recentHistory.map((msg) => `${msg.role === 'user' ? 'المستخدم' : 'المساعد'}: ${msg.content}`).join('\n')
+      : '';
+
+  let promptText = historyContext
+    ? `سجل المحادثة السابقة:\n${historyContext}\n\n---\n\nالمستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم الحالي: ${query}`
+    : `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
   const alreadyExecutedToolCalls: MCPToolCall[] = [];
 
   if (approvedToolCall) {
@@ -666,14 +689,21 @@ export async function generateRagCompletion(params: {
 النموذج النشط: ${modelToUse} | الوضع الحالي: ${mode}.
 الأدوات والخوادم المربوطة والمتاحة لك فوراً: ${toolsToOffer.length > 0 ? toolsToOffer.join(', ') : 'لا توجد أدوات خارجية مفعلة حالياً'}.
 
+ذاكرة المحادثة والسياق:
+1. تم تزويدك بسجل المحادثة السابقة بينك وبين المستخدم. استخدم هذا السياق لفهم السياق الكامل للمحادثة.
+2. إذا أشار المستخدم بكلمات مثل "هذا"، "ذلك"، "المذكور"، "الموضوع"، "مرة أخرى" وغيرها من الإشارات، فاستخدم سياق المحادثة السابقة لفهم المراد.
+3. لا تعيد ذكر معلومات سبق إخبار المستخدم بها إلا إذا طلب ذلك صراحة.
+4. رد بشكل طبيعي ومتصل كأنك تعرف تاريخ المحادثة.
+
 توجيهات واستخدام أدوات الـ MCP:
 1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، فيجب عليك فوراً استدعاء الأداة المناسبة عبر Function Call.
 2. لا تعتذر أو تقل "لا أستطيع الاتصال بالويب أو الخدمات الخارجية"، لأن الأدوات مفعلة ومربوطة ببروتوكول MCP بالفعل.
-3. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمن طلب الموافقة البشرية قبل التنفيذ تلقائياً.
+3. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمان طلب الموافقة البشرية قبل التنفيذ تلقائياً.
 
-قواعد الإسناد والاستشهاد:
-1. عند استخدام معلومة من المستندات المرفقة، أضف الرقم [1] أو [2] المطابق لرقم المصدر.
+قواعد الإسناد والاستشهاد المضمن:
+1. عند استخدام معلومة من المستندات المرفقة، ضع رقم الاستشهاد مباشرة في النص كرقم بين أقواس مربعة مثل [1] أو [2] المطابق لرقم المصدر.
 2. لا تبتكر مراجع وهمية غير موجودة في النص.
+3. لا تضع قائمة منفصلة للمصادر في نهاية الرد — فقط الأرقام المضمنة في النص.
 ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحالي مغلق وخاص بالكامل (Private Mode). تم إيقاف وتصفية جميع أدوات الـ MCP الخارجية لشبكة الويب أو الخدمات الخارجية للطرف الثالث حماية لسرية بيانات المستأجر.' : ''}`;
 
       const functionDeclarations: FunctionDeclaration[] = [];
@@ -794,6 +824,31 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         snippet: chunk.content.substring(0, 120) + '...',
       }));
 
+      // AI-powered contextual follow-up suggestions
+      let suggestions: string[] | undefined;
+      if (generateSuggestions && response.text) {
+        try {
+          const suggestionsResponse = await aiClient.models.generateContent({
+            model: modelAlias,
+            contents: `بناءً على الإجابة التالية والمحادثة، اقترح 3 أسئلة متابعة سياقية قصيرة ومفيدة يمكن للمستخدم أن يسألها. أعد الأسئلة فقط، كل سؤال في سطر منفصل، بدون ترقيم أو نقاط:\n\nالإجابة: ${response.text.substring(0, 500)}\n\nسؤال المستخدم: ${query}`,
+            config: {
+              systemInstruction:
+                'أنت مساعد يولد أسئلة متابعة سياقية ذكية. أجب بـ 3 أسئلة فقط، كل سؤال في سطر منفصل، بدون أي نص إضافي أو ترقيم أو رموز.',
+              temperature: 0.7,
+              maxOutputTokens: 200,
+            },
+          });
+          const suggestionsText = suggestionsResponse.text || '';
+          suggestions = suggestionsText
+            .split('\n')
+            .map((s) => s.replace(/^[\d\.\-\*\s]+/, '').trim())
+            .filter((s) => s.length > 10 && s.length < 150)
+            .slice(0, 4);
+        } catch {
+          // Silently fail — suggestions are optional enhancement
+        }
+      }
+
       return {
         text: response.text || 'لم يتم استخراج نص من النموذج.',
         citations,
@@ -803,6 +858,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
           output: Math.floor((response.text || '').length / 4),
         },
         toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined,
+        suggestions,
       };
     } catch (err: any) {
       console.error('AI SDK/Google GenAI execution error, using deterministic fallback:', err);
@@ -827,5 +883,6 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
     modelUsed: modelToUse,
     tokensUsed: { input: 120, output: 85 },
     toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined,
+    suggestions: [],
   };
 }

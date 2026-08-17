@@ -26,17 +26,17 @@ import {
   Code2,
 } from 'lucide-react';
 import { CodeBlock } from '@/components/ui/CodeBlock';
-import {
-  convertTeXToArabicMath,
-  containsMathExpressions,
-  convertNumeralsToArabic,
-} from '@/lib/utils/arabicMath';
+import { convertTeXToArabicMath, containsMathExpressions, convertNumeralsToArabic } from '@/lib/utils/arabicMath';
+import { CitationInline } from '@/components/chat/CitationInline';
+import { Citation } from '@/lib/types/omnirag';
 
 interface RichMessageRendererProps {
   content: string;
   role: 'user' | 'assistant' | 'system';
   lang?: 'ar' | 'en';
   onCitationClick?: (citation: any) => void;
+  citations?: Citation[];
+  onViewInKnowledge?: () => void;
 }
 
 export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
@@ -44,6 +44,8 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   role,
   lang = 'ar',
   onCitationClick,
+  citations = [],
+  onViewInKnowledge,
 }) => {
   const [copied, setCopied] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -53,6 +55,34 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   const [fontSizeClass, setFontSizeClass] = useState<'text-xs' | 'text-sm' | 'text-base'>('text-sm');
 
   const hasMath = containsMathExpressions(content);
+
+  // Helper to render text with inline citation numbers as clickable badges
+  const renderTextWithCitations = (
+    text: string,
+    cits: Citation[],
+    language: 'ar' | 'en',
+    onCitClick?: (citation: any) => void,
+    onNav?: () => void,
+  ): React.ReactNode[] => {
+    const parts = text.split(/(\[\d+\])/g);
+    return parts.map((part, i) => {
+      const match = part.match(/^\[(\d+)\]$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        const cit = cits.find((c) => c.index === num);
+        return (
+          <CitationInline
+            key={`cit-${i}-${num}`}
+            index={num}
+            citation={cit}
+            lang={language}
+            onViewInKnowledge={onNav}
+          />
+        );
+      }
+      return <span key={`txt-${i}`}>{part}</span>;
+    });
+  };
 
   // Copy whole response to clipboard
   const handleCopyText = () => {
@@ -119,7 +149,8 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
 
   // Helper to detect URL media formats
   const isImageUrl = (url: string) => /\.(jpeg|jpg|gif|png|svg|webp)($|\?)/i.test(url);
-  const isVideoUrl = (url: string) => /\.(mp4|webm|ogg)($|\?)/i.test(url) || /youtube\.com|vimeo\.com|youtu\.be/i.test(url);
+  const isVideoUrl = (url: string) =>
+    /\.(mp4|webm|ogg)($|\?)/i.test(url) || /youtube\.com|vimeo\.com|youtu\.be/i.test(url);
   const isAudioUrl = (url: string) => /\.(mp3|wav|ogg|m4a)($|\?)/i.test(url);
 
   return (
@@ -158,7 +189,9 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                     type="button"
                     onClick={() => setUseArabicNumerals(!useArabicNumerals)}
                     className={`px-1.5 py-0.5 rounded text-[10px] border cursor-pointer transition ${
-                      useArabicNumerals ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-700 border-slate-300'
+                      useArabicNumerals
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white text-slate-700 border-slate-300'
                     }`}
                     title="تحويل الأرقام إلى الأرقام العربية (٠-٩)"
                   >
@@ -208,7 +241,15 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
               title="قراءة النص صوتياً"
             >
               {isSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-indigo-600" />}
-              <span>{isSpeaking ? (lang === 'ar' ? 'إيقاف الصوتي' : 'Stop Audio') : (lang === 'ar' ? 'قراءة ناطقة' : 'Read Out')}</span>
+              <span>
+                {isSpeaking
+                  ? lang === 'ar'
+                    ? 'إيقاف الصوتي'
+                    : 'Stop Audio'
+                  : lang === 'ar'
+                    ? 'قراءة ناطقة'
+                    : 'Read Out'}
+              </span>
             </button>
 
             {/* Copy Button */}
@@ -218,8 +259,12 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
               className="flex items-center gap-1 px-2 py-1 rounded-lg border bg-white hover:bg-slate-100 text-slate-700 border-slate-200 text-xs cursor-pointer transition"
               title="نسخ الإجابة الكاملة"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
-              <span>{copied ? (lang === 'ar' ? 'تم النسخ' : 'Copied') : (lang === 'ar' ? 'نسخ' : 'Copy')}</span>
+              {copied ? (
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 text-slate-500" />
+              )}
+              <span>{copied ? (lang === 'ar' ? 'تم النسخ' : 'Copied') : lang === 'ar' ? 'نسخ' : 'Copy'}</span>
             </button>
 
             {/* Export Markdown */}
@@ -237,7 +282,9 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
       )}
 
       {/* Main Markdown Body */}
-      <div className={`rich-markdown-body leading-relaxed ${fontSizeClass} ${role === 'user' ? 'text-slate-900 font-medium' : 'text-slate-800'}`}>
+      <div
+        className={`rich-markdown-body leading-relaxed ${fontSizeClass} ${role === 'user' ? 'text-slate-900 font-medium' : 'text-slate-800'}`}
+      >
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
@@ -276,7 +323,9 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
               );
             },
             thead({ children }) {
-              return <thead className="bg-slate-100 text-slate-800 border-b border-slate-200 font-bold">{children}</thead>;
+              return (
+                <thead className="bg-slate-100 text-slate-800 border-b border-slate-200 font-bold">{children}</thead>
+              );
             },
             tbody({ children }) {
               return <tbody className="divide-y divide-slate-100">{children}</tbody>;
@@ -352,7 +401,9 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                     ) : (
                       <video controls className="w-full h-auto rounded-lg bg-black max-h-80">
                         <source src={href} />
-                        {lang === 'ar' ? 'متصفحك لا يدعم تشغيل الفيديو المباشر.' : 'Your browser does not support HTML5 video.'}
+                        {lang === 'ar'
+                          ? 'متصفحك لا يدعم تشغيل الفيديو المباشر.'
+                          : 'Your browser does not support HTML5 video.'}
                       </video>
                     )}
                   </div>
@@ -402,13 +453,40 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
 
             // Headers
             h1({ children }) {
-              return <h1 className="text-xl font-extrabold text-slate-900 mt-4 mb-2 pb-1 border-b border-slate-200">{children}</h1>;
+              return (
+                <h1 className="text-xl font-extrabold text-slate-900 mt-4 mb-2 pb-1 border-b border-slate-200">
+                  {children}
+                </h1>
+              );
             },
             h2({ children }) {
               return <h2 className="text-lg font-bold text-slate-900 mt-3 mb-1.5">{children}</h2>;
             },
             h3({ children }) {
               return <h3 className="text-base font-bold text-slate-800 mt-2.5 mb-1">{children}</h3>;
+            },
+
+            // Paragraphs with inline citation detection: convert [1], [2] to clickable CitationInline
+            p({ children }) {
+              return (
+                <p className="my-2 leading-relaxed">
+                  {typeof children === 'string'
+                    ? renderTextWithCitations(children, citations, lang, onCitationClick, onViewInKnowledge)
+                    : children}
+                </p>
+              );
+            },
+
+            // Text nodes also need citation processing
+            text({ children }) {
+              const text = String(children);
+              const hasCitation = /\[(\d+)\]/.test(text) && citations.length > 0;
+              if (hasCitation) {
+                return (
+                  <span>{renderTextWithCitations(text, citations, lang, onCitationClick, onViewInKnowledge)}</span>
+                );
+              }
+              return <>{children}</>;
             },
           }}
         >
@@ -423,7 +501,11 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
           onClick={() => setSelectedImage(null)}
         >
           <div className="relative max-w-4xl w-full bg-slate-900 rounded-2xl p-2 border border-slate-800 overflow-hidden shadow-2xl">
-            <img src={selectedImage} alt="Large preview" className="w-full h-auto max-h-[85vh] object-contain rounded-xl" />
+            <img
+              src={selectedImage}
+              alt="Large preview"
+              className="w-full h-auto max-h-[85vh] object-contain rounded-xl"
+            />
             <div className="p-3 bg-slate-950 flex items-center justify-between text-white text-xs">
               <span className="truncate text-slate-400 font-mono">{selectedImage}</span>
               <button

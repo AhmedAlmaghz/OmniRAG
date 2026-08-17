@@ -1,0 +1,394 @@
+'use client';
+
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Send,
+  Sparkles,
+  Lock,
+  Globe,
+  Cpu,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Download,
+  FolderKanban,
+} from 'lucide-react';
+import { Message, ChatMode, Citation, MCPToolCall } from '@/lib/types/omnirag';
+import { ChatMessage } from '@/components/chat/ChatMessage';
+import { FollowUpSuggestions } from '@/components/chat/FollowUpSuggestions';
+
+interface ChatMainProps {
+  lang: 'ar' | 'en';
+  messages: Message[];
+  isLoading: boolean;
+  inputPrompt: string;
+  setInputPrompt: (v: string) => void;
+  selectedMode: ChatMode;
+  setSelectedMode: (m: ChatMode) => void;
+  selectedCollectionIds: string[];
+  suggestions: string[];
+  securityNotice: string | null;
+  mcpApprovalSuccess: string | null;
+  pendingToolApproval: MCPToolCall | null;
+  onSendMessage: (prompt?: string, approvedToolCall?: MCPToolCall) => void;
+  onApproveTool: (tc: MCPToolCall) => void;
+  onRejectTool: () => void;
+  onCitationClick: (c: Citation) => void;
+  onViewInKnowledge?: () => void;
+  onExportChat: () => void;
+  onOpenSourcesModal: () => void;
+  onClearCollections: () => void;
+  activeTitle?: string;
+}
+
+const modeIcon = (m: ChatMode) => {
+  if (m === 'hybrid') return <Sparkles className="w-5 h-5 text-indigo-500" />;
+  if (m === 'private') return <Lock className="w-5 h-5 text-emerald-500" />;
+  if (m === 'general') return <Globe className="w-5 h-5 text-blue-500" />;
+  return <Cpu className="w-5 h-5 text-purple-500" />;
+};
+
+const modeLabel = (m: ChatMode, lang: 'ar' | 'en') => {
+  const ar: Record<ChatMode, string> = {
+    hybrid: 'هجين RRF',
+    private: 'خاص مغلق',
+    general: 'عام مباشر',
+    analysis: 'تحليل متقدم',
+  };
+  const en: Record<ChatMode, string> = {
+    hybrid: 'RRF Hybrid',
+    private: 'Private',
+    general: 'General',
+    analysis: 'Advanced Analysis',
+  };
+  return lang === 'ar' ? ar[m] : en[m];
+};
+
+export const ChatMain: React.FC<ChatMainProps> = ({
+  lang,
+  messages,
+  isLoading,
+  inputPrompt,
+  setInputPrompt,
+  selectedMode,
+  setSelectedMode,
+  selectedCollectionIds,
+  suggestions,
+  securityNotice,
+  mcpApprovalSuccess,
+  pendingToolApproval,
+  onSendMessage,
+  onApproveTool,
+  onRejectTool,
+  onCitationClick,
+  onViewInKnowledge,
+  onExportChat,
+  onOpenSourcesModal,
+  onClearCollections,
+  activeTitle,
+}) => {
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showModeMenu, setShowModeMenu] = useState(false);
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [messages, isLoading, pendingToolApproval]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+    }
+  }, [inputPrompt]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      onSendMessage();
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden bg-slate-50/30" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+      {/* Compact Toolbar */}
+      <div className="p-2 border-b border-slate-200 bg-white/80 backdrop-blur-sm flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {activeTitle && <span className="text-xs font-bold text-slate-700 truncate px-2">{activeTitle}</span>}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Sources Filter Quick Access */}
+          <button
+            type="button"
+            onClick={onOpenSourcesModal}
+            className={`p-1.5 rounded-lg border transition cursor-pointer flex items-center justify-center relative ${
+              selectedCollectionIds.length > 0
+                ? 'bg-amber-100 text-amber-700 border-amber-300'
+                : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+            }`}
+            title={lang === 'ar' ? 'تخصيص مصادر المعرفة' : 'Active Sources'}
+          >
+            <FolderKanban className="w-4 h-4" />
+            {selectedCollectionIds.length > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 bg-amber-600 text-white text-[9px] w-3.5 h-3.5 flex items-center justify-center rounded-full font-bold">
+                {selectedCollectionIds.length}
+              </span>
+            )}
+          </button>
+
+          {/* Export */}
+          <button
+            type="button"
+            onClick={onExportChat}
+            className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 transition cursor-pointer flex items-center justify-center"
+            title={lang === 'ar' ? 'تصدير المحادثة' : 'Export Chat'}
+          >
+            <Download className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Security Notices */}
+      {securityNotice && (
+        <div className="mx-4 mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2 animate-fadeIn">
+          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          <span className="font-medium">{securityNotice}</span>
+        </div>
+      )}
+
+      {mcpApprovalSuccess && (
+        <div className="mx-4 mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2 animate-fadeIn">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span className="font-medium">{mcpApprovalSuccess}</span>
+        </div>
+      )}
+
+      {/* Messages Stream */}
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-5 lazy-scroll">
+        {messages.map((msg) => (
+          <ChatMessage
+            key={msg.id}
+            message={msg}
+            lang={lang}
+            onCitationClick={onCitationClick}
+            onViewInKnowledge={onViewInKnowledge}
+          />
+        ))}
+
+        {/* Pending Tool Approval Card */}
+        {pendingToolApproval && (
+          <div className="my-3 p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl shadow-sm text-slate-800 animate-fadeIn">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-amber-900">
+                    {lang === 'ar' ? 'طلب موافقة لتشغيل أداة MCP' : 'Human Approval Required'}
+                  </h4>
+                  <p className="text-[11px] text-amber-800">
+                    {lang === 'ar'
+                      ? 'الأداة ذات أثر جانبي وتتطلب تفويضاً'
+                      : 'Tool has side effects and needs authorization'}
+                  </p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-200 text-amber-900">
+                {pendingToolApproval.scopedToolName}
+              </span>
+            </div>
+            <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200 text-xs font-mono text-slate-700 mb-3 overflow-x-auto">
+              <span className="font-bold text-amber-900 text-[10px] block mb-1">
+                {lang === 'ar' ? 'البرامترات:' : 'Input Arguments:'}
+              </span>
+              <pre className="text-[11px] whitespace-pre-wrap">
+                {JSON.stringify(pendingToolApproval.inputParams, null, 2)}
+              </pre>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={onRejectTool}
+                className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={() => onApproveTool(pendingToolApproval)}
+                className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{lang === 'ar' ? 'تأكيد التشغيل' : 'Authorize'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Loading Indicator — modern typing dots */}
+        {isLoading && (
+          <div className="flex items-center gap-3 text-xs text-slate-500 animate-message-appear">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-md">
+              <Sparkles className="w-4 h-4 animate-pulse" />
+            </div>
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-sm">
+              <span
+                className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
+                style={{ animationDelay: '0ms' }}
+              />
+              <span
+                className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
+                style={{ animationDelay: '150ms' }}
+              />
+              <span
+                className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
+                style={{ animationDelay: '300ms' }}
+              />
+              <span className="text-[11px] text-slate-500 ml-1">{lang === 'ar' ? 'يفكر...' : 'Thinking...'}</span>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} className="h-2" />
+      </div>
+
+      {/* Follow-up Suggestions Bar */}
+      {suggestions.length > 0 && !isLoading && (
+        <div className="px-4 py-2 bg-white/60 border-t border-slate-200/80 shrink-0">
+          <FollowUpSuggestions
+            suggestions={suggestions}
+            lang={lang}
+            onSuggestionClick={(q) => {
+              setInputPrompt(q);
+              onSendMessage(q);
+            }}
+            isLoading={isLoading}
+          />
+        </div>
+      )}
+
+      {/* Collection Scope Indicator */}
+      {selectedCollectionIds.length > 0 && (
+        <div className="mx-4 mb-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200/80 text-amber-900 text-xs flex items-center justify-between gap-2 shadow-2xs max-w-2xl mx-auto">
+          <span className="flex items-center gap-1.5">
+            <FolderKanban className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span className="font-medium">
+              {lang === 'ar'
+                ? `النطاق محدد بـ ${selectedCollectionIds.length} مصادر`
+                : `Scoped to ${selectedCollectionIds.length} sources`}
+            </span>
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenSourcesModal}
+              className="font-bold underline text-amber-800 hover:text-amber-950 transition cursor-pointer"
+            >
+              {lang === 'ar' ? 'تعديل' : 'Edit'}
+            </button>
+            <button
+              type="button"
+              onClick={onClearCollections}
+              className="p-0.5 rounded-full hover:bg-amber-200/60 text-amber-700 hover:text-amber-950 transition cursor-pointer"
+              title={lang === 'ar' ? 'إلغاء التصفية' : 'Clear filter'}
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modern Input Bar */}
+      <div className="p-4 pt-2 bg-gradient-to-t from-white via-white to-transparent shrink-0">
+        <div className="max-w-4xl mx-auto">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              onSendMessage();
+            }}
+            className="relative flex items-end bg-white rounded-3xl shadow-md border border-slate-200 focus-within:ring-4 focus-within:ring-indigo-500/15 focus-within:border-indigo-400 transition-all group"
+          >
+            {/* Mode Selector */}
+            <div className="relative group/mode ml-2 rtl:ml-0 rtl:mr-2 mb-1">
+              <button
+                type="button"
+                onClick={() => setShowModeMenu(!showModeMenu)}
+                className="w-10 h-10 rounded-full hover:bg-slate-100 transition flex items-center justify-center shrink-0 cursor-pointer"
+                title={lang === 'ar' ? 'وضع المحادثة' : 'Chat Mode'}
+              >
+                {modeIcon(selectedMode)}
+              </button>
+              {showModeMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowModeMenu(false)} />
+                  <div
+                    className={`absolute bottom-full mb-2 p-2 bg-white rounded-xl shadow-xl border border-slate-200 w-52 z-30 animate-fadeIn ${
+                      lang === 'ar' ? 'left-0' : 'left-0'
+                    }`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1.5 px-2">
+                      {lang === 'ar' ? 'وضع المحادثة' : 'Chat Mode'}
+                    </div>
+                    {(['hybrid', 'private', 'general', 'analysis'] as ChatMode[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          setSelectedMode(m);
+                          setShowModeMenu(false);
+                        }}
+                        className={`w-full px-2.5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
+                          selectedMode === m ? 'bg-indigo-600 text-white' : 'hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {modeIcon(m)}
+                        <span className="truncate">{modeLabel(m, lang)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Textarea */}
+            <textarea
+              ref={textareaRef}
+              value={inputPrompt}
+              onChange={(e) => setInputPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              rows={1}
+              placeholder={
+                lang === 'ar'
+                  ? 'اكتب سؤالك هنا... (Enter للإرسال، Shift+Enter لسطر جديد)'
+                  : 'Type your question... (Enter to send, Shift+Enter for new line)'
+              }
+              className="flex-1 px-2 py-3.5 bg-transparent focus:outline-none text-sm text-slate-900 placeholder:text-slate-400 font-medium resize-none max-h-[200px] leading-relaxed"
+              style={{ minHeight: '44px' }}
+            />
+
+            {/* Send Button */}
+            <button
+              type="submit"
+              disabled={isLoading || !inputPrompt.trim()}
+              className="w-10 h-10 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed group-focus-within:scale-105 shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1"
+            >
+              <Send className={`w-4 h-4 ${lang === 'ar' ? 'rtl:-scale-x-100' : ''}`} />
+            </button>
+          </form>
+          <div className="mt-2 text-center text-[10px] text-slate-400 font-mono flex items-center justify-center gap-1.5">
+            <Sparkles className="w-3 h-3 text-indigo-400" />
+            <span>{lang === 'ar' ? 'OmniRAG — ذاكرة المحادثة نشطة' : 'OmniRAG — Conversation memory active'}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
