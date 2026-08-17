@@ -16,6 +16,7 @@ import {
   McpResourceItem,
 } from '../types/omnirag';
 import { chunkTextIntoList } from '../rag/textChunker';
+import { DEFAULT_AI_MODELS } from '../config/aiModels';
 import {
   ensurePostgresTables,
   getPostgresDocuments,
@@ -386,7 +387,7 @@ export class MemoryDatabase implements IOmniRAGDatabase {
         tenantId,
         title: 'جلسة استفسارات السياسات والأمن (ذاكرة بديلة)',
         mode: 'hybrid',
-        model: 'gemini-3.7-flash',
+        model: DEFAULT_AI_MODELS.chatModel,
         collectionIds: [],
         enabledMcpServers: [],
         createdAt: new Date().toISOString(),
@@ -424,7 +425,7 @@ export class MemoryDatabase implements IOmniRAGDatabase {
         content:
           'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG (ذاكرة بديلة). يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
         createdAt: new Date().toISOString(),
-        modelUsed: 'gemini-3.7-flash',
+        modelUsed: DEFAULT_AI_MODELS.chatModel,
       };
       this.messages.push(welcomeMsg);
       return [welcomeMsg];
@@ -1572,7 +1573,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         tenantId,
         title: 'جلسة استفسارات السياسات والأمن',
         mode: 'hybrid',
-        model: 'gemini-3.7-flash',
+        model: DEFAULT_AI_MODELS.chatModel,
         collectionIds: [],
         enabledMcpServers: [],
         createdAt: new Date().toISOString(),
@@ -1588,7 +1589,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         content:
           'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
         createdAt: new Date().toISOString(),
-        modelUsed: 'gemini-3.7-flash',
+        modelUsed: DEFAULT_AI_MODELS.chatModel,
       };
       await insertPostgresMessage(welcomeMsg);
 
@@ -1652,7 +1653,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
           content:
             'مرحباً بك في استوديو المحادثة المعززة لمنصة OmniRAG. يمكنك طرح أي سؤال استعلامي حول السياسات، العقود، أو معايير أمن المعلومات المرفقة ببيانات المستأجر الحالي.',
           createdAt: new Date().toISOString(),
-          modelUsed: 'gemini-3.7-flash',
+          modelUsed: DEFAULT_AI_MODELS.chatModel,
         };
         await insertPostgresMessage(welcomeMsg);
         return [welcomeMsg];

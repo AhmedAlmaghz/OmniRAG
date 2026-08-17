@@ -97,6 +97,14 @@ export async function fetchWithAuth(url: string | URL | Request, options: Reques
         }
       } catch (e) {}
     });
+
+    // Attach the client-saved AI model configuration so server routes can read
+    // which models the user configured (chat/analysis/embedding/whisper/ocr...)
+    // instead of falling back to DEFAULT_AI_MODELS. Mirrors the x-env-* pattern.
+    try {
+      const modelCfg = localStorage.getItem('omnirag_ai_model_config_v1');
+      if (modelCfg) headers.set('x-ai-model-config', modelCfg);
+    } catch (e) {}
   }
 
   if (options.body && !headers.has('Content-Type') && typeof options.body === 'string') {

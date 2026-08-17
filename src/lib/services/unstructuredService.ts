@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import mammoth from 'mammoth';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
+import { getAiModel } from '../config/aiModels';
 
 export interface FileTypeClassification {
   isText: boolean;
@@ -18,7 +19,10 @@ export interface FileTypeClassification {
 /**
  * Detects the logical category and properties of a file based on its name and MIME type.
  */
-export function detectFileType(fileName: string, mimeType: string = 'application/octet-stream'): FileTypeClassification {
+export function detectFileType(
+  fileName: string,
+  mimeType: string = 'application/octet-stream',
+): FileTypeClassification {
   const lowerName = fileName.toLowerCase();
   const lowerMime = mimeType.toLowerCase();
 
@@ -35,25 +39,15 @@ export function detectFileType(fileName: string, mimeType: string = 'application
     lowerMime === 'text/csv';
 
   const isPowerPoint =
-    /\.(pptx|ppt)$/i.test(lowerName) ||
-    lowerMime.includes('presentationml') ||
-    lowerMime.includes('powerpoint');
+    /\.(pptx|ppt)$/i.test(lowerName) || lowerMime.includes('presentationml') || lowerMime.includes('powerpoint');
 
-  const isPdf =
-    /\.pdf$/i.test(lowerName) ||
-    lowerMime === 'application/pdf';
+  const isPdf = /\.pdf$/i.test(lowerName) || lowerMime === 'application/pdf';
 
-  const isAudio =
-    lowerMime.startsWith('audio/') ||
-    /\.(mp3|wav|flac|aac|ogg|m4a|mpga|opus|pcm)$/i.test(lowerName);
+  const isAudio = lowerMime.startsWith('audio/') || /\.(mp3|wav|flac|aac|ogg|m4a|mpga|opus|pcm)$/i.test(lowerName);
 
-  const isVideo =
-    lowerMime.startsWith('video/') ||
-    /\.(mp4|mov|avi|webm|mpeg|mpg|quicktime|3gpp)$/i.test(lowerName);
+  const isVideo = lowerMime.startsWith('video/') || /\.(mp4|mov|avi|webm|mpeg|mpg|quicktime|3gpp)$/i.test(lowerName);
 
-  const isImage =
-    lowerMime.startsWith('image/') ||
-    /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(lowerName);
+  const isImage = lowerMime.startsWith('image/') || /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(lowerName);
 
   // Text is only true if it's NOT a binary document format (not Word, not PDF, not PowerPoint, not Excel)
   const isText =
@@ -63,12 +57,10 @@ export function detectFileType(fileName: string, mimeType: string = 'application
     !isAudio &&
     !isVideo &&
     !isImage &&
-    (
-      lowerMime.startsWith('text/') ||
+    (lowerMime.startsWith('text/') ||
       /\.(txt|md|markdown|json|csv|tsv|py|js|ts|tsx|jsx|html|xml|log|env|yaml|yml|sql|sh|c|cpp|java|go|rb|php|cs|ini|conf|rst|tex|srt|vtt)$/i.test(
-        lowerName
-      )
-    );
+        lowerName,
+      ));
 
   return {
     isText,
@@ -121,29 +113,24 @@ export function normalizeMimeType(fileName: string, mimeType: string = ''): stri
  * uploads/archive/{tenantId}/{date}/{fileHash}_{fileName}
  * Returns the absolute path of the saved file on disk.
  */
-export function archiveUploadedFile(
-  fileBuffer: Buffer,
-  fileName: string,
-  tenantId: string,
-  fileHash: string
-): string {
+export function archiveUploadedFile(fileBuffer: Buffer, fileName: string, tenantId: string, fileHash: string): string {
   try {
     const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     // Sanitize fileName to prevent directory traversal
     const safeFileName = path.basename(fileName).replace(/[^a-zA-Z0-9_.-]/g, '_');
-    
+
     // Target directory: uploads/archive/{tenantId}/{date}
     const archiveDir = path.join(process.cwd(), 'uploads', 'archive', tenantId, todayStr);
-    
+
     // Ensure parent directory recursively exists
     fs.mkdirSync(archiveDir, { recursive: true });
-    
+
     const archiveFilePath = path.join(archiveDir, `${fileHash.substring(0, 16)}_${safeFileName}`);
-    
+
     // Write raw file to disk
     fs.writeFileSync(archiveFilePath, fileBuffer);
     console.log(`[File Archiver] Successfully archived file to disk: ${archiveFilePath}`);
-    
+
     return archiveFilePath;
   } catch (error) {
     console.error('[File Archiver] Error writing file to archive directory:', error);
@@ -159,13 +146,13 @@ export function archiveUploadedFile(
 export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> {
   try {
     const mammothParser = mammoth as any;
-    
+
     // 1. Primary Extraction: Convert to Markdown preserving structure
     const result = await mammothParser.convertToMarkdown({ buffer: fileBuffer });
     if (result.messages && result.messages.length > 0) {
       console.log('[Mammoth Parser] Messages:', result.messages.map((m: any) => m.message).join(', '));
     }
-    
+
     let text = result.value || '';
 
     // If Markdown result is non-empty, normalize and return
@@ -174,7 +161,7 @@ export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> 
       text = normalizeArabicUtf8Text(text);
       return text.trim();
     }
-    
+
     // 2. Secondary Extraction: extractRawText if Markdown conversion produced empty text
     const rawResult = await mammothParser.extractRawText({ buffer: fileBuffer });
     let rawText = rawResult.value || '';
@@ -209,13 +196,15 @@ export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> 
  */
 export function normalizeArabicUtf8Text(input: string): string {
   if (!input) return '';
-  return input
-    .normalize('NFC')
-    // Remove control characters (except newline, tab, carriage return)
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-    // Replace multiple empty lines with standard double newlines
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return (
+    input
+      .normalize('NFC')
+      // Remove control characters (except newline, tab, carriage return)
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+      // Replace multiple empty lines with standard double newlines
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  );
 }
 
 export interface DispatchOptions {
@@ -243,7 +232,7 @@ export async function mistralOcr(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<DispatchResult> {
   try {
     const base64Data = fileBuffer.toString('base64');
@@ -257,7 +246,7 @@ export async function mistralOcr(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'mistral-ocr-latest',
+        model: getAiModel('ocrModel'),
         document: {
           type: 'document_url',
           document_url: `data:${resolvedMime};base64,${base64Data}`,
@@ -314,7 +303,7 @@ export async function unstructuredPartition(
   fileName: string,
   mimeType: string,
   apiKey: string,
-  strategy: 'hi_res' | 'fast' | 'ocr_only' = 'hi_res'
+  strategy: 'hi_res' | 'fast' | 'ocr_only' = 'hi_res',
 ): Promise<DispatchResult> {
   const apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general';
 
@@ -384,23 +373,25 @@ export async function transcribeWithGroqWhisper(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
-  apiKey: string
+  apiKey: string,
 ): Promise<DispatchResult> {
   try {
     const resolvedMime = normalizeMimeType(fileName, mimeType);
-    console.log(`[Groq Whisper] Calling Whisper-3 (whisper-large-v3) for ${fileName} (${resolvedMime})...`);
+    console.log(
+      `[Groq Whisper] Calling Whisper-3 (${getAiModel('whisperModel')}) for ${fileName} (${resolvedMime})...`,
+    );
 
     // Standard Web/Node Blob and FormData for modern Next.js 15+ environment
     const blob = new Blob([fileBuffer as any], { type: resolvedMime });
     const formData = new FormData();
     formData.append('file', blob, fileName);
-    formData.append('model', 'whisper-large-v3');
+    formData.append('model', getAiModel('whisperModel'));
     formData.append('response_format', 'json');
 
     const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: formData,
     });
@@ -440,7 +431,7 @@ export async function transcribeAudioVideo(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
-  options: DispatchOptions = {}
+  options: DispatchOptions = {},
 ): Promise<DispatchResult> {
   // Check if Groq API key is available (via options or process.env)
   const groqKey = options.groqApiKey || process.env.GROQ_API_KEY;
@@ -449,19 +440,23 @@ export async function transcribeAudioVideo(
     if (groqResult.success) {
       return groqResult;
     }
-    console.warn('[Unstructured Service] Groq Whisper transcription failed, falling back to Gemini audio/video transcriber...');
+    console.warn(
+      '[Unstructured Service] Groq Whisper transcription failed, falling back to Gemini audio/video transcriber...',
+    );
   }
 
-  const model = options.model || 'gemini-3.5-flash';
+  const model = options.model || getAiModel('documentParseModel');
   const resolvedMime = normalizeMimeType(fileName, mimeType);
   const base64Data = fileBuffer.toString('base64');
   const isVideo = resolvedMime.startsWith('video/');
 
-  let systemInstruction = 'You are an expert audio transcription model. Listen carefully to this audio file, and transcribe all spoken words (speech-to-text) verbatim. If the speech is in Arabic, write it exactly as spoken with proper punctuation. Output ONLY the transcribed text directly without adding any commentary, preambles, or explanations.';
+  let systemInstruction =
+    'You are an expert audio transcription model. Listen carefully to this audio file, and transcribe all spoken words (speech-to-text) verbatim. If the speech is in Arabic, write it exactly as spoken with proper punctuation. Output ONLY the transcribed text directly without adding any commentary, preambles, or explanations.';
   let engineUsed = 'Gemini Audio Speech-to-Text Transcription Engine';
 
   if (isVideo) {
-    systemInstruction = 'You are an expert video transcriber and analyzer. Listen to the audio track and watch the video frames. Transcribe all spoken speech verbatim, and if there is any visible text, subtitles, or slides shown in the video frames, extract and merge them chronologically. If the content is in Arabic, preserve it perfectly. Output ONLY the transcription and extracted text directly without adding any preamble or extra commentary.';
+    systemInstruction =
+      'You are an expert video transcriber and analyzer. Listen to the audio track and watch the video frames. Transcribe all spoken speech verbatim, and if there is any visible text, subtitles, or slides shown in the video frames, extract and merge them chronologically. If the content is in Arabic, preserve it perfectly. Output ONLY the transcription and extracted text directly without adding any preamble or extra commentary.';
     engineUsed = 'Gemini Multimodal Video Speech & Frames Transcriber';
   }
 
@@ -507,7 +502,7 @@ export async function dispatchFile(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string = 'application/octet-stream',
-  options: DispatchOptions = {}
+  options: DispatchOptions = {},
 ): Promise<DispatchResult> {
   const fileClassification = detectFileType(fileName, mimeType);
   const resolvedMime = normalizeMimeType(fileName, mimeType);
@@ -516,7 +511,9 @@ export async function dispatchFile(
   // 1. Word Document (.docx / .doc) local parsing with Mammoth first (ensures perfect Arabic UTF-8 encoding without mojibake/strange characters)
   if (fileClassification.isWord) {
     try {
-      console.log(`[Document Ingestion] Parsing Word Document (${fileName}) locally using mammoth to preserve perfect Arabic UTF-8 encoding...`);
+      console.log(
+        `[Document Ingestion] Parsing Word Document (${fileName}) locally using mammoth to preserve perfect Arabic UTF-8 encoding...`,
+      );
       const mammothText = await parseDocxWithMammoth(fileBuffer);
       if (mammothText && mammothText.trim().length > 0) {
         return {
@@ -578,7 +575,7 @@ export async function dispatchFile(
       fileName,
       resolvedMime,
       unstructuredKey,
-      options.strategy || 'hi_res'
+      options.strategy || 'hi_res',
     );
     if (partitionResult.success) {
       return partitionResult;
@@ -588,22 +585,27 @@ export async function dispatchFile(
 
   // 5. Default Fallback / Gemini High-Precision Multimodal OCR / Extraction
   try {
-    const model = options.model || 'gemini-3.5-flash';
+    const model = options.model || getAiModel('documentParseModel');
     const base64Data = fileBuffer.toString('base64');
-    let systemInstruction = 'You are an expert multilingual document extractor. Extract, transcribe, and structure all readable text, tables, slide contents, spreadsheets, audio speech transcription, or visual elements from this file. IMPORTANT: If the file contains Arabic (العربية), extract it perfectly. Maintain correct spelling, grammar, RTL (Right-to-Left) formatting, and paragraphs. Do NOT translate any Arabic text. Output ONLY the extracted text directly without adding preamble or extra commentary.';
+    let systemInstruction =
+      'You are an expert multilingual document extractor. Extract, transcribe, and structure all readable text, tables, slide contents, spreadsheets, audio speech transcription, or visual elements from this file. IMPORTANT: If the file contains Arabic (العربية), extract it perfectly. Maintain correct spelling, grammar, RTL (Right-to-Left) formatting, and paragraphs. Do NOT translate any Arabic text. Output ONLY the extracted text directly without adding preamble or extra commentary.';
     let engineUsed = 'Gemini Multimodal Document Extractor Fallback';
 
     if (fileClassification.isImage) {
-      systemInstruction = 'You are an expert high-precision visual OCR model. Perform OCR on this image. Extract all text, labels, titles, tables, or annotations visible in the image. If there is Arabic text, extract it perfectly with RTL (Right-to-Left) alignment. Output ONLY the extracted text directly without adding any preamble or extra commentary.';
+      systemInstruction =
+        'You are an expert high-precision visual OCR model. Perform OCR on this image. Extract all text, labels, titles, tables, or annotations visible in the image. If there is Arabic text, extract it perfectly with RTL (Right-to-Left) alignment. Output ONLY the extracted text directly without adding any preamble or extra commentary.';
       engineUsed = 'Gemini High-Precision Visual OCR';
     } else if (fileClassification.isSpreadsheet) {
-      systemInstruction = 'You are an expert spreadsheet parser. Extract all data from this spreadsheet file and format it as beautifully structured Markdown tables. Preserve all column names, row indices, values, and cell relationships. Keep the structure perfect. Output ONLY the formatted tables without adding any preamble or extra commentary.';
+      systemInstruction =
+        'You are an expert spreadsheet parser. Extract all data from this spreadsheet file and format it as beautifully structured Markdown tables. Preserve all column names, row indices, values, and cell relationships. Keep the structure perfect. Output ONLY the formatted tables without adding any preamble or extra commentary.';
       engineUsed = 'Gemini Excel-to-Markdown Tabular Parser';
     } else if (fileClassification.isWord) {
-      systemInstruction = 'You are an expert Word document parser. Extract all text, paragraphs, headings, bullet points, numbered lists, and tables. Format the output elegantly in standard Markdown. Output ONLY the extracted markdown content directly without adding any preamble or extra commentary.';
+      systemInstruction =
+        'You are an expert Word document parser. Extract all text, paragraphs, headings, bullet points, numbered lists, and tables. Format the output elegantly in standard Markdown. Output ONLY the extracted markdown content directly without adding any preamble or extra commentary.';
       engineUsed = 'Gemini Word Document Structure Parser';
     } else if (fileClassification.isPowerPoint) {
-      systemInstruction = 'You are an expert slide presentation parser. Extract and structure the content of this presentation slide-by-slide. Format each slide with a clear header (e.g., "### Slide 1: [Title]") followed by bullet points, text, and visual descriptions. Output ONLY the structured text directly without adding any preamble or extra commentary.';
+      systemInstruction =
+        'You are an expert slide presentation parser. Extract and structure the content of this presentation slide-by-slide. Format each slide with a clear header (e.g., "### Slide 1: [Title]") followed by bullet points, text, and visual descriptions. Output ONLY the structured text directly without adding any preamble or extra commentary.';
       engineUsed = 'Gemini PowerPoint Slide Parser';
     }
 

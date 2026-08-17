@@ -1,24 +1,22 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
-import { DEFAULT_AI_MODELS, AIModelConfig } from '@/lib/config/aiModels';
+import {
+  DEFAULT_AI_MODELS,
+  AIModelConfig,
+  normalizeModelConfig,
+  parseModelConfigFromRequest,
+  MODEL_CONFIG_COOKIE,
+} from '@/lib/config/aiModels';
 import { serverErrorResponse } from '@/lib/api/safeError';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
-    // Optionally inspect cookie or header if user provided client model config header
-    const customHeader = req.headers.get('x-ai-model-config');
-    let config: AIModelConfig = { ...DEFAULT_AI_MODELS };
-
-    if (customHeader) {
-      try {
-        const parsed = JSON.parse(customHeader);
-        config = { ...config, ...parsed };
-      } catch {
-        // Fallback to defaults
-      }
-    }
+    // Read the effective model config for this request: header first, then
+    // the persisted cookie, finally DEFAULT_AI_MODELS. Sharing the canonical
+    // resolver keeps every server path consistent.
+    const config = parseModelConfigFromRequest(req);
 
     return NextResponse.json({
       success: true,
@@ -34,15 +32,12 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
-    const updatedConfig: AIModelConfig = {
-      chatModel: body.chatModel || DEFAULT_AI_MODELS.chatModel,
-      analysisModel: body.analysisModel || DEFAULT_AI_MODELS.analysisModel,
-      hydeModel: body.hydeModel || DEFAULT_AI_MODELS.hydeModel,
-      documentParseModel: body.documentParseModel || DEFAULT_AI_MODELS.documentParseModel,
-      chatStreamModel: body.chatStreamModel || DEFAULT_AI_MODELS.chatStreamModel,
-      embeddingModel: body.embeddingModel || DEFAULT_AI_MODELS.embeddingModel,
-      updatedAt: new Date().toISOString(),
-    };
+    // normalizeModelConfig fills any missing field (defaults to DEFAULT_AI_MODELS),
+    // so adding new keys (whisper/ocr/fallbackModels) needs no special handling.
+    const updatedConfig: AIModelConfig = normalizeModelConfig({
+      ...body,
+      updatedAt: body?.updatedAt || new Date().toISOString(),
+    });
 
     const response = NextResponse.json({
       success: true,
@@ -50,8 +45,10 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       config: updatedConfig,
     });
 
-    // Attach as cookie for server-side persistence across requests
-    response.cookies.set('omnirag_ai_model_config', JSON.stringify(updatedConfig), {
+    // Attach as cookie for server-side persistence across requests.
+    // parseModelConfigFromRequest reads this as a fallback when the header
+    // (attached by fetchWithAuth) is absent.
+    response.cookies.set(MODEL_CONFIG_COOKIE, JSON.stringify(updatedConfig), {
       path: '/',
       maxAge: 60 * 60 * 24 * 365, // 1 year
       sameSite: 'lax',

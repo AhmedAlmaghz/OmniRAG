@@ -15,10 +15,10 @@ import {
   Tag,
   Cpu,
   Globe,
-  Youtube,
-  Github,
+  MonitorPlay,
+  FolderGit2,
   Database,
-  FolderPlus
+  FolderPlus,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -50,12 +50,18 @@ export function DocumentPreviewModal({
   const getSourceIcon = () => {
     const type = document.metadata?.connectorType || document.sourceType;
     switch (type) {
-      case 'youtube': return <Youtube className="w-5 h-5 text-rose-600" />;
-      case 'url': return <Globe className="w-5 h-5 text-blue-600" />;
-      case 'github': return <Github className="w-5 h-5 text-slate-800" />;
-      case 'database': return <Database className="w-5 h-5 text-amber-600" />;
-      case 'gdrive': return <FolderPlus className="w-5 h-5 text-emerald-600" />;
-      default: return <FileText className="w-5 h-5 text-indigo-600" />;
+      case 'youtube':
+        return <MonitorPlay className="w-5 h-5 text-rose-600" />;
+      case 'url':
+        return <Globe className="w-5 h-5 text-blue-600" />;
+      case 'github':
+        return <FolderGit2 className="w-5 h-5 text-slate-800" />;
+      case 'database':
+        return <Database className="w-5 h-5 text-amber-600" />;
+      case 'gdrive':
+        return <FolderPlus className="w-5 h-5 text-emerald-600" />;
+      default:
+        return <FileText className="w-5 h-5 text-indigo-600" />;
     }
   };
 
@@ -64,7 +70,10 @@ export function DocumentPreviewModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden" dir={isRtl ? 'rtl' : 'ltr'}>
+      <div
+        className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
+        dir={isRtl ? 'rtl' : 'ltr'}
+      >
         {/* Header */}
         <div className="p-5 border-b border-slate-150 flex items-center justify-between gap-4 bg-slate-50/70">
           <div className="flex items-center gap-3 min-w-0">
@@ -86,9 +95,7 @@ export function DocumentPreviewModal({
                   {document.language || 'AR'}
                 </span>
               </div>
-              <h3 className="text-sm font-extrabold text-slate-900 truncate mt-0.5">
-                {document.title}
-              </h3>
+              <h3 className="text-sm font-extrabold text-slate-900 truncate mt-0.5">{document.title}</h3>
             </div>
           </div>
 

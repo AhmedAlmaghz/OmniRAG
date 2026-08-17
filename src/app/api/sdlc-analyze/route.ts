@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
+import { parseModelConfigFromRequest, getAiModel, getFallbackModels } from '@/lib/config/aiModels';
+import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
 export const dynamic = 'force-dynamic';
 
 export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
+  const modelConfig = parseModelConfigFromRequest(req);
+
   try {
     const body = await req.json().catch(() => ({}));
     const { code = '', focus = 'security-and-types' } = body;
@@ -41,12 +45,17 @@ Return a strictly valid JSON response without markdown formatting with this sche
     { "type": "security" | "type-safety" | "performance", "messageAr": string, "messageEn": string }
   ]
 }`;
-        const response = await generateContentWithResilience({
-          model: 'gemini-3.7-flash',
-          fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'],
-          contents: prompt,
-          maxRetriesPerModel: 2,
-        });
+
+        // Bind the request's model config so getAiModel/getFallbackModels inside
+        // generateContentWithResilience resolve to the client's configured models.
+        const response = await runWithModelConfig(modelConfig, () =>
+          generateContentWithResilience({
+            model: getAiModel('chatModel'),
+            fallbackModels: getFallbackModels(),
+            contents: prompt,
+            maxRetriesPerModel: 2,
+          }),
+        );
 
         const text = response?.text || '';
         if (text) {

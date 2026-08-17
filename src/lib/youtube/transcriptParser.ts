@@ -4,6 +4,7 @@ import { getSubtitles } from 'youtube-captions-scraper';
 import ytdl from '@distube/ytdl-core';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
 import { transcribeWithGroqWhisper } from '../services/unstructuredService';
+import { getAiModel, getFallbackModels } from '../config/aiModels';
 
 /**
  * Extracts standard 11-character YouTube video ID from various URL formats.
@@ -282,8 +283,8 @@ Requirements:
 
   try {
     const response = await generateContentWithResilience({
-      model: 'gemini-3.7-flash',
-      fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'],
+      model: getAiModel('documentParseModel'),
+      fallbackModels: getFallbackModels(),
       contents: prompt,
       maxRetriesPerModel: 2,
       initialDelayMs: 400,

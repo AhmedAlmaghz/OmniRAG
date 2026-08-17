@@ -1,7 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { SourceConnector, SyncLogEntry, McpResourceItem, Collection, Document, DocumentChunk } from '@/lib/types/omnirag';
+import {
+  SourceConnector,
+  SyncLogEntry,
+  McpResourceItem,
+  Collection,
+  Document,
+  DocumentChunk,
+} from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { AddSourceWizard } from './AddSourceWizard';
 import { DocumentIngestionStudio } from './DocumentIngestionStudio';
@@ -29,8 +36,8 @@ import {
   Scissors,
   Zap,
   Globe,
-  Youtube,
-  Github,
+  MonitorPlay,
+  FolderGit2,
   Server,
   Key,
   ShieldCheck,
@@ -56,7 +63,9 @@ interface KeysStatus {
 }
 
 export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: SourcesDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'connectors' | 'collections' | 'add' | 'upload' | 'documents' | 'mcp' | 'keys' | 'youtube'>('connectors');
+  const [activeTab, setActiveTab] = useState<
+    'connectors' | 'collections' | 'add' | 'upload' | 'documents' | 'mcp' | 'keys' | 'youtube'
+  >('connectors');
   const [sources, setSources] = useState<SourceConnector[]>([]);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [mcpResources, setMcpResources] = useState<McpResourceItem[]>([]);
@@ -68,7 +77,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [docViewMode, setDocViewMode] = useState<'list' | 'grid'>('list');
-  
+
   // Real-time API keys verification status
   const [keysStatus, setKeysStatus] = useState<KeysStatus | null>(null);
 
@@ -92,10 +101,22 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     setIsLoading(true);
     try {
       const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
-        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(e => { console.warn('Sources fetch warning:', e); return { ok: false, json: async () => ({ sources: [], syncLogs: [], mcpResources: [] }) } as Response; }),
-        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(e => { console.warn('Collections fetch warning:', e); return { ok: false, json: async () => ({ collections: [] }) } as Response; }),
-        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(e => { console.warn('Documents fetch warning:', e); return { ok: false, json: async () => ({ documents: [] }) } as Response; }),
-        fetchWithAuth('/api/v1/sources/system-status').catch(e => { console.warn('System status fetch warning:', e); return { ok: false, json: async () => ({}) } as Response; }),
+        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch((e) => {
+          console.warn('Sources fetch warning:', e);
+          return { ok: false, json: async () => ({ sources: [], syncLogs: [], mcpResources: [] }) } as Response;
+        }),
+        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch((e) => {
+          console.warn('Collections fetch warning:', e);
+          return { ok: false, json: async () => ({ collections: [] }) } as Response;
+        }),
+        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch((e) => {
+          console.warn('Documents fetch warning:', e);
+          return { ok: false, json: async () => ({ documents: [] }) } as Response;
+        }),
+        fetchWithAuth('/api/v1/sources/system-status').catch((e) => {
+          console.warn('System status fetch warning:', e);
+          return { ok: false, json: async () => ({}) } as Response;
+        }),
       ]);
 
       let sourcesData: any = {};
@@ -132,7 +153,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
       if (sourcesData.mcpResources) setMcpResources(sourcesData.mcpResources);
       if (colsData.collections) setCollections(colsData.collections);
       if (keysData) setKeysStatus(keysData);
-      
+
       if (docsData.documents) {
         setDocuments(docsData.documents);
         if (!selectedDoc && docsData.documents.length > 0) {
@@ -151,22 +172,25 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   }, [fetchSourcesData]);
 
   // Fetch chunks whenever selectedDoc changes
-  const fetchChunksForDoc = useCallback(async (docId: string) => {
-    setIsLoadingChunks(true);
-    try {
-      const res = await fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}&documentId=${docId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.chunks) {
-          setSelectedDocChunks(data.chunks);
+  const fetchChunksForDoc = useCallback(
+    async (docId: string) => {
+      setIsLoadingChunks(true);
+      try {
+        const res = await fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}&documentId=${docId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.chunks) {
+            setSelectedDocChunks(data.chunks);
+          }
         }
+      } catch (err) {
+        console.error('Error loading document chunks:', err);
+      } finally {
+        setIsLoadingChunks(false);
       }
-    } catch (err) {
-      console.error('Error loading document chunks:', err);
-    } finally {
-      setIsLoadingChunks(false);
-    }
-  }, [tenantId]);
+    },
+    [tenantId],
+  );
 
   useEffect(() => {
     if (selectedDoc) {
@@ -202,8 +226,8 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tenantId }),
-          })
-        )
+          }),
+        ),
       );
       await fetchSourcesData();
     } catch (err) {
@@ -215,7 +239,14 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
   // Delete source
   const handleDeleteSource = async (sourceId: string) => {
-    if (!confirm(lang === 'ar' ? 'هل أنت تأكد من حذف هذا الموصل وإلغاء فهرسة مستنداته؟' : 'Are you sure you want to delete this source connector?')) return;
+    if (
+      !confirm(
+        lang === 'ar'
+          ? 'هل أنت تأكد من حذف هذا الموصل وإلغاء فهرسة مستنداته؟'
+          : 'Are you sure you want to delete this source connector?',
+      )
+    )
+      return;
     try {
       const res = await fetchWithAuth(`/api/v1/sources?id=${sourceId}&tenantId=${tenantId}`, {
         method: 'DELETE',
@@ -230,7 +261,14 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
   // Delete Document
   const handleDeleteDocument = async (docId: string) => {
-    if (!confirm(lang === 'ar' ? 'هل تود حذف هذا المستند ومتجهاته نهائياً من Qdrant؟' : 'Permanently delete this document and its Qdrant vectors?')) return;
+    if (
+      !confirm(
+        lang === 'ar'
+          ? 'هل تود حذف هذا المستند ومتجهاته نهائياً من Qdrant؟'
+          : 'Permanently delete this document and its Qdrant vectors?',
+      )
+    )
+      return;
     try {
       const res = await fetchWithAuth(`/api/v1/documents?id=${docId}&tenantId=${tenantId}`, {
         method: 'DELETE',
@@ -263,7 +301,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
   const filteredSources = sources
     .filter((s) => {
-      const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) || s.type.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch =
+        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.type.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesType = filterType === 'all' || s.type === filterType;
       const matchesHealth = filterHealth === 'all' || s.status === filterHealth;
       return matchesSearch && matchesType && matchesHealth;
@@ -284,24 +324,38 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
     });
 
   const filteredDocuments = documents.filter((doc) => {
-    const matchesSearch = doc.title.toLowerCase().includes(docSearchQuery.toLowerCase()) || doc.content.toLowerCase().includes(docSearchQuery.toLowerCase());
-    const matchesCollection = docCollectionFilter === 'all' || (doc.collectionIds && doc.collectionIds.includes(docCollectionFilter));
+    const matchesSearch =
+      doc.title.toLowerCase().includes(docSearchQuery.toLowerCase()) ||
+      doc.content.toLowerCase().includes(docSearchQuery.toLowerCase());
+    const matchesCollection =
+      docCollectionFilter === 'all' || (doc.collectionIds && doc.collectionIds.includes(docCollectionFilter));
     return matchesSearch && matchesCollection;
   });
 
   const getSourceIcon = (type: string) => {
     switch (type) {
-      case 'file': return <FileText className="w-5 h-5 text-indigo-600" />;
-      case 'pdf': return <FileText className="w-5 h-5 text-rose-600" />;
-      case 'text': return <FileCheck className="w-5 h-5 text-emerald-600" />;
-      case 'sample': return <Sparkles className="w-5 h-5 text-indigo-500" />;
-      case 'url': return <Globe className="w-5 h-5 text-blue-600" />;
-      case 'youtube': return <Youtube className="w-5 h-5 text-rose-600" />;
-      case 'github': return <Github className="w-5 h-5 text-slate-800" />;
-      case 'database': return <Database className="w-5 h-5 text-amber-600" />;
-      case 'gdrive': return <FolderPlus className="w-5 h-5 text-emerald-600" />;
-      case 'custom_mcp': return <Zap className="w-5 h-5 text-amber-500" />;
-      default: return <Server className="w-5 h-5 text-violet-600" />;
+      case 'file':
+        return <FileText className="w-5 h-5 text-indigo-600" />;
+      case 'pdf':
+        return <FileText className="w-5 h-5 text-rose-600" />;
+      case 'text':
+        return <FileCheck className="w-5 h-5 text-emerald-600" />;
+      case 'sample':
+        return <Sparkles className="w-5 h-5 text-indigo-500" />;
+      case 'url':
+        return <Globe className="w-5 h-5 text-blue-600" />;
+      case 'youtube':
+        return <MonitorPlay className="w-5 h-5 text-rose-600" />;
+      case 'github':
+        return <FolderGit2 className="w-5 h-5 text-slate-800" />;
+      case 'database':
+        return <Database className="w-5 h-5 text-amber-600" />;
+      case 'gdrive':
+        return <FolderPlus className="w-5 h-5 text-emerald-600" />;
+      case 'custom_mcp':
+        return <Zap className="w-5 h-5 text-amber-500" />;
+      default:
+        return <Server className="w-5 h-5 text-violet-600" />;
     }
   };
 
@@ -350,9 +404,18 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
   // Document management list/grid skeleton loader
   const DocumentSkeleton = () => (
-    <div className={docViewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-1" : "space-y-3 max-h-[500px] overflow-y-auto pr-1"}>
+    <div
+      className={
+        docViewMode === 'grid'
+          ? 'grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-1'
+          : 'space-y-3 max-h-[500px] overflow-y-auto pr-1'
+      }
+    >
       {[1, 2, 3, 4].map((i) => (
-        <div key={i} className="bg-slate-50/50 rounded-2xl p-4 border border-slate-150 animate-pulse space-y-3 shadow-3xs">
+        <div
+          key={i}
+          className="bg-slate-50/50 rounded-2xl p-4 border border-slate-150 animate-pulse space-y-3 shadow-3xs"
+        >
           <div className="flex items-center justify-between">
             <div className="w-8 h-8 bg-slate-200 rounded-xl" />
             <div className="w-16 h-4 bg-slate-200 rounded-full" />
@@ -397,7 +460,10 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const ConnectorsSkeleton = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="bg-white rounded-2xl p-5 border border-slate-200 animate-pulse space-y-4 shadow-3xs flex flex-col justify-between">
+        <div
+          key={i}
+          className="bg-white rounded-2xl p-5 border border-slate-200 animate-pulse space-y-4 shadow-3xs flex flex-col justify-between"
+        >
           <div className="space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -438,7 +504,10 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
   const CollectionsSkeleton = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="bg-white rounded-2xl p-5 border border-slate-200 animate-pulse space-y-3 flex flex-col justify-between">
+        <div
+          key={i}
+          className="bg-white rounded-2xl p-5 border border-slate-200 animate-pulse space-y-3 flex flex-col justify-between"
+        >
           <div className="space-y-2">
             <div className="flex items-start justify-between gap-2">
               <div className="w-10 h-10 rounded-xl bg-slate-100 animate-pulse shrink-0 border border-slate-200" />
@@ -481,7 +550,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             {isRtl ? 'لوحة التحكم والربط المعرفي' : 'Knowledge Control Room'}
           </h1>
           <p className="text-xs text-slate-500 max-w-2xl">
-            {isRtl 
+            {isRtl
               ? 'بوابة تحكم مركزية لربط المجموعات المعرفية، رفع المستندات الحية، إدارة موصلات البيانات، وإعداد خوادم سياق بروتوكول MCP.'
               : 'Enterprise-grade command room to manage knowledge pipelines, live-chunk documents, configure automated connectors, and inspect active MCP servers.'}
           </p>
@@ -506,7 +575,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-3xs flex items-center justify-between">
           <div className="space-y-1">
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">{isRtl ? 'الموصلات النشطة' : 'Active Connectors'}</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
+              {isRtl ? 'الموصلات النشطة' : 'Active Connectors'}
+            </span>
             <div className="text-xl font-extrabold text-slate-950 flex items-baseline gap-2">
               <span>{sources.length}</span>
               <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
@@ -521,7 +592,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
         <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-3xs flex items-center justify-between">
           <div className="space-y-1">
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">{isRtl ? 'المستندات المفهرسة' : 'Indexed Documents'}</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
+              {isRtl ? 'المستندات المفهرسة' : 'Indexed Documents'}
+            </span>
             <div className="text-xl font-extrabold text-slate-950 flex items-baseline gap-1.5">
               <span>{documents.length || totalDocsCount}</span>
               <span className="text-[9px] text-slate-400 font-mono font-medium block truncate max-w-[120px]">
@@ -536,7 +609,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
         <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-3xs flex items-center justify-between">
           <div className="space-y-1">
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">{isRtl ? 'المجموعات الدلالية' : 'Knowledge Domains'}</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
+              {isRtl ? 'المجموعات الدلالية' : 'Knowledge Domains'}
+            </span>
             <div className="text-xl font-extrabold text-slate-950 flex items-baseline gap-2">
               <span>{collections.length}</span>
               <span className="text-[10px] text-violet-600 font-bold bg-violet-50 px-1.5 py-0.2 rounded border border-violet-200">
@@ -551,12 +626,20 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
         <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-3xs flex items-center justify-between">
           <div className="space-y-1">
-            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">{isRtl ? 'آخر عملية مزامنة' : 'Last Ingestion Event'}</span>
+            <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
+              {isRtl ? 'آخر عملية مزامنة' : 'Last Ingestion Event'}
+            </span>
             <div className="text-xs font-mono font-bold text-slate-800">
-              {syncLogs.length > 0 ? new Date(syncLogs[0].timestamp).toLocaleTimeString(isRtl ? 'ar-SA' : 'en-US') : 'READY'}
+              {syncLogs.length > 0
+                ? new Date(syncLogs[0].timestamp).toLocaleTimeString(isRtl ? 'ar-SA' : 'en-US')
+                : 'READY'}
             </div>
             <span className="text-[9px] text-slate-400 block truncate max-w-40 font-bold">
-              {syncLogs.length > 0 ? `✓ ${syncLogs[0].message}` : (isRtl ? 'النظام جاهز للاستيعاب' : 'Ready for ingestion')}
+              {syncLogs.length > 0
+                ? `✓ ${syncLogs[0].message}`
+                : isRtl
+                  ? 'النظام جاهز للاستيعاب'
+                  : 'Ready for ingestion'}
             </span>
           </div>
           <div className="w-10 h-10 rounded-xl bg-slate-50 text-slate-500 flex items-center justify-center border border-slate-100">
@@ -580,20 +663,20 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             <span className="text-[9px] font-bold text-slate-400 px-2.5 pb-1 block uppercase">
               {isRtl ? 'الفهرسة والاستيراد' : 'Pipeline & Ingestion'}
             </span>
-            
+
             <button
               onClick={() => setActiveTab('connectors')}
               className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
-                activeTab === 'connectors'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-50'
+                activeTab === 'connectors' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4" />
                 <span>{isRtl ? 'الموصلات ومصادر البيانات' : 'Automated Connectors'}</span>
               </div>
-              <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${activeTab === 'connectors' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'}`}>
+              <span
+                className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${activeTab === 'connectors' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'}`}
+              >
                 {sources.length}
               </span>
             </button>
@@ -601,9 +684,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             <button
               onClick={() => setActiveTab('upload')}
               className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
-                activeTab === 'upload'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-50'
+                activeTab === 'upload' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -618,13 +699,11 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             <button
               onClick={() => setActiveTab('youtube')}
               className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
-                activeTab === 'youtube'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-50'
+                activeTab === 'youtube' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-2">
-                <Youtube className="w-4 h-4 text-rose-500" />
+                <MonitorPlay className="w-4 h-4 text-rose-500" />
                 <span>{isRtl ? 'مفرغ يوتيوب (yt-caption)' : 'YouTube Transcriber'}</span>
               </div>
               <span className="text-[9px] bg-rose-100 text-rose-800 px-1.5 py-0.2 rounded font-bold uppercase">
@@ -635,16 +714,16 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             <button
               onClick={() => setActiveTab('collections')}
               className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
-                activeTab === 'collections'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-50'
+                activeTab === 'collections' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-2">
                 <Folder className="w-4 h-4" />
                 <span>{isRtl ? 'المجموعات المعرفية' : 'Collections Map'}</span>
               </div>
-              <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${activeTab === 'collections' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'}`}>
+              <span
+                className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${activeTab === 'collections' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'}`}
+              >
                 {collections.length}
               </span>
             </button>
@@ -658,16 +737,16 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             <button
               onClick={() => setActiveTab('documents')}
               className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
-                activeTab === 'documents'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-50'
+                activeTab === 'documents' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4" />
                 <span>{isRtl ? 'المستندات ومتجهات Qdrant' : 'Qdrant Vectors'}</span>
               </div>
-              <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${activeTab === 'documents' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'}`}>
+              <span
+                className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${activeTab === 'documents' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'}`}
+              >
                 {documents.length}
               </span>
             </button>
@@ -675,9 +754,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             <button
               onClick={() => setActiveTab('mcp')}
               className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
-                activeTab === 'mcp'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-50'
+                activeTab === 'mcp' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -698,9 +775,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
             <button
               onClick={() => setActiveTab('keys')}
               className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
-                activeTab === 'keys'
-                  ? 'bg-indigo-600 text-white shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-50'
+                activeTab === 'keys' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -742,7 +817,6 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
         {/* MAIN DYNAMIC CONTENT WORKSPACE (lg:col-span-9) */}
         <div className="lg:col-span-9 min-h-[600px]">
-          
           {/* TAB 1: AUTOMATED CONNECTORS GRID */}
           {activeTab === 'connectors' && (
             <div className="space-y-4">
@@ -815,7 +889,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                     {isRtl ? 'لم يتم العثور على موصلات معرفية مطابقة' : 'No matching connectors found'}
                   </h3>
                   <p className="text-xs text-slate-400">
-                    {isRtl ? 'جرب البحث بكلمات مختلفة أو أنشئ موصلاً جديداً' : 'Try searching different keywords or add a new data connector'}
+                    {isRtl
+                      ? 'جرب البحث بكلمات مختلفة أو أنشئ موصلاً جديداً'
+                      : 'Try searching different keywords or add a new data connector'}
                   </p>
                   <button
                     onClick={() => setActiveTab('add')}
@@ -850,8 +926,8 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                               source.status === 'healthy'
                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                 : source.status === 'degraded'
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200'
                             }`}
                           >
                             {source.status}
@@ -861,7 +937,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5 text-[11px] text-slate-600 font-sans">
                           <div className="flex items-center justify-between">
                             <span className="text-slate-400">{isRtl ? 'المستندات المفهرسة:' : 'Indexed Docs:'}</span>
-                            <span className="font-bold text-slate-800">{source.documentCount} {isRtl ? 'مستند' : 'docs'}</span>
+                            <span className="font-bold text-slate-800">
+                              {source.documentCount} {isRtl ? 'مستند' : 'docs'}
+                            </span>
                           </div>
                           <div className="flex items-center justify-between font-mono text-[10px]">
                             <span className="text-slate-400">{isRtl ? 'جدولة التحديث:' : 'Sync Interval:'}</span>
@@ -870,7 +948,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                           {source.lastSyncAt && (
                             <div className="flex items-center justify-between text-[10px]">
                               <span className="text-slate-400">{isRtl ? 'آخر تحديث تلقائي:' : 'Last Ingestion:'}</span>
-                              <span className="text-slate-500 font-mono">{new Date(source.lastSyncAt).toLocaleTimeString()}</span>
+                              <span className="text-slate-500 font-mono">
+                                {new Date(source.lastSyncAt).toLocaleTimeString()}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -936,7 +1016,7 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                     <span>{isRtl ? 'إدارة المجموعات المعرفية المعزولة' : 'Isolated Knowledge Collections'}</span>
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {isRtl 
+                    {isRtl
                       ? 'تصنيف وتنظيم مستندات RAG في نطاقات ومجموعات مستقلة لتحديد سياق البحث بدقة.'
                       : 'Isolate or group RAG documents by domain, team, or category to fine-tune retrieval scopes.'}
                   </p>
@@ -960,13 +1040,17 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                     {isRtl ? 'لا توجد مجموعات معرفية حالياً' : 'No collections available'}
                   </h3>
                   <p className="text-xs text-slate-400">
-                    {isRtl ? 'أنشئ أول مجموعة معرفية لتنظيم سياق المستندات' : 'Create your first knowledge collection to group your RAG documents.'}
+                    {isRtl
+                      ? 'أنشئ أول مجموعة معرفية لتنظيم سياق المستندات'
+                      : 'Create your first knowledge collection to group your RAG documents.'}
                   </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {collections.map((col) => {
-                    const docsInCol = documents.filter((d) => d.collectionIds && d.collectionIds.includes(col.id)).length;
+                    const docsInCol = documents.filter(
+                      (d) => d.collectionIds && d.collectionIds.includes(col.id),
+                    ).length;
                     return (
                       <div
                         key={col.id}
@@ -995,14 +1079,14 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                             }}
                             className="text-indigo-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
                           >
-                          <span>{isRtl ? 'استعراض المستندات' : 'View Documents'}</span>
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </button>
+                            <span>{isRtl ? 'استعراض المستندات' : 'View Documents'}</span>
+                            <ArrowUpRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           )}
@@ -1041,7 +1125,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                 <div>
                   <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                     <Key className="w-4 h-4 text-indigo-600" />
-                    <span>{isRtl ? 'حالة ربط الخدمات الخارجية ورموز الوصول' : 'External Services & API Keys Status'}</span>
+                    <span>
+                      {isRtl ? 'حالة ربط الخدمات الخارجية ورموز الوصول' : 'External Services & API Keys Status'}
+                    </span>
                   </h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                     {isRtl
@@ -1190,14 +1276,16 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                       {isRtl ? `${filteredDocuments.length} مستند نشط` : `${filteredDocuments.length} active documents`}
                     </p>
                   </div>
-                  
+
                   <div className="flex items-center gap-1.5">
                     {/* View Mode Toggle */}
                     <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
                       <button
                         onClick={() => setDocViewMode('list')}
                         className={`p-1 rounded-md transition cursor-pointer ${
-                          docViewMode === 'list' ? 'bg-white text-indigo-600 shadow-3xs' : 'text-slate-400 hover:text-slate-700'
+                          docViewMode === 'list'
+                            ? 'bg-white text-indigo-600 shadow-3xs'
+                            : 'text-slate-400 hover:text-slate-700'
                         }`}
                         title={isRtl ? 'عرض القائمة' : 'List view'}
                       >
@@ -1206,7 +1294,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                       <button
                         onClick={() => setDocViewMode('grid')}
                         className={`p-1 rounded-md transition cursor-pointer ${
-                          docViewMode === 'grid' ? 'bg-white text-indigo-600 shadow-3xs' : 'text-slate-400 hover:text-slate-700'
+                          docViewMode === 'grid'
+                            ? 'bg-white text-indigo-600 shadow-3xs'
+                            : 'text-slate-400 hover:text-slate-700'
                         }`}
                         title={isRtl ? 'عرض بطاقات شبكية' : 'Grid view'}
                       >
@@ -1276,17 +1366,26 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                           }`}
                         >
                           <div className="flex items-start gap-2.5 min-w-0">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
-                              isSelected
-                                ? 'bg-indigo-600 text-white border-indigo-700 shadow-3xs'
-                                : 'bg-slate-100 text-slate-600 border-slate-200 group-hover:bg-indigo-50 group-hover:text-indigo-600 group-hover:border-indigo-200'
-                            } transition`}>
-                              {srcType === 'youtube' ? <Youtube className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-rose-600'}`} /> :
-                               srcType === 'url' ? <Globe className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-blue-600'}`} /> :
-                               srcType === 'github' ? <Github className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-slate-800'}`} /> :
-                               srcType === 'database' ? <Database className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-amber-600'}`} /> :
-                               srcType === 'gdrive' ? <FolderPlus className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-emerald-600'}`} /> :
-                               <FileText className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-indigo-600'}`} />}
+                            <div
+                              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white border-indigo-700 shadow-3xs'
+                                  : 'bg-slate-100 text-slate-600 border-slate-200 group-hover:bg-indigo-50 group-hover:text-indigo-600 group-hover:border-indigo-200'
+                              } transition`}
+                            >
+                              {srcType === 'youtube' ? (
+                                <MonitorPlay className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-rose-600'}`} />
+                              ) : srcType === 'url' ? (
+                                <Globe className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-blue-600'}`} />
+                              ) : srcType === 'github' ? (
+                                <FolderGit2 className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-slate-800'}`} />
+                              ) : srcType === 'database' ? (
+                                <Database className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-amber-600'}`} />
+                              ) : srcType === 'gdrive' ? (
+                                <FolderPlus className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-emerald-600'}`} />
+                              ) : (
+                                <FileText className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-indigo-600'}`} />
+                              )}
                             </div>
                             <div className="min-w-0 space-y-0.5">
                               <h4 className="text-xs font-bold text-slate-900 leading-tight group-hover:text-indigo-950 transition break-all">
@@ -1305,10 +1404,8 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                               </div>
                             </div>
                           </div>
-                          
-                          <div className="shrink-0 pt-0.5">
-                            {getDocStatusBadge(doc.status)}
-                          </div>
+
+                          <div className="shrink-0 pt-0.5">{getDocStatusBadge(doc.status)}</div>
                         </div>
                       );
                     })}
@@ -1331,15 +1428,34 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                         >
                           <div className="space-y-2">
                             <div className="flex items-center justify-between gap-2">
-                              <div className={`w-7 h-7 rounded-lg flex items-center justify-center border ${
-                                isSelected ? 'bg-indigo-600 text-white border-indigo-700 shadow-3xs' : 'bg-slate-50 border-slate-200'
-                              }`}>
-                                {srcType === 'youtube' ? <Youtube className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-rose-600'}`} /> :
-                                 srcType === 'url' ? <Globe className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-blue-600'}`} /> :
-                                 srcType === 'github' ? <Github className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-800'}`} /> :
-                                 srcType === 'database' ? <Database className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-amber-600'}`} /> :
-                                 srcType === 'gdrive' ? <FolderPlus className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-emerald-600'}`} /> :
-                                 <FileText className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-indigo-600'}`} />}
+                              <div
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center border ${
+                                  isSelected
+                                    ? 'bg-indigo-600 text-white border-indigo-700 shadow-3xs'
+                                    : 'bg-slate-50 border-slate-200'
+                                }`}
+                              >
+                                {srcType === 'youtube' ? (
+                                  <MonitorPlay
+                                    className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-rose-600'}`}
+                                  />
+                                ) : srcType === 'url' ? (
+                                  <Globe className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-blue-600'}`} />
+                                ) : srcType === 'github' ? (
+                                  <FolderGit2
+                                    className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-800'}`}
+                                  />
+                                ) : srcType === 'database' ? (
+                                  <Database className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-amber-600'}`} />
+                                ) : srcType === 'gdrive' ? (
+                                  <FolderPlus
+                                    className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-emerald-600'}`}
+                                  />
+                                ) : (
+                                  <FileText
+                                    className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-indigo-600'}`}
+                                  />
+                                )}
                               </div>
                               {getDocStatusBadge(doc.status)}
                             </div>
@@ -1375,7 +1491,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                           {getDocStatusBadge(selectedDoc.status)}
                           <span className="text-[10px] font-mono text-slate-400">ID: {selectedDoc.id}</span>
                         </div>
-                        <h3 className="text-xs font-extrabold text-slate-900 leading-tight break-all">{selectedDoc.title}</h3>
+                        <h3 className="text-xs font-extrabold text-slate-900 leading-tight break-all">
+                          {selectedDoc.title}
+                        </h3>
                         <p className="text-[10px] text-slate-500 font-mono">
                           {new Date(selectedDoc.createdAt).toLocaleString(isRtl ? 'ar-SA' : 'en-US')} | RLS Isolated
                         </p>
@@ -1396,7 +1514,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                       <div>
                         <h4 className="text-xs font-bold text-slate-800 mb-1 flex items-center justify-between font-sans">
                           <span>{isRtl ? 'محتوى النص الكامل المستخلص:' : 'Extracted Text:'}</span>
-                          <span className="text-[10px] text-slate-400 font-mono">{selectedDoc.content.length} chars</span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {selectedDoc.content.length} chars
+                          </span>
                         </h4>
                         <div className="text-xs text-slate-700 bg-slate-50 p-3.5 rounded-xl border border-slate-150 max-h-40 overflow-y-auto whitespace-pre-line font-sans leading-relaxed">
                           {selectedDoc.content}
@@ -1418,7 +1538,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
                         {isLoadingChunks ? (
                           <ChunkSkeleton />
-                        ) : ((selectedDoc.status as string) === 'processing' || (selectedDoc.status as string) === 'indexing' || selectedDoc.status === 'pending') ? (
+                        ) : (selectedDoc.status as string) === 'processing' ||
+                          (selectedDoc.status as string) === 'indexing' ||
+                          selectedDoc.status === 'pending' ? (
                           <div className="space-y-3">
                             <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3 shadow-3xs">
                               <div className="flex items-center justify-between border-b border-slate-800 pb-2">
@@ -1452,7 +1574,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                           </div>
                         ) : selectedDocChunks.length === 0 ? (
                           <div className="py-8 text-center text-slate-400 text-xs">
-                            {isRtl ? 'لم يتم العثور على أي مقاطع دلالية متوفرة.' : 'No chunks available for this document.'}
+                            {isRtl
+                              ? 'لم يتم العثور على أي مقاطع دلالية متوفرة.'
+                              : 'No chunks available for this document.'}
                           </div>
                         ) : (
                           <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
@@ -1475,7 +1599,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                                     {copiedChunkId === chunk.id ? (
                                       <>
                                         <Check className="w-3 h-3 text-emerald-400" />
-                                        <span className="text-emerald-400 font-bold">{isRtl ? 'تم النسخ' : 'Copied'}</span>
+                                        <span className="text-emerald-400 font-bold">
+                                          {isRtl ? 'تم النسخ' : 'Copied'}
+                                        </span>
                                       </>
                                     ) : (
                                       <Copy className="w-3 h-3" />
@@ -1501,7 +1627,11 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
                 ) : (
                   <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 text-xs text-slate-400 space-y-2 shadow-3xs">
                     <FileText className="w-10 h-10 text-slate-300 mx-auto" />
-                    <p>{isRtl ? 'اختر مستنداً دلالياً من القائمة لعرض متجهات Qdrant ومعاينة تجزئته ومحتواه.' : 'Select a document to inspect full extracted metadata, content, and dynamic embeddings.'}</p>
+                    <p>
+                      {isRtl
+                        ? 'اختر مستنداً دلالياً من القائمة لعرض متجهات Qdrant ومعاينة تجزئته ومحتواه.'
+                        : 'Select a document to inspect full extracted metadata, content, and dynamic embeddings.'}
+                    </p>
                   </div>
                 )}
               </div>
@@ -1514,7 +1644,11 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
               <div className="border-b border-slate-100 pb-4">
                 <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                   <Zap className="w-5 h-5 text-amber-500" />
-                  <span>{isRtl ? 'موارد بروتوكول سياق النموذج (MCP Resources Inspector)' : 'MCP Context Resources Inspector'}</span>
+                  <span>
+                    {isRtl
+                      ? 'موارد بروتوكول سياق النموذج (MCP Resources Inspector)'
+                      : 'MCP Context Resources Inspector'}
+                  </span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                   {isRtl
@@ -1525,7 +1659,9 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
 
               {mcpResources.length === 0 ? (
                 <div className="py-12 text-center text-slate-400 text-xs">
-                  {isRtl ? 'لم يتم العثور على خوادم أو موارد MCP نشطة حالياً.' : 'No active MCP servers/resources detected.'}
+                  {isRtl
+                    ? 'لم يتم العثور على خوادم أو موارد MCP نشطة حالياً.'
+                    : 'No active MCP servers/resources detected.'}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1570,7 +1706,6 @@ export function SourcesDashboard({ tenantId = 'tenant-acme-01', lang = 'ar' }: S
               onCancel={() => setActiveTab('connectors')}
             />
           )}
-
         </div>
       </div>
 

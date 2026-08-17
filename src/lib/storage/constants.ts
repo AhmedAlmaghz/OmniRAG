@@ -8,6 +8,7 @@ import {
   SourceConnector,
   SyncLogEntry,
 } from '../types/omnirag';
+import { DEFAULT_AI_MODELS } from '../config/aiModels';
 
 // Initial Tenants
 export const INITIAL_TENANTS: Tenant[] = [
@@ -20,7 +21,7 @@ export const INITIAL_TENANTS: Tenant[] = [
       chunkSize: 500,
       chunkOverlap: 50,
       hybridWeights: { semantic: 0.7, lexical: 0.3 },
-      defaultModel: 'gemini-3.7-flash',
+      defaultModel: DEFAULT_AI_MODELS.chatModel,
       dataRetentionDays: 90,
       enablePiiRedaction: true,
       enablePromptSanitizer: true,
@@ -35,7 +36,7 @@ export const INITIAL_TENANTS: Tenant[] = [
       chunkSize: 400,
       chunkOverlap: 40,
       hybridWeights: { semantic: 0.6, lexical: 0.4 },
-      defaultModel: 'gemini-3.1-pro-preview',
+      defaultModel: DEFAULT_AI_MODELS.analysisModel,
       dataRetentionDays: 180,
       enablePiiRedaction: true,
       enablePromptSanitizer: true,
@@ -226,7 +227,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-001',
     documentTitle: 'اتفاقية عدم الإفصاح والسرية NDA (2026)',
-    content: 'المادة 1: يتعهد الطرفان بالحفاظ على سرية جميع البيانات التقنية والمالية والتجارية المتبادلة. يمنع منعاً باتاً نقل أي بيانات خارج نطاق المستأجر المعين (Tenant Isolation).',
+    content:
+      'المادة 1: يتعهد الطرفان بالحفاظ على سرية جميع البيانات التقنية والمالية والتجارية المتبادلة. يمنع منعاً باتاً نقل أي بيانات خارج نطاق المستأجر المعين (Tenant Isolation).',
     chunkIndex: 0,
     pageNumber: 1,
     language: 'ar',
@@ -237,7 +239,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-001',
     documentTitle: 'اتفاقية عدم الإفصاح والسرية NDA (2026)',
-    content: 'المادة 2: تستمر هذه الاتفاقية لمدة 5 سنوات من تاريخ التوقيع. في حال حدوث أي تسريب غير مصرح به، يحق للطرف المتضرر المطالبة بتعويضات فورية وتقديم بلاغ للجهات المختصة.',
+    content:
+      'المادة 2: تستمر هذه الاتفاقية لمدة 5 سنوات من تاريخ التوقيع. في حال حدوث أي تسريب غير مصرح به، يحق للطرف المتضرر المطالبة بتعويضات فورية وتقديم بلاغ للجهات المختصة.',
     chunkIndex: 1,
     pageNumber: 1,
     language: 'ar',
@@ -248,7 +251,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-001',
     documentTitle: 'اتفاقية عدم الإفصاح والسرية NDA (2026)',
-    content: 'المادة 3: تلتزم جميع الأنظمة المستضافة بالتشفير الكامل بأسلوب AES-256 أثناء التخزين وببروتوكول TLS 1.3 أثناء النقل، مع تفعيل سياسات التحكم بالوصول على مستوى الصفوف (Row Level Security).',
+    content:
+      'المادة 3: تلتزم جميع الأنظمة المستضافة بالتشفير الكامل بأسلوب AES-256 أثناء التخزين وببروتوكول TLS 1.3 أثناء النقل، مع تفعيل سياسات التحكم بالوصول على مستوى الصفوف (Row Level Security).',
     chunkIndex: 2,
     pageNumber: 2,
     language: 'ar',
@@ -259,7 +263,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-002',
     documentTitle: 'سياسة أمن واستجابة الحوادث السيبرانية ISO27001',
-    content: '1. كشف الاختراقات وهجمات الحقن (Prompt Injection Defense): يتم فحص جميع المدخلات الموجهة لوكلاء الذكاء الاصطناعي عبر محرك حتمي (HookHarness) لمنع محاولات تجاوز تعليمات النظام أو استخراج المفاتيح.',
+    content:
+      '1. كشف الاختراقات وهجمات الحقن (Prompt Injection Defense): يتم فحص جميع المدخلات الموجهة لوكلاء الذكاء الاصطناعي عبر محرك حتمي (HookHarness) لمنع محاولات تجاوز تعليمات النظام أو استخراج المفاتيح.',
     chunkIndex: 0,
     pageNumber: 1,
     language: 'ar',
@@ -270,7 +275,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-002',
     documentTitle: 'سياسة أمن واستجابة الحوادث السيبرانية ISO27001',
-    content: '2. إدارة أدوات MCP: جميع أدوات MCP المصنفة تحت Sandbox T2 و T3 (التي تحدث آثاراً جانبية مثل إرسال بريد أو تعديل قواعد البيانات) تتطلب موافقة بشرية صريحة من المستخدم قبل التنفيذ.',
+    content:
+      '2. إدارة أدوات MCP: جميع أدوات MCP المصنفة تحت Sandbox T2 و T3 (التي تحدث آثاراً جانبية مثل إرسال بريد أو تعديل قواعد البيانات) تتطلب موافقة بشرية صريحة من المستخدم قبل التنفيذ.',
     chunkIndex: 1,
     pageNumber: 1,
     language: 'ar',
@@ -281,7 +287,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-002',
     documentTitle: 'سياسة أمن واستجابة الحوادث السيبرانية ISO27001',
-    content: '3. التشفير وإسقاط الهويات PII Redaction: يُحظر بث أي معلومات تعريف شخصية (بريد إلكتروني، رقم هاتف، بطاقة ائتمان) في استجابات النموذج، ويتم استبدالها حتمياً بوسوم [REDACTED].',
+    content:
+      '3. التشفير وإسقاط الهويات PII Redaction: يُحظر بث أي معلومات تعريف شخصية (بريد إلكتروني، رقم هاتف، بطاقة ائتمان) في استجابات النموذج، ويتم استبدالها حتمياً بوسوم [REDACTED].',
     chunkIndex: 2,
     pageNumber: 2,
     language: 'ar',
@@ -292,7 +299,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-003',
     documentTitle: 'OmniRAG System Architecture & Hybrid Retrieval Spec',
-    content: 'Multi-Tenant Hybrid Search Engine: Combines dense vector retrieval via Qdrant (cosine similarity) and sparse BM25 text matching over Neon Postgres. Fused using Reciprocal Rank Fusion (RRF).',
+    content:
+      'Multi-Tenant Hybrid Search Engine: Combines dense vector retrieval via Qdrant (cosine similarity) and sparse BM25 text matching over Neon Postgres. Fused using Reciprocal Rank Fusion (RRF).',
     chunkIndex: 0,
     pageNumber: 1,
     language: 'en',
@@ -303,7 +311,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-003',
     documentTitle: 'OmniRAG System Architecture & Hybrid Retrieval Spec',
-    content: 'Smart Agentic Routing: Simple requests are handled by fast models (Gemini Flash-Lite), while complex reasoning, cross-encoder reranking, and multi-step tool calls route to Gemini 3.6 Flash or 3.1 Pro Preview.',
+    content:
+      'Smart Agentic Routing: Simple requests are handled by fast models (Gemini Flash-Lite), while complex reasoning, cross-encoder reranking, and multi-step tool calls route to Gemini 3.6 Flash or 3.1 Pro Preview.',
     chunkIndex: 1,
     pageNumber: 1,
     language: 'en',
@@ -314,7 +323,8 @@ export const INITIAL_CHUNKS: DocumentChunk[] = [
     tenantId: 'tenant-acme-01',
     documentId: 'doc-003',
     documentTitle: 'OmniRAG System Architecture & Hybrid Retrieval Spec',
-    content: 'Citation Verification: Every generated claim with a citation index is cross-checked against retrieved chunk UUIDs to eliminate hallucinated references.',
+    content:
+      'Citation Verification: Every generated claim with a citation index is cross-checked against retrieved chunk UUIDs to eliminate hallucinated references.',
     chunkIndex: 2,
     pageNumber: 2,
     language: 'en',
@@ -328,7 +338,8 @@ export const INITIAL_MCP_SERVERS: MCPServerConfig[] = [
     id: 'mcp-unstructured-transform',
     tenantId: 'tenant-acme-01',
     name: 'Unstructured Transform',
-    description: 'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
+    description:
+      'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
     endpointUrl: 'https://mcp.transform.unstructured.io',
     protocolVersion: '2026-07-28',
     sandboxTier: 'T2_ELEVATED',

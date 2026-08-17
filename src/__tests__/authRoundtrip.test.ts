@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { MemoryDatabase } from '@/lib/storage/db';
 import { hashPassword, verifyPassword } from '@/lib/auth/password';
 import type { Tenant, User, SessionRecord } from '@/lib/types/omnirag';
+import { DEFAULT_AI_MODELS } from '@/lib/config/aiModels';
 
 // End-to-end auth roundtrip against the real in-memory backend (the same code
 // path production falls back to when Postgres is unavailable): register a
@@ -19,7 +20,7 @@ function makeTenant(id: string, name: string): Tenant {
       chunkSize: 1000,
       chunkOverlap: 200,
       hybridWeights: { semantic: 0.7, lexical: 0.3 },
-      defaultModel: 'gemini-3.6-flash',
+      defaultModel: DEFAULT_AI_MODELS.chatModel,
       dataRetentionDays: 90,
       enablePiiRedaction: true,
       enablePromptSanitizer: true,

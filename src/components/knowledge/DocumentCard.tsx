@@ -6,8 +6,8 @@ import {
   FileText,
   FileCode,
   Globe,
-  Youtube,
-  Github,
+  MonitorPlay,
+  FolderGit2,
   Database,
   FolderPlus,
   Layers,
@@ -64,7 +64,7 @@ export function DocumentCard({
     switch (srcType) {
       case 'youtube':
         return {
-          icon: <Youtube className="w-4 h-4 text-rose-600" />,
+          icon: <MonitorPlay className="w-4 h-4 text-rose-600" />,
           bg: 'bg-rose-50 border-rose-100',
           badgeText: 'YOUTUBE',
           badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
@@ -78,7 +78,7 @@ export function DocumentCard({
         };
       case 'github':
         return {
-          icon: <Github className="w-4 h-4 text-slate-800" />,
+          icon: <FolderGit2 className="w-4 h-4 text-slate-800" />,
           bg: 'bg-slate-100 border-slate-200',
           badgeText: 'GITHUB',
           badgeClass: 'bg-slate-100 text-slate-800 border-slate-200',
@@ -99,7 +99,7 @@ export function DocumentCard({
         };
       default: {
         const titleLower = document.title.toLowerCase();
-        
+
         // 1. PDF
         if (titleLower.endsWith('.pdf')) {
           return {
@@ -109,7 +109,7 @@ export function DocumentCard({
             badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
           };
         }
-        
+
         // 2. Word (DOCX / DOC)
         if (titleLower.endsWith('.docx') || titleLower.endsWith('.doc')) {
           return {
@@ -264,9 +264,7 @@ export function DocumentCard({
   };
 
   const estimatedTokens = Math.round((document.content?.length || 0) / 4);
-  const sizeEstimate = document.content
-    ? (new Blob([document.content]).size / 1024).toFixed(1) + ' KB'
-    : '24 KB';
+  const sizeEstimate = document.content ? (new Blob([document.content]).size / 1024).toFixed(1) + ' KB' : '24 KB';
 
   return (
     <div
@@ -281,14 +279,17 @@ export function DocumentCard({
       {/* Top Row: Icon + Source Badge + Version + Collection + Status */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <div className={`w-8 h-8 rounded-xl flex items-center justify-center border shrink-0 ${bg}`}>
-            {icon}
-          </div>
+          <div className={`w-8 h-8 rounded-xl flex items-center justify-center border shrink-0 ${bg}`}>{icon}</div>
           <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase font-mono shrink-0 ${badgeClass}`}>
+            <span
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase font-mono shrink-0 ${badgeClass}`}
+            >
               {badgeText}
             </span>
-            <span className="text-[9px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200/80 font-mono shrink-0 flex items-center gap-0.5" title={isRtl ? `إصدار المستند: v${document.version || 1}` : `Document Version: v${document.version || 1}`}>
+            <span
+              className="text-[9px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200/80 font-mono shrink-0 flex items-center gap-0.5"
+              title={isRtl ? `إصدار المستند: v${document.version || 1}` : `Document Version: v${document.version || 1}`}
+            >
               <GitBranch className="w-2.5 h-2.5" />
               <span>v{document.version || 1}</span>
             </span>
@@ -301,14 +302,15 @@ export function DocumentCard({
           </div>
         </div>
 
-        <div className="shrink-0">
-          {getStatusBadge()}
-        </div>
+        <div className="shrink-0">{getStatusBadge()}</div>
       </div>
 
       {/* Document Title & Content Excerpt */}
       <div className="space-y-1">
-        <h4 className="text-xs font-extrabold text-slate-900 leading-snug group-hover:text-indigo-900 transition-colors line-clamp-2 break-all" title={document.title}>
+        <h4
+          className="text-xs font-extrabold text-slate-900 leading-snug group-hover:text-indigo-900 transition-colors line-clamp-2 break-all"
+          title={document.title}
+        >
           {document.title}
         </h4>
         {document.content && (
@@ -323,7 +325,9 @@ export function DocumentCard({
         <div className="flex items-center gap-2.5 flex-wrap">
           <span className="flex items-center gap-1 font-bold text-indigo-700 bg-indigo-50/80 px-1.5 py-0.5 rounded border border-indigo-100">
             <Layers className="w-3 h-3 text-indigo-500" />
-            <span>{document.chunkCount || 0} {isRtl ? 'مقطع' : 'chunks'}</span>
+            <span>
+              {document.chunkCount || 0} {isRtl ? 'مقطع' : 'chunks'}
+            </span>
           </span>
           <span className="flex items-center gap-1 text-slate-600">
             <Sparkles className="w-3 h-3 text-amber-500" />
@@ -338,7 +342,7 @@ export function DocumentCard({
         <span className="text-slate-400 font-sans text-[9px] shrink-0">
           {new Date(document.createdAt).toLocaleDateString(isRtl ? 'ar-SA' : 'en-US', {
             month: 'short',
-            day: 'numeric'
+            day: 'numeric',
           })}
         </span>
       </div>

@@ -43,8 +43,8 @@ import {
   Scissors,
   Zap,
   Globe,
-  Youtube,
-  Github,
+  MonitorPlay,
+  FolderGit2,
   Server,
   Key,
   ShieldCheck,
@@ -576,7 +576,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
           }`}
         >
-          <Youtube className="w-4 h-4 text-rose-500" />
+          <MonitorPlay className="w-4 h-4 text-rose-500" />
           <span>{isRtl ? 'مفرغ يوتيوب الذكي' : 'YouTube Transcriber'}</span>
         </button>
 
@@ -1604,11 +1604,11 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     <div className="flex items-start justify-between gap-2">
                       <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
                         {src.type === 'youtube' ? (
-                          <Youtube className="w-5 h-5 text-rose-600" />
+                          <MonitorPlay className="w-5 h-5 text-rose-600" />
                         ) : src.type === 'url' ? (
                           <Globe className="w-5 h-5 text-blue-600" />
                         ) : src.type === 'github' ? (
-                          <Github className="w-5 h-5 text-slate-800" />
+                          <FolderGit2 className="w-5 h-5 text-slate-800" />
                         ) : src.type === 'database' ? (
                           <Database className="w-5 h-5 text-amber-600" />
                         ) : (

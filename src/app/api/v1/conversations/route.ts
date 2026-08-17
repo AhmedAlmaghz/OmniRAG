@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/storage/db';
 import { Conversation, Message } from '@/lib/types/omnirag';
+import { DEFAULT_AI_MODELS } from '@/lib/config/aiModels';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +39,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         tenantId,
         title: body.title || 'محادثة جديدة',
         mode: body.mode || 'hybrid',
-        model: body.model || 'gemini-3.7-flash',
+        model: body.model || DEFAULT_AI_MODELS.chatModel,
         collectionIds: body.collectionIds || [],
         enabledMcpServers: body.enabledMcpServers || [],
         createdAt: new Date().toISOString(),

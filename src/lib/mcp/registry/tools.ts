@@ -2,6 +2,7 @@ import { db } from '@/lib/storage/db';
 import { generateEmbedding } from '@/lib/rag/embedding';
 import { searchQdrantSemantic } from '@/lib/storage/qdrant';
 import { randomInt } from '@/lib/crypto/webRandom';
+import { getAiModel } from '@/lib/config/aiModels';
 
 export interface MCPToolDefinition {
   name: string;
@@ -494,7 +495,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
               Authorization: `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-              model: 'mistral-ocr-latest',
+              model: getAiModel('ocrModel'),
               document: {
                 type: 'document_url',
                 document_url: docUrl,

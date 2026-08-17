@@ -1,6 +1,6 @@
 'use client';
 
-import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import React, { useState, useEffect } from 'react';
 import {
   Cpu,
@@ -21,6 +21,8 @@ import {
   Radio,
   ExternalLink,
   ShieldAlert,
+  Mic,
+  ScanText,
 } from 'lucide-react';
 import {
   AIModelConfig,
@@ -63,8 +65,9 @@ export default function ModelSettingsView() {
 
   const handleSelectModel = (key: keyof AIModelConfig, modelName: string) => {
     if (modelName === 'CUSTOM') {
+      const currentVal = config[key];
       setCustomInputMode((prev) => ({ ...prev, [key]: true }));
-      setCustomModelNames((prev) => ({ ...prev, [key]: config[key] || '' }));
+      setCustomModelNames((prev) => ({ ...prev, [key]: Array.isArray(currentVal) ? '' : currentVal || '' }));
     } else {
       setCustomInputMode((prev) => ({ ...prev, [key]: false }));
       setConfig((prev) => ({ ...prev, [key]: modelName }));
@@ -148,7 +151,7 @@ export default function ModelSettingsView() {
     descriptionAr: string;
     icon: React.ElementType;
     badge: string;
-    typeFilter: 'general' | 'reasoning' | 'embedding';
+    typeFilter: 'general' | 'reasoning' | 'embedding' | 'audio' | 'ocr';
     defaultVal: string;
   }> = [
     {
@@ -165,7 +168,8 @@ export default function ModelSettingsView() {
       key: 'analysisModel',
       titleAr: '2. نموذج التحليل والتفكير المعقد (Deep Analysis & Reasoning)',
       titleEn: 'Deep Query Analysis',
-      descriptionAr: 'يُستخدم للاستفسارات المركبة، مقارنة العقود والسياسات، والتحليلات الأمنية التي تتطلب منطقاً عميقاً.',
+      descriptionAr:
+        'يُستخدم للاستفسارات المركبة، مقارنة العقود والسياسات، والتحليلات الأمنية التي تتطلب منطقاً عميقاً.',
       icon: BrainCircuit,
       badge: 'Smart Query Router',
       typeFilter: 'reasoning',
@@ -211,6 +215,28 @@ export default function ModelSettingsView() {
       typeFilter: 'embedding',
       defaultVal: DEFAULT_AI_MODELS.embeddingModel,
     },
+    {
+      key: 'whisperModel',
+      titleAr: '7. نموذج تفريغ الصوت والفيديو (Whisper / Speech-to-Text)',
+      titleEn: 'Audio & Video Transcription',
+      descriptionAr:
+        'يُستخدم لتفريغ الملفات الصوتية والفيديو إلى نص عبر Groq Whisper (whisper-large-v3 افتراضياً). يدعم mp3, wav, mp4, webm وغيرها.',
+      icon: Mic,
+      badge: 'API /v1/documents/parse (Audio/Video)',
+      typeFilter: 'audio',
+      defaultVal: DEFAULT_AI_MODELS.whisperModel,
+    },
+    {
+      key: 'ocrModel',
+      titleAr: '8. نموذج OCR لاستخراج النصوص (Mistral Document AI)',
+      titleEn: 'PDF & Image OCR',
+      descriptionAr:
+        'يُستخدم لاستخراج النصوص عالية الدقة من ملفات PDF والصور عبر Mistral Document AI (mistral-ocr-latest افتراضياً).',
+      icon: ScanText,
+      badge: 'API /v1/documents/parse (PDF/Image OCR)',
+      typeFilter: 'ocr',
+      defaultVal: DEFAULT_AI_MODELS.ocrModel,
+    },
   ];
 
   return (
@@ -218,7 +244,7 @@ export default function ModelSettingsView() {
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-indigo-950/80 via-slate-900 to-slate-950 border border-indigo-500/30 rounded-2xl p-6 shadow-xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-        
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
@@ -233,7 +259,8 @@ export default function ModelSettingsView() {
                   </span>
                 </h1>
                 <p className="text-sm text-slate-400 mt-1">
-                  شاشة تحكم واحدة لتحديد وتغيير أسماء نماذج Gemini ونماذج التضمين المتجهي لكل عملية في النظام دون التعديل في الكود.
+                  شاشة تحكم واحدة لتحديد وتغيير أسماء نماذج Gemini ونماذج التضمين المتجهي لكل عملية في النظام دون
+                  التعديل في الكود.
                 </p>
               </div>
             </div>
@@ -270,11 +297,11 @@ export default function ModelSettingsView() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {operationsList.map((op) => {
           const IconComp = op.icon;
-          const isCustom = customInputMode[op.key] || (!PRESET_MODELS.some((m) => m.id === config[op.key]));
+          const isCustom = customInputMode[op.key] || !PRESET_MODELS.some((m) => m.id === config[op.key]);
           const currentVal = config[op.key];
 
           const filteredPresets = PRESET_MODELS.filter(
-            (m) => m.type === op.typeFilter || (m.recommendedFor && m.recommendedFor.includes(op.key))
+            (m) => m.type === op.typeFilter || (m.recommendedFor && m.recommendedFor.includes(op.key)),
           );
 
           return (
@@ -302,9 +329,7 @@ export default function ModelSettingsView() {
               </div>
 
               <div className="space-y-3 pt-2 border-t border-slate-800/80">
-                <label className="text-xs font-medium text-slate-300 block">
-                  النموذج المعتمد لهذه العملية:
-                </label>
+                <label className="text-xs font-medium text-slate-300 block">النموذج المعتمد لهذه العملية:</label>
 
                 {/* Preset buttons */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -363,7 +388,9 @@ export default function ModelSettingsView() {
                 )}
 
                 <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
-                  <span>الافتراضي: <code className="text-slate-400 font-mono">{op.defaultVal}</code></span>
+                  <span>
+                    الافتراضي: <code className="text-slate-400 font-mono">{op.defaultVal}</code>
+                  </span>
                   <span className="text-indigo-400/90 font-mono font-semibold">المفعل: {currentVal}</span>
                 </div>
               </div>
@@ -381,7 +408,9 @@ export default function ModelSettingsView() {
             </div>
             <div>
               <h2 className="text-lg font-bold text-white">منصة الاختبار السريع للنماذج المحددة</h2>
-              <p className="text-xs text-slate-400">تأكد من عمل النموذج وتجاوبه السريع قبل اعتماده في العمليات الفعلية.</p>
+              <p className="text-xs text-slate-400">
+                تأكد من عمل النموذج وتجاوبه السريع قبل اعتماده في العمليات الفعلية.
+              </p>
             </div>
           </div>
         </div>
@@ -437,9 +466,7 @@ export default function ModelSettingsView() {
               <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
                 <span className="text-slate-400 font-medium">مخرجات استجابة النموذج التجريبي</span>
                 {testResult?.latencyMs && (
-                  <span className="text-emerald-400 font-mono text-[11px]">
-                    الزمن: {testResult.latencyMs}ms
-                  </span>
+                  <span className="text-emerald-400 font-mono text-[11px]">الزمن: {testResult.latencyMs}ms</span>
                 )}
               </div>
 
@@ -464,7 +491,9 @@ export default function ModelSettingsView() {
 
             <div className="text-[11px] text-slate-500 flex items-center gap-2 font-mono border-t border-slate-800/60 pt-2">
               <Code2 className="w-3.5 h-3.5 text-indigo-400" />
-              <span>النموذج المستخدم في الاختبار: <strong className="text-indigo-300">{config[testOperation]}</strong></span>
+              <span>
+                النموذج المستخدم في الاختبار: <strong className="text-indigo-300">{config[testOperation]}</strong>
+              </span>
             </div>
           </div>
         </div>

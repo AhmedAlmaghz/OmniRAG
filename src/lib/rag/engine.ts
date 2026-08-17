@@ -10,6 +10,7 @@ import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { getAiModel } from '../config/aiModels';
 import { getEnv } from '../env/runtimeEnv';
 import { randomUUID } from 'crypto';
+import { SYSTEM_CONFIG } from '../config/systemConfig';
 
 // Singleton AI Client instance for agentic MCP calls
 let globalAiClient: GoogleGenAI | null = null;
@@ -323,7 +324,36 @@ export function computeRrfScore(
  */
 export async function performHybridSearch(searchQuery: SearchQuery): Promise<SearchResult> {
   const startTime = Date.now();
-  const { tenantId, query, collectionIds, topK = 5, semanticWeight = 0.7, lexicalWeight = 0.3, useHyde } = searchQuery;
+
+  // Retrieval merges ALL chunks above the semantic floor — there is no fixed
+  // topK that silently truncates the answer pool. `topK`, when a caller still
+  // passes it, only nudges how many candidates each backend returns before
+  // fusion/reranking (an over-fetch hint, never a final cap). The single
+  // downward bound is `CONTEXT_CHUNK_CAP` applied as a defensive soft cap
+  // after reranking, sized to fit a reasonable model context window.
+  const {
+    tenantId,
+    query,
+    collectionIds,
+    topK,
+    // Pull the semantic similarity floor from the centralized RAG config so we
+    // don't keep a second dead copy here. Callers CAN still override per-call
+    // (e.g. a strict-debate search with scoreThreshold: 0.3), but the default
+    // matching/recall policy now comes from SYSTEM_CONFIG.RAG instead of being
+    // unavailable at runtime.
+    scoreThreshold = SYSTEM_CONFIG.RAG.MIN_SIMILARITY_SCORE,
+    semanticWeight = SYSTEM_CONFIG.RAG.HYBRID_WEIGHTS.SEMANTIC,
+    lexicalWeight = SYSTEM_CONFIG.RAG.HYBRID_WEIGHTS.LEXICAL,
+    useHyde,
+  } = searchQuery;
+
+  // `topK` is now purely an over-fetch hint per backend. We clamp it from
+  // below so a caller passing `topK: 0` doesn't nuke recall, and from above
+  // so a runaway value (e.g. 50000 in a fuzz test) can't balloon Qdrant/PG
+  // traffic. The merged result pool is sliced only by the similarity floor and
+  // the final CONTEXT_CHUNK_CAP — never by this hint.
+  const overfetchHint = Math.max(8, Math.min(topK ?? 10, 100));
+  const overfetchLimit = overfetchHint * SYSTEM_CONFIG.RAG.ENGINE_OVERFETCH_FACTOR;
 
   // Step 1: Optional HyDE Expansion (Applied ONLY to Semantic Search)
   let semanticSearchContent = query;
@@ -347,7 +377,11 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
   if (isPostgresActive || isQdrantActive) {
     try {
-      // Run semantic and lexical search in parallel
+      // Run semantic and lexical search in parallel. The semantic backend is
+      // asked for ALL chunks meeting the similarity floor (score_threshold),
+      // capped only by an over-fetch hint that protects the round-trip cost
+      // — Qdrant pre-filters below the floor server-side, so fused RRF ranks
+      // over genuinely-relevant chunks instead of arbitrary rank truncation.
       const [semanticResults, lexicalResults] = await Promise.all([
         isQdrantActive
           ? generateEmbedding(semanticSearchContent).then((vector) =>
@@ -355,11 +389,12 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
                 vector,
                 tenantId,
                 collectionIds,
-                limit: topK * 3,
+                limit: overfetchLimit,
+                scoreThreshold,
               }),
             )
           : Promise.resolve([]),
-        isPostgresActive ? searchPostgresLexical(lexicalSearchContent, tenantId, topK * 3) : Promise.resolve([]),
+        isPostgresActive ? searchPostgresLexical(lexicalSearchContent, tenantId, overfetchLimit) : Promise.resolve([]),
       ]);
 
       const itemMap = new Map<string, any>();
@@ -408,7 +443,19 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
       const mergedList = Array.from(itemMap.values());
 
-      for (const item of mergedList) {
+      // Apply the semantic similarity floor post-fusion: keep a chunk if it
+      // either passed Qdrant's cosine floor (semanticScore >= scoreThreshold)
+      // OR was independently matched by lexical search (exact keyword hit,
+      // high precision even when its embedding score is low). Pure noise that
+      // neither matched semantically nor lexically is dropped here.
+      const semanticFloor = scoreThreshold;
+      const filteredList = mergedList.filter((item) => {
+        const passedSemantic = (item.semanticScore || 0) >= semanticFloor;
+        const passedLexical = item.lexicalRank !== null && item.lexicalRank > 0;
+        return passedSemantic || passedLexical;
+      });
+
+      for (const item of filteredList) {
         if (!item.documentTitle) {
           item.documentTitle = docMap.get(item.documentId) || 'مستند مسترجع';
         }
@@ -419,12 +466,14 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
         item.tenantId = tenantId;
       }
 
-      mergedList.sort((a, b) => b.score - a.score);
-      resultChunks = mergedList.slice(0, topK);
-      totalCount = mergedList.length;
+      filteredList.sort((a, b) => b.score - a.score);
+      // No topK slice here — every above-floor chunk is carried forward.
+      // The defensive soft cap is applied AFTER reranking, once, below.
+      resultChunks = filteredList;
+      totalCount = filteredList.length;
 
-      semanticMatches = resultChunks.filter((c) => c.semanticScore > 0.3 || c.semanticRank !== null).length;
-      lexicalMatches = resultChunks.filter((c) => c.lexicalScore > 0.2 || c.lexicalRank !== null).length;
+      semanticMatches = resultChunks.filter((c) => c.semanticScore >= semanticFloor).length;
+      lexicalMatches = resultChunks.filter((c) => c.lexicalRank !== null && c.lexicalRank > 0).length;
     } catch (realSearchError) {
       console.error('Real hybrid search failed, falling back to local storage:', realSearchError);
       resultChunks = [];
@@ -480,18 +529,48 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
     });
 
     scoredChunks.sort((a, b) => (b.score || 0) - (a.score || 0));
-    resultChunks = scoredChunks.slice(0, topK);
-    totalCount = scoredChunks.length;
 
-    semanticMatches = resultChunks.filter((c) => (c.semanticScore || 0) > 0.4).length;
-    lexicalMatches = resultChunks.filter((c) => (c.lexicalScore || 0) > 0.3).length;
+    // Apply the same semantic floor as the live path so the local fallback
+    // can't carry a pile of zero-relevance chunks into the model context.
+    // A chunk is retained if its heuristic semantic score meets the floor OR
+    // its lexical score is non-zero (exact term hit). No topK truncation here
+    // — the defensive CONTEXT_CHUNK_CAP after reranking is the only soft bound.
+    const localSemanticFloor = scoreThreshold;
+    const localFiltered = scoredChunks.filter(
+      (c) => (c.semanticScore || 0) >= localSemanticFloor || (c.lexicalScore || 0) > 0,
+    );
+    resultChunks = localFiltered;
+    totalCount = localFiltered.length;
+
+    semanticMatches = resultChunks.filter((c) => (c.semanticScore || 0) >= localSemanticFloor).length;
+    lexicalMatches = resultChunks.filter((c) => (c.lexicalScore || 0) > 0).length;
   }
 
-  // Optional Cross-Encoder LLM Reranking (SPEC-C04)
+  // Optional Cross-Encoder LLM Reranking (SPEC-C04). We now pass the FULL
+  // above-floor pool — the reranker no longer internally caps at 15 — so its
+  // cross-encoder scores are computed against every viable candidate rather
+  // than an arbitrary top-N. The defensive CONTEXT_CHUNK_CAP is applied
+  // AFTER reranking, once, as the single downward bound on assembled context.
   if (searchQuery.rerank && resultChunks.length > 1) {
     const preRerankTime = Date.now();
-    resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[], topK);
+    resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[], overfetchHint);
     console.log(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
+  }
+
+  // Defensive soft cap. Up to this point we have NOT truncated the answer
+  // pool by a fixed count — every chunk above the semantic floor (or with an
+  // exact lexical hit) is in `resultChunks`. We apply CONTEXT_CHUNK_CAP once
+  // here, AFTER reranking, so the model context is bounded (~30 chunks for
+  // the default 500-char chunk size) while preserving all relevance-ranked
+  // pieces above the floor. Callers that genuinely need more can raise the
+  // cap via SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP.
+  const contextChunkCap = SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP;
+  const preCapCount = resultChunks.length;
+  if (resultChunks.length > contextChunkCap) {
+    resultChunks = resultChunks.slice(0, contextChunkCap);
+    console.log(
+      `[Hybrid Search] Defensive context cap applied: ${preCapCount} above-floor chunks → ${resultChunks.length} (cap=${contextChunkCap})`,
+    );
   }
 
   return {

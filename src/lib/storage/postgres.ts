@@ -28,6 +28,7 @@ import pg from 'pg';
 const { Pool } = pg;
 
 import { getEnv } from '../env/runtimeEnv';
+import { DEFAULT_AI_MODELS } from '../config/aiModels';
 
 let pool: any = null;
 let initialized = false;
@@ -1515,7 +1516,7 @@ const DEFAULT_TENANT_SETTINGS = {
   chunkSize: 500,
   chunkOverlap: 50,
   hybridWeights: { semantic: 0.7, lexical: 0.3 },
-  defaultModel: 'gemini-3.7-flash',
+  defaultModel: DEFAULT_AI_MODELS.chatModel,
   dataRetentionDays: 90,
   enablePiiRedaction: true,
   enablePromptSanitizer: true,

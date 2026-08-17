@@ -1,5 +1,6 @@
 import { GoogleGenAI, GenerateContentParameters, GenerateContentResponse } from '@google/genai';
 import { randomInt } from '../crypto/webRandom';
+import { DEFAULT_AI_MODELS, DEFAULT_FALLBACK_MODELS } from '../config/aiModels';
 
 let aiClientInstance: GoogleGenAI | null = null;
 let cachedApiKey: string | null = null;
@@ -86,10 +87,14 @@ export async function generateContentWithResilience(
   const ai = getResilientAiClient();
   if (!ai) return null;
 
-  const primaryModel = options.model || 'gemini-3.7-flash';
-  const modelsToTry: string[] = [primaryModel, ...(options.fallbackModels || VALID_FALLBACK_MODELS)].filter(
-    (m, i, arr) => m && arr.indexOf(m) === i,
-  );
+  const primaryModel = options.model || DEFAULT_AI_MODELS.chatModel;
+  // When the caller passes an explicit fallback list, use it; otherwise fall
+  // back to the configured fallback chain (sourced from the request-bound
+  // model config when inside a runWithModelConfig block). Keep historical
+  // VALID_FALLBACK_MODELS as a last-resort superset for non-SDK routes that
+  // call generateContentWithResilience without any context.
+  const configuredFallback = options.fallbackModels || VALID_FALLBACK_MODELS;
+  const modelsToTry: string[] = [primaryModel, ...configuredFallback].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   const maxRetries = options.maxRetriesPerModel ?? 2;
   const initialDelay = options.initialDelayMs ?? 400;

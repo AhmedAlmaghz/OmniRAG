@@ -9,6 +9,7 @@ import { serverErrorResponse } from '@/lib/api/safeError';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
 import { TenantSettings } from '@/lib/types/omnirag';
 import { randomUUID } from 'crypto';
+import { DEFAULT_AI_MODELS } from '@/lib/config/aiModels';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +25,7 @@ const DEFAULT_TENANT_SETTINGS: TenantSettings = {
   chunkSize: 500,
   chunkOverlap: 50,
   hybridWeights: { semantic: 0.7, lexical: 0.3 },
-  defaultModel: 'gemini-3.7-flash',
+  defaultModel: DEFAULT_AI_MODELS.chatModel,
   dataRetentionDays: 90,
   enablePiiRedaction: true,
   enablePromptSanitizer: true,

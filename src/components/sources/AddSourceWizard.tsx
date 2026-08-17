@@ -7,8 +7,8 @@ import {
   FileText,
   Globe,
   Rss,
-  Youtube,
-  Github,
+  MonitorPlay,
+  FolderGit2,
   BookOpen,
   Folder,
   Layers,
@@ -77,18 +77,30 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
 
   const getIconComponent = (iconName: string) => {
     switch (iconName) {
-      case 'FileText': return <FileText className="w-5 h-5" />;
-      case 'Globe': return <Globe className="w-5 h-5" />;
-      case 'Rss': return <Rss className="w-5 h-5" />;
-      case 'Youtube': return <Youtube className="w-5 h-5" />;
-      case 'Github': return <Github className="w-5 h-5" />;
-      case 'BookOpen': return <BookOpen className="w-5 h-5" />;
-      case 'Folder': return <Folder className="w-5 h-5" />;
-      case 'Layers': return <Layers className="w-5 h-5" />;
-      case 'MessageSquare': return <MessageSquare className="w-5 h-5" />;
-      case 'Mail': return <Mail className="w-5 h-5" />;
-      case 'Database': return <Database className="w-5 h-5" />;
-      default: return <Code className="w-5 h-5" />;
+      case 'FileText':
+        return <FileText className="w-5 h-5" />;
+      case 'Globe':
+        return <Globe className="w-5 h-5" />;
+      case 'Rss':
+        return <Rss className="w-5 h-5" />;
+      case 'Youtube':
+        return <MonitorPlay className="w-5 h-5" />;
+      case 'Github':
+        return <FolderGit2 className="w-5 h-5" />;
+      case 'BookOpen':
+        return <BookOpen className="w-5 h-5" />;
+      case 'Folder':
+        return <Folder className="w-5 h-5" />;
+      case 'Layers':
+        return <Layers className="w-5 h-5" />;
+      case 'MessageSquare':
+        return <MessageSquare className="w-5 h-5" />;
+      case 'Mail':
+        return <Mail className="w-5 h-5" />;
+      case 'Database':
+        return <Database className="w-5 h-5" />;
+      default:
+        return <Code className="w-5 h-5" />;
     }
   };
 
@@ -166,12 +178,18 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     }
 
     setIsTesting(true);
-    setTestDiagnostics({ step: 1, logs: [lang === 'ar' ? 'جاري فحص الاتصال وتحديد النطاق (DNS Lookup)...' : 'Checking DNS & Endpoint latency...'] });
+    setTestDiagnostics({
+      step: 1,
+      logs: [lang === 'ar' ? 'جاري فحص الاتصال وتحديد النطاق (DNS Lookup)...' : 'Checking DNS & Endpoint latency...'],
+    });
 
     setTimeout(() => {
       setTestDiagnostics((prev) => ({
         step: 2,
-        logs: [...(prev?.logs || []), lang === 'ar' ? '✓ الاتصال بالمنفذ مستقر | استجابة 24ms' : '✓ Connection established | 24ms latency'],
+        logs: [
+          ...(prev?.logs || []),
+          lang === 'ar' ? '✓ الاتصال بالمنفذ مستقر | استجابة 24ms' : '✓ Connection established | 24ms latency',
+        ],
       }));
 
       setTimeout(() => {
@@ -179,8 +197,12 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
           step: 3,
           logs: [
             ...(prev?.logs || []),
-            lang === 'ar' ? '✓ تم التحقق من سلامة وصحة الرابط والتأكد من توفر البيانات' : '✓ Target endpoint & URL structure validated successfully',
-            lang === 'ar' ? '✓ تم جلب عينة بيانات أولية وقراءة هيكل المحتوى بنجاح 100%' : '✓ Sample payload extracted successfully (100% Schema match)',
+            lang === 'ar'
+              ? '✓ تم التحقق من سلامة وصحة الرابط والتأكد من توفر البيانات'
+              : '✓ Target endpoint & URL structure validated successfully',
+            lang === 'ar'
+              ? '✓ تم جلب عينة بيانات أولية وقراءة هيكل المحتوى بنجاح 100%'
+              : '✓ Sample payload extracted successfully (100% Schema match)',
           ],
           success: true,
         }));
@@ -246,7 +268,11 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
         <div>
           <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-indigo-600" />
-            <span>{lang === 'ar' ? 'معالج موصلات البيانات الذكي (Enterprise Connector Wizard)' : 'Enterprise Connector Wizard'}</span>
+            <span>
+              {lang === 'ar'
+                ? 'معالج موصلات البيانات الذكي (Enterprise Connector Wizard)'
+                : 'Enterprise Connector Wizard'}
+            </span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             {lang === 'ar'
@@ -509,7 +535,9 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 ) : (
                   <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
                 )}
-                <span>{lang === 'ar' ? 'اختبار جودة الاتصال والمصادقة (Live Health Check)' : 'Test Connection & Auth'}</span>
+                <span>
+                  {lang === 'ar' ? 'اختبار جودة الاتصال والمصادقة (Live Health Check)' : 'Test Connection & Auth'}
+                </span>
               </button>
 
               {testDiagnostics && (
@@ -521,7 +549,11 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                   {testDiagnostics.logs.map((log, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-[11px]">
                       <span className="text-slate-500">&gt;</span>
-                      <span className={idx === testDiagnostics.logs.length - 1 ? 'text-emerald-300 font-bold' : 'text-slate-300'}>
+                      <span
+                        className={
+                          idx === testDiagnostics.logs.length - 1 ? 'text-emerald-300 font-bold' : 'text-slate-300'
+                        }
+                      >
                         {log}
                       </span>
                     </div>
@@ -563,7 +595,9 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
               <div className="p-3 bg-white rounded-xl border border-slate-200">
-                <span className="text-[11px] text-slate-400 block">{lang === 'ar' ? 'اسم الموصل:' : 'Connector Name:'}</span>
+                <span className="text-[11px] text-slate-400 block">
+                  {lang === 'ar' ? 'اسم الموصل:' : 'Connector Name:'}
+                </span>
                 <span className="font-bold text-slate-900">{name}</span>
               </div>
               <div className="p-3 bg-white rounded-xl border border-slate-200">
@@ -571,11 +605,15 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 <span className="font-bold text-slate-900">{currentTypeMeta.nameAr}</span>
               </div>
               <div className="p-3 bg-white rounded-xl border border-slate-200">
-                <span className="text-[11px] text-slate-400 block">{lang === 'ar' ? 'جدولة المزامنة:' : 'Schedule:'}</span>
+                <span className="text-[11px] text-slate-400 block">
+                  {lang === 'ar' ? 'جدولة المزامنة:' : 'Schedule:'}
+                </span>
                 <span className="font-mono font-bold text-slate-900">{syncSchedule}</span>
               </div>
               <div className="p-3 bg-white rounded-xl border border-slate-200">
-                <span className="text-[11px] text-slate-400 block">{lang === 'ar' ? 'ضمان العزْل RLS:' : 'Tenant Security:'}</span>
+                <span className="text-[11px] text-slate-400 block">
+                  {lang === 'ar' ? 'ضمان العزْل RLS:' : 'Tenant Security:'}
+                </span>
                 <span className="font-bold text-emerald-600">Tenant Isolated ({tenantId})</span>
               </div>
             </div>

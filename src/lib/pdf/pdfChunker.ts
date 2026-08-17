@@ -1,5 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
+import { getAiModel, getFallbackModels } from '../config/aiModels';
 
 export interface PdfChunkInfo {
   chunkIndex: number;
@@ -25,7 +26,7 @@ export interface DocumentParseResult {
  */
 export async function slicePdfIntoChunks(
   pdfBuffer: Buffer,
-  pagesPerChunk: number = 25
+  pagesPerChunk: number = 25,
 ): Promise<{ totalPages: number; chunks: PdfChunkInfo[] }> {
   try {
     const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
@@ -43,7 +44,7 @@ export async function slicePdfIntoChunks(
       const subDoc = await PDFDocument.create();
       const pageIndices = Array.from({ length: end - i }, (_, idx) => i + idx);
       const copiedPages = await subDoc.copyPages(srcDoc, pageIndices);
-      
+
       copiedPages.forEach((page) => subDoc.addPage(page));
 
       const subPdfBytes = await subDoc.save();
@@ -86,7 +87,7 @@ export async function slicePdfIntoChunks(
  */
 export async function parsePdfChunkWithMistral(
   chunk: PdfChunkInfo,
-  apiKey?: string
+  apiKey?: string,
 ): Promise<{ text: string; pages: { pageNumber: number; text: string }[] } | null> {
   const token = apiKey || process.env.MISTRAL_API_KEY;
   if (!token) return null;
@@ -99,7 +100,7 @@ export async function parsePdfChunkWithMistral(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        model: 'mistral-ocr-latest',
+        model: getAiModel('ocrModel'),
         document: {
           type: 'document_url',
           document_url: `data:application/pdf;base64,${chunk.base64Data}`,
@@ -142,7 +143,7 @@ export async function parsePdfChunkWithMistral(
  */
 export async function parsePdfChunkWithUnstructured(
   chunk: PdfChunkInfo,
-  apiKey?: string
+  apiKey?: string,
 ): Promise<{ text: string } | null> {
   const token = apiKey || process.env.UNSTRUCTURED_API_KEY;
   const apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general';
@@ -169,7 +170,10 @@ export async function parsePdfChunkWithUnstructured(
 
     const elements = await res.json();
     if (Array.isArray(elements)) {
-      const extracted = elements.map((el: any) => el.text).filter(Boolean).join('\n\n');
+      const extracted = elements
+        .map((el: any) => el.text)
+        .filter(Boolean)
+        .join('\n\n');
       return { text: extracted };
     }
     return null;
@@ -182,14 +186,14 @@ export async function parsePdfChunkWithUnstructured(
 /**
  * Gemini Multimodal Document Parser
  */
-export async function parsePdfChunkWithGemini(
-  chunk: PdfChunkInfo,
-  model: string = 'gemini-3.7-flash'
-): Promise<{ text: string } | null> {
+export async function parsePdfChunkWithGemini(chunk: PdfChunkInfo, model?: string): Promise<{ text: string } | null> {
+  // Resolve the model: explicit per-call override > request-bound config
+  // (via AsyncLocalStorage set by parse/route.ts) > DEFAULT_AI_MODELS.
+  const resolvedModel = model || getAiModel('documentParseModel');
   try {
     const response = await generateContentWithResilience({
-      model: model || 'gemini-3.7-flash',
-      fallbackModels: ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.1-pro-preview'],
+      model: resolvedModel,
+      fallbackModels: getFallbackModels(),
       contents: [
         {
           inlineData: {
@@ -217,9 +221,7 @@ Maintain accurate Arabic text if present. Output ONLY the extracted text with cl
 /**
  * Native pdf-parse node module parser with stream text extraction fallback
  */
-export async function parsePdfChunkWithNativePdfParse(
-  chunk: PdfChunkInfo
-): Promise<{ text: string } | null> {
+export async function parsePdfChunkWithNativePdfParse(chunk: PdfChunkInfo): Promise<{ text: string } | null> {
   // 1. Primary: Try pdf-parse module (v2 class PDFParse or v1 function)
   try {
     const pdfModule = await import('pdf-parse');
@@ -237,9 +239,7 @@ export async function parsePdfChunkWithNativePdfParse(
       }
     } else {
       // pdf-parse v1
-      const parsePdfFunc = typeof pdfModule === 'function' 
-        ? pdfModule 
-        : (pdfModule as any).default || pdfModule;
+      const parsePdfFunc = typeof pdfModule === 'function' ? pdfModule : (pdfModule as any).default || pdfModule;
       if (typeof parsePdfFunc === 'function') {
         const parsedPdf = await parsePdfFunc(chunk.pdfBuffer);
         if (parsedPdf && parsedPdf.text) {
@@ -260,14 +260,17 @@ export async function parsePdfChunkWithNativePdfParse(
     const rawString = chunk.pdfBuffer.toString('latin1');
     const textMatches = rawString.match(/\(([^()]{2,})\)\s*T[jJ]/g) || [];
     const extractedWords: string[] = [];
-    
+
     for (const m of textMatches) {
-      const cleaned = m.replace(/^\(/, '').replace(/\)\s*T[jJ]$/, '').trim();
+      const cleaned = m
+        .replace(/^\(/, '')
+        .replace(/\)\s*T[jJ]$/, '')
+        .trim();
       if (cleaned.length >= 2 && !/^[\x00-\x1F]+$/.test(cleaned)) {
         extractedWords.push(cleaned);
       }
     }
-    
+
     if (extractedWords.length > 0) {
       return { text: extractedWords.join(' ') };
     }
@@ -289,35 +292,39 @@ export async function processPdfWithBatchedPipeline(
     pagesPerChunk?: number;
     mistralApiKey?: string;
     unstructuredApiKey?: string;
-  } = {}
+    model?: string;
+  } = {},
 ): Promise<DocumentParseResult> {
-  const {
-    preferredEngine = 'auto',
-    pagesPerChunk = 25,
-    mistralApiKey,
-    unstructuredApiKey,
-  } = options;
+  const { preferredEngine = 'auto', pagesPerChunk = 25, mistralApiKey, unstructuredApiKey, model } = options;
 
   // 1. Adaptive pages per chunk based on PDF file size to prevent 413 Request Entity Too Large errors
   let resolvedPagesPerChunk = pagesPerChunk;
   const fileMb = pdfBuffer.length / (1024 * 1024);
   if (fileMb > 15) {
     resolvedPagesPerChunk = Math.min(pagesPerChunk, 5); // 5 pages per chunk for huge files (>15MB)
-    console.log(`[Knowledge Pipeline] Huge PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 5 to avoid 413 errors.`);
+    console.log(
+      `[Knowledge Pipeline] Huge PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 5 to avoid 413 errors.`,
+    );
   } else if (fileMb > 5) {
     resolvedPagesPerChunk = Math.min(pagesPerChunk, 10); // 10 pages per chunk for medium-large files (>5MB)
-    console.log(`[Knowledge Pipeline] Medium-large PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 10 to avoid 413 errors.`);
+    console.log(
+      `[Knowledge Pipeline] Medium-large PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 10 to avoid 413 errors.`,
+    );
   }
 
   // 2. Slice PDF into optimized chunks
   const { totalPages, chunks } = await slicePdfIntoChunks(pdfBuffer, resolvedPagesPerChunk);
-  console.log(`[Knowledge Pipeline] Processing PDF (${totalPages} pages) sliced into ${chunks.length} sequential chunks (${resolvedPagesPerChunk} pages/chunk)...`);
+  console.log(
+    `[Knowledge Pipeline] Processing PDF (${totalPages} pages) sliced into ${chunks.length} sequential chunks (${resolvedPagesPerChunk} pages/chunk)...`,
+  );
 
   const accumulatedTexts: string[] = [];
   let primaryEngineUsed = 'native-pdf-parse';
 
   for (const chunk of chunks) {
-    console.log(`[Knowledge Pipeline] Ingesting Chunk ${chunk.chunkIndex}/${chunk.totalChunks} (Pages ${chunk.startPage} - ${chunk.endPage})...`);
+    console.log(
+      `[Knowledge Pipeline] Ingesting Chunk ${chunk.chunkIndex}/${chunk.totalChunks} (Pages ${chunk.startPage} - ${chunk.endPage})...`,
+    );
     let chunkText = '';
 
     // Step A: Fast native PDF extraction (instant, zero network, zero API quota)
@@ -333,7 +340,8 @@ export async function processPdfWithBatchedPipeline(
     if (
       !chunkText &&
       (preferredEngine === 'mistral' ||
-        ((preferredEngine === 'auto' || preferredEngine === 'unstructured') && (mistralApiKey || process.env.MISTRAL_API_KEY)))
+        ((preferredEngine === 'auto' || preferredEngine === 'unstructured') &&
+          (mistralApiKey || process.env.MISTRAL_API_KEY)))
     ) {
       const mistralRes = await parsePdfChunkWithMistral(chunk, mistralApiKey);
       if (mistralRes && mistralRes.text && mistralRes.text.trim().length > 0) {
@@ -346,7 +354,8 @@ export async function processPdfWithBatchedPipeline(
     if (
       !chunkText &&
       (preferredEngine === 'unstructured' ||
-        ((preferredEngine === 'auto' || preferredEngine === 'mistral') && (unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY)))
+        ((preferredEngine === 'auto' || preferredEngine === 'mistral') &&
+          (unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY)))
     ) {
       const unstructuredRes = await parsePdfChunkWithUnstructured(chunk, unstructuredApiKey);
       if (unstructuredRes && unstructuredRes.text && unstructuredRes.text.trim().length > 0) {
@@ -357,7 +366,7 @@ export async function processPdfWithBatchedPipeline(
 
     // Step D: Gemini Multimodal Document Parser (Vision / OCR for scanned PDFs)
     if (!chunkText) {
-      const geminiRes = await parsePdfChunkWithGemini(chunk);
+      const geminiRes = await parsePdfChunkWithGemini(chunk, model);
       if (geminiRes && geminiRes.text && geminiRes.text.trim().length > 0) {
         chunkText = geminiRes.text.trim();
         primaryEngineUsed = 'Gemini Multimodal AI';

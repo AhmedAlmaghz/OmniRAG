@@ -2,23 +2,35 @@ import pkg from '../../../package.json';
 
 /**
  * System-wide Configuration Constants for OmniRAG
+ *
+ * IMPORTANT: do NOT import AIModelConfig here. `aiModels.ts` pulls
+ * `node:async_hooks`, which is Node-only; this file is bundled into client code
+ * for `APP_VERSION`, so adding that import would push an external Node module
+ * into the browser chunk and break the Turbopack build. AI model names live
+ * exclusively in `DEFAULT_AI_MODELS` (read server-side) — source them there.
  */
 
 export const APP_VERSION = pkg.version || '0.2.0';
 
 export const SYSTEM_CONFIG = {
   DEFAULT_TENANT_ID: 'tenant-acme-01',
-  DEFAULT_MODEL: 'gemini-3.7-flash',
-  
+
   // Search and RAG Configuration
   RAG: {
-    DEFAULT_TOP_K: 5,
+    // Retrieval merges ALL chunks above the similarity floor; there is no
+    // fixed topK cap. ENGINE_OVERFETCH_FETCH_FACTOR controls how many
+    // candidates each backend returns before fusion/reranking — 3x keeps the
+    // recall high while bounding the Qdrant/Postgres round-trip cost.
+    ENGINE_OVERFETCH_FACTOR: 3,
     RRF_CONSTANT_K: 60, // Reciprocal Rank Fusion constant
     HYBRID_WEIGHTS: {
       SEMANTIC: 0.7,
       LEXICAL: 0.3,
     },
     MIN_SIMILARITY_SCORE: 0.15,
+    // Defensive soft cap before assembling the model context. Sized for
+    // ~8k-token chunks; raise per-tenant if long documents dominate.
+    CONTEXT_CHUNK_CAP: 30,
   },
 
   // Security & Rate Limiting
@@ -35,12 +47,6 @@ export const SYSTEM_CONFIG = {
     DEFAULT_CHUNK_SIZE: 500,
     DEFAULT_CHUNK_OVERLAP: 50,
     MAX_FILE_SIZE_MB: 25,
-    SUPPORTED_MIME_TYPES: [
-      'text/plain',
-      'text/markdown',
-      'application/pdf',
-      'application/json',
-      'text/csv',
-    ],
+    SUPPORTED_MIME_TYPES: ['text/plain', 'text/markdown', 'application/pdf', 'application/json', 'text/csv'],
   },
 } as const;

@@ -29,7 +29,7 @@ import {
   BarChart2,
   ListPlus,
   Clock,
-  Youtube,
+  MonitorPlay,
   Database,
   Plus,
 } from 'lucide-react';
@@ -1164,7 +1164,7 @@ export function DocumentIngestionStudio({
               inputTab === 'youtube' ? 'bg-white text-rose-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Youtube className="w-3.5 h-3.5 text-rose-600" />
+            <MonitorPlay className="w-3.5 h-3.5 text-rose-600" />
             <span>{lang === 'ar' ? 'فيديو يوتيوب' : 'YouTube Video'}</span>
           </button>
 
@@ -1363,7 +1363,7 @@ export function DocumentIngestionStudio({
           <div className="p-6 bg-slate-50/80 rounded-3xl border border-rose-100/80 space-y-4">
             <div className="flex items-center gap-2">
               <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center">
-                <Youtube className="w-5 h-5" />
+                <MonitorPlay className="w-5 h-5" />
               </div>
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900">

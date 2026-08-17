@@ -1,6 +1,7 @@
 'use client';
 
 import { APP_VERSION } from '@/lib/config/systemConfig';
+import { getAiModelConfig } from '@/lib/config/aiModels';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -96,7 +97,7 @@ Supported rich formatting capabilities:
 - 🎬 **Embedded Media:** Direct playback for photos, video clips, and audio tracks.
 - 🔊 **Text-To-Speech (TTS), Font Sizing, and Markdown Exports.**`,
       createdAt: new Date().toISOString(),
-      modelUsed: 'gemini-3.7-flash',
+      modelUsed: getAiModelConfig().chatStreamModel,
     },
   ]);
 
@@ -432,7 +433,7 @@ Supported rich formatting capabilities:
             ? 'تمت إعادة ضبط المحادثة. كيف يمكنني مساعدتك اليوم؟'
             : 'Conversation reset. How can I assist you today?',
         createdAt: new Date().toISOString(),
-        modelUsed: 'gemini-3.7-flash',
+        modelUsed: getAiModelConfig().chatStreamModel,
       },
     ]);
     setActiveCitation(null);
