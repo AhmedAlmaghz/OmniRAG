@@ -589,8 +589,8 @@ Supported features:
   const activeConv = conversations.find((c) => c.id === activeConversationId);
 
   return (
-    <div className="flex h-[calc(100vh-170px)] min-h-[600px] w-full overflow-hidden">
-      {/* Conversation Sidebar */}
+    <div className="flex h-full w-full overflow-hidden">
+      {/* Conversation Sidebar — inline collapsible (fills its own column, not an overlay) */}
       <ChatSidebar
         conversations={conversations}
         activeConversationId={activeConversationId}
@@ -610,15 +610,11 @@ Supported features:
         onRenameConversation={handleRenameConversation}
       />
 
-      {/* Main chat area — flex-1 to fill, with right padding when sidebar open on desktop */}
-      <div
-        className={`flex flex-col flex-1 min-w-0 transition-all duration-300 ${
-          isSidebarOpen ? 'lg:ml-[300px] lg:rtl:ml-0 lg:rtl:mr-[300px]' : ''
-        }`}
-      >
-        <div className={`flex flex-row gap-4 h-full ${showRightInspector ? '' : ''}`}>
-          {/* Chat Surface */}
-          <div className="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-col overflow-hidden">
+      {/* Main chat column — flex-1 fills the remaining width */}
+      <div className="flex flex-col flex-1 min-w-0 h-full">
+        <div className="flex flex-row gap-0 h-full min-h-0">
+          {/* Chat Surface — primary workspace, fills available width */}
+          <div className="flex-1 min-w-0 bg-white border-x border-slate-200/80 shadow-xs flex flex-col overflow-hidden relative">
             <ChatMain
               lang={lang}
               messages={messages}
@@ -644,6 +640,8 @@ Supported features:
               onOpenSourcesModal={() => setShowSourcesModal(true)}
               onClearCollections={handleClearAllCollections}
               activeTitle={activeConv?.title}
+              sidebarOpen={isSidebarOpen}
+              onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
             />
 
             {/* Sources Modal (overlay inside the chat surface) */}
@@ -740,7 +738,7 @@ Supported features:
 
           {/* Right Inspector Sidebar (MCP, Citations, Logs) — only when relevant */}
           {showRightInspector && (
-            <div className="hidden xl:flex w-72 bg-slate-50 rounded-2xl border border-slate-200/80 p-4 flex-col overflow-hidden shadow-2xs shrink-0">
+            <div className="hidden xl:flex w-72 bg-slate-50 border-l border-slate-200/80 p-4 flex-col overflow-hidden shrink-0">
               <div className="flex flex-col h-full overflow-hidden">
                 {/* Tabs */}
                 <div className="flex border-b border-slate-200 gap-1 mb-4">

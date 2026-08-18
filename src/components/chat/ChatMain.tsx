@@ -12,6 +12,7 @@ import {
   XCircle,
   Download,
   FolderKanban,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { Message, ChatMode, Citation, MCPToolCall } from '@/lib/types/omnirag';
 import { ChatMessage } from '@/components/chat/ChatMessage';
@@ -39,6 +40,8 @@ interface ChatMainProps {
   onOpenSourcesModal: () => void;
   onClearCollections: () => void;
   activeTitle?: string;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 const modeIcon = (m: ChatMode) => {
@@ -86,6 +89,8 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   onOpenSourcesModal,
   onClearCollections,
   activeTitle,
+  sidebarOpen = true,
+  onToggleSidebar,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -119,6 +124,20 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       {/* Compact Toolbar */}
       <div className="p-2 border-b border-slate-200 bg-white/80 backdrop-blur-sm flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
+          {/* Sidebar toggle — visible when the history column is collapsed */}
+          {onToggleSidebar && (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className={`p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-indigo-600 transition-all duration-200 cursor-pointer shrink-0 ${
+                sidebarOpen ? 'opacity-0 pointer-events-none w-0 p-0 overflow-hidden border-0' : 'opacity-100'
+              }`}
+              title={lang === 'ar' ? 'فتح سجل المحادثات' : 'Open history'}
+              aria-hidden={sidebarOpen}
+            >
+              <PanelLeftOpen className={`w-4 h-4 ${lang === 'ar' ? 'rtl:-scale-x-100' : ''}`} />
+            </button>
+          )}
           {activeTitle && <span className="text-xs font-bold text-slate-700 truncate px-2">{activeTitle}</span>}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">

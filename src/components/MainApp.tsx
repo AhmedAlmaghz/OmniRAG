@@ -22,7 +22,7 @@ export default function MainApp() {
   const [tenantId, setTenantId] = useState('');
   const [currentTenantName, setCurrentTenantName] = useState<string>('');
   const [lang, setLang] = useState<'ar' | 'en'>('ar');
-  const [activeTab, setActiveTab] = useState<TabType>('landing');
+  const [activeTab, setActiveTab] = useState<TabType>('chat');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -270,7 +270,7 @@ export default function MainApp() {
 
   return (
     <div
-      className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-950 text-slate-100 dark' : 'bg-slate-50 text-slate-900'}`}
+      className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-950 text-slate-100 dark' : 'bg-slate-50 text-slate-900'} ${activeTab === 'chat' ? 'h-screen' : ''}`}
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
     >
       {/* Top Main Navigation Header with integrated links */}
@@ -288,37 +288,53 @@ export default function MainApp() {
         onThemeChange={handleThemeChange}
       />
 
-      {/* Workspace Active Tab View Content */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {activeTab === 'chat' && <ChatStudio tenantId={tenantId} lang={lang} onNavigateTab={handleTabChange} />}
-        {activeTab === 'knowledge' && <KnowledgeBase tenantId={tenantId} lang={lang} />}
-        {activeTab === 'mcp' && <McpGateway tenantId={tenantId} lang={lang} />}
-        {activeTab === 'analytics' && <AnalyticsCenter tenantId={tenantId} lang={lang} />}
-        {activeTab === 'settings' && (
-          <SettingsView tenantId={tenantId} lang={lang} userEmail={userEmail} onLogOut={handleLogOut} />
+      {/* Workspace Active Tab View Content
+          Chat is the primary workspace and fills the full viewport width.
+          Other tabs keep the centered max-width container for their content. */}
+      <main className="flex-1 w-full min-h-0">
+        {activeTab === 'chat' && (
+          <div className="w-full h-full">
+            <ChatStudio tenantId={tenantId} lang={lang} onNavigateTab={handleTabChange} />
+          </div>
+        )}
+        {(activeTab === 'knowledge' ||
+          activeTab === 'mcp' ||
+          activeTab === 'analytics' ||
+          activeTab === 'settings') && (
+          <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            {activeTab === 'knowledge' && <KnowledgeBase tenantId={tenantId} lang={lang} />}
+            {activeTab === 'mcp' && <McpGateway tenantId={tenantId} lang={lang} />}
+            {activeTab === 'analytics' && <AnalyticsCenter tenantId={tenantId} lang={lang} />}
+            {activeTab === 'settings' && (
+              <SettingsView tenantId={tenantId} lang={lang} userEmail={userEmail} onLogOut={handleLogOut} />
+            )}
+          </div>
         )}
       </main>
 
-      {/* Footer */}
-      <footer
-        className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-900 border-t border-slate-800' : 'bg-white border-t border-slate-200'}`}
-      >
-        <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
-          <span>
-            POWERED BY{' '}
-            <a
-              href="https://github.com/ahmedAlmaghz/omnirag"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-bold text-indigo-600 hover:text-indigo-800 underline transition"
-            >
-              ENG. AHMED ALMAGHZ
-            </a>{' '}
-            - 2026 - v{APP_VERSION}
-          </span>
-          <span>OmniRAG Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
-        </div>
-      </footer>
+      {/* Footer — hidden when chat is active so the chat surface fills the
+          available height between the header and the bottom of the viewport. */}
+      {activeTab !== 'chat' && (
+        <footer
+          className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-900 border-t border-slate-800' : 'bg-white border-t border-slate-200'}`}
+        >
+          <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              POWERED BY{' '}
+              <a
+                href="https://github.com/ahmedAlmaghz/omnirag"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold text-indigo-600 hover:text-indigo-800 underline transition"
+              >
+                ENG. AHMED ALMAGHZ
+              </a>{' '}
+              - 2026 - v{APP_VERSION}
+            </span>
+            <span>OmniRAG Platform — Enterprise Agentic RAG & MCP Security Gateway</span>
+          </div>
+        </footer>
+      )}
     </div>
   );
 }
