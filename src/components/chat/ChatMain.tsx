@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Send,
   Sparkles,
@@ -13,6 +13,9 @@ import {
   Download,
   FolderKanban,
   PanelLeftOpen,
+  Maximize2,
+  Minimize2,
+  ArrowDown,
 } from 'lucide-react';
 import { Message, ChatMode, Citation, MCPToolCall } from '@/lib/types/omnirag';
 import { ChatMessage } from '@/components/chat/ChatMessage';
@@ -42,6 +45,8 @@ interface ChatMainProps {
   activeTitle?: string;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 const modeIcon = (m: ChatMode) => {
@@ -91,18 +96,39 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   activeTitle,
   sidebarOpen = true,
   onToggleSidebar,
+  isFullscreen = false,
+  onToggleFullscreen,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  // Track whether the user is near the bottom so we only auto-scroll when they
+  // are following the conversation (not reading history further up).
+  const isNearBottomRef = useRef(true);
 
-  // Auto-scroll to bottom on new messages
+  // Smart auto-scroll: only when the user is already near the bottom.
   useEffect(() => {
-    if (messagesEndRef.current) {
+    if (isNearBottomRef.current && messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [messages, isLoading, pendingToolApproval]);
+
+  // Show the jump-to-bottom button when scrolled up.
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 120;
+    setShowJumpToBottom(distanceFromBottom > 240);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    isNearBottomRef.current = true;
+    setShowJumpToBottom(false);
+  }, []);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -120,7 +146,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-slate-50/30" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div className="flex flex-col h-full overflow-hidden bg-slate-50/30 relative" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       {/* Compact Toolbar */}
       <div className="p-2 border-b border-slate-200 bg-white/80 backdrop-blur-sm flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -169,6 +195,26 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           >
             <Download className="w-4 h-4" />
           </button>
+
+          {/* Fullscreen Toggle */}
+          {onToggleFullscreen && (
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-indigo-600 transition cursor-pointer flex items-center justify-center"
+              title={
+                isFullscreen
+                  ? lang === 'ar'
+                    ? 'الخروج من ملء الشاشة (Esc)'
+                    : 'Exit Fullscreen (Esc)'
+                  : lang === 'ar'
+                    ? 'ملء الشاشة'
+                    : 'Fullscreen'
+              }
+            >
+              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -188,7 +234,11 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       )}
 
       {/* Messages Stream */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-5 lazy-scroll">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-5 lazy-scroll"
+      >
         {messages.map((msg) => (
           <ChatMessage
             key={msg.id}
@@ -277,6 +327,18 @@ export const ChatMain: React.FC<ChatMainProps> = ({
 
         <div ref={messagesEndRef} className="h-2" />
       </div>
+
+      {/* Jump-to-bottom button — appears when scrolled up */}
+      {showJumpToBottom && (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          className="absolute bottom-40 left-1/2 -translate-x-1/2 z-10 w-9 h-9 rounded-full bg-white border border-slate-200 shadow-lg hover:bg-indigo-50 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all cursor-pointer animate-fadeIn"
+          title={lang === 'ar' ? 'الانتقال إلى الأسفل' : 'Jump to bottom'}
+        >
+          <ArrowDown className="w-4 h-4" />
+        </button>
+      )}
 
       {/* Follow-up Suggestions Bar */}
       {suggestions.length > 0 && !isLoading && (

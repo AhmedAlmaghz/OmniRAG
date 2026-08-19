@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { FileText, ExternalLink, X } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { FileText, ExternalLink, X, Link2 } from 'lucide-react';
 import { Citation } from '@/lib/types/omnirag';
 
 interface CitationInlineProps {
@@ -9,11 +9,30 @@ interface CitationInlineProps {
   citation?: Citation;
   lang?: 'ar' | 'en';
   onViewInKnowledge?: () => void;
+  /** Optional inspector sync — called when the details popover opens. */
+  onCitationClick?: (citation: Citation) => void;
 }
 
-export const CitationInline: React.FC<CitationInlineProps> = ({ index, citation, lang = 'ar', onViewInKnowledge }) => {
+/** In-app deep links (e.g. `/?tab=knowledge&doc=...`) should navigate client-side. */
+const isInAppLink = (url?: string) => !!url && url.startsWith('/');
+
+/**
+ * Inline superscript citation badge. The number itself is a link to the source:
+ * - External `sourceUrl` → opens the original page in a new tab.
+ * - In-app deep link → switches to the Knowledge Base tab client-side.
+ * - No citation data → falls back to the inspector popover.
+ * Hovering/focusing the badge previews the source details in a popover.
+ */
+export const CitationInline: React.FC<CitationInlineProps> = ({
+  index,
+  citation,
+  lang = 'ar',
+  onViewInKnowledge,
+  onCitationClick,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -27,24 +46,86 @@ export const CitationInline: React.FC<CitationInlineProps> = ({ index, citation,
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    };
+  }, []);
+
+  const sourceUrl = citation?.sourceUrl;
+  const external = sourceUrl && !isInAppLink(sourceUrl);
+  const tooltip = citation
+    ? `${citation.documentTitle}${sourceUrl && external ? ` — ${sourceUrl}` : ''}`
+    : `${lang === 'ar' ? 'مصدر' : 'Source'} ${index}`;
+
+  const showPopover = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => {
+      setIsOpen(true);
+      if (citation) onCitationClick?.(citation);
+    }, 250);
+  }, [citation, onCitationClick]);
+
+  const hidePopover = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setIsOpen(false), 200);
+  }, []);
+
+  /** Navigate to the source: external links open a new tab, in-app links switch tabs. */
+  const goToSource = useCallback(
+    (e: React.MouseEvent) => {
+      if (!sourceUrl) {
+        // No URL at all — toggle the details popover instead.
+        e.preventDefault();
+        setIsOpen((v) => {
+          const next = !v;
+          if (next && citation) onCitationClick?.(citation);
+          return next;
+        });
+        return;
+      }
+      if (isInAppLink(sourceUrl)) {
+        e.preventDefault();
+        setIsOpen(false);
+        onViewInKnowledge?.();
+      }
+      // External URLs fall through to the anchor's default target=_blank behavior.
+    },
+    [sourceUrl, onViewInKnowledge, onCitationClick, citation],
+  );
+
+  const badgeClasses =
+    'inline-flex items-center justify-center w-5 h-5 min-w-[20px] rounded-full bg-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 text-[11px] font-bold transition-all duration-200 hover:scale-110 hover:shadow-sm align-super mx-0.5 cursor-pointer no-underline';
+
   return (
-    <span className="relative inline-flex items-center" ref={popoverRef}>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen(!isOpen);
-        }}
-        className="inline-flex items-center justify-center w-5 h-5 min-w-[20px] rounded-full bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-[11px] font-bold transition-all duration-200 cursor-pointer hover:scale-110 hover:shadow-sm align-super mx-0.5"
-        title={citation ? citation.documentTitle : `${lang === 'ar' ? 'مصدر' : 'Source'} ${index}`}
+    <span
+      className="relative inline-flex items-center"
+      ref={popoverRef}
+      onMouseEnter={showPopover}
+      onMouseLeave={hidePopover}
+    >
+      <a
+        href={sourceUrl || `#citation-${index}`}
+        target={external ? '_blank' : undefined}
+        rel={external ? 'noopener noreferrer' : undefined}
+        onClick={goToSource}
+        onFocus={showPopover}
+        onBlur={hidePopover}
+        className={badgeClasses}
+        title={tooltip}
+        aria-label={tooltip}
       >
         {index}
-      </button>
+      </a>
 
       {isOpen && citation && (
         <div
           className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 sm:w-96 bg-white rounded-xl border border-slate-200 shadow-xl overflow-hidden animate-citation-pop"
           dir={lang === 'ar' ? 'rtl' : 'ltr'}
+          onMouseEnter={() => {
+            if (hoverTimer.current) clearTimeout(hoverTimer.current);
+          }}
+          onMouseLeave={hidePopover}
         >
           <div className="bg-gradient-to-l from-indigo-600 to-indigo-700 px-4 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -95,20 +176,48 @@ export const CitationInline: React.FC<CitationInlineProps> = ({ index, citation,
               </p>
             </div>
 
-            {onViewInKnowledge && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onViewInKnowledge();
-                  setIsOpen(false);
-                }}
-                className="w-full py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition cursor-pointer border border-indigo-200/80"
-              >
-                <ExternalLink className="w-3 h-3" />
-                <span>{lang === 'ar' ? 'عرض في مستودع المعرفة' : 'View in Knowledge Base'}</span>
-              </button>
-            )}
+            <div className="flex flex-col gap-1.5">
+              {sourceUrl &&
+                (external ? (
+                  <a
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition cursor-pointer"
+                  >
+                    <Link2 className="w-3 h-3" />
+                    <span>{lang === 'ar' ? 'فتح المصدر الأصلي' : 'Open Original Source'}</span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsOpen(false);
+                      onViewInKnowledge?.();
+                    }}
+                    className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition cursor-pointer"
+                  >
+                    <Link2 className="w-3 h-3" />
+                    <span>{lang === 'ar' ? 'فتح المستند في قاعدة المعرفة' : 'Open Document in Knowledge Base'}</span>
+                  </button>
+                ))}
+              {onViewInKnowledge && external && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onViewInKnowledge();
+                    setIsOpen(false);
+                  }}
+                  className="w-full py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition cursor-pointer border border-indigo-200/80"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>{lang === 'ar' ? 'عرض في مستودع المعرفة' : 'View in Knowledge Base'}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

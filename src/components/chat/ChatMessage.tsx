@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { Bot, User, Cpu } from 'lucide-react';
 import { Message, Citation } from '@/lib/types/omnirag';
 import { RichMessageRenderer } from '@/components/chat/RichMessageRenderer';
@@ -13,8 +13,32 @@ interface ChatMessageProps {
   onViewInKnowledge?: () => void;
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message, lang, onCitationClick, onViewInKnowledge }) => {
+/**
+ * Dynamic bubble width. Widths are expressed as `min(percent, cap)` where the
+ * percentage is relative to the chat panel container, so the bubble grows and
+ * shrinks live as the user drags the panel resize handle or toggles fullscreen.
+ * Rich content (code blocks, tables, diagrams) always gets the wide tier so it
+ * has room to breathe.
+ */
+function pickBubbleWidth(content: string): string {
+  const hasRichContent =
+    /```/.test(content) || /\|.*\|/.test(content) || /\$\$/.test(content) || /mermaid/i.test(content);
+  if (hasRichContent) return 'max-w-[min(94%,900px)]';
+
+  const stripped = content.replace(/```[\s\S]*?```/g, '').trim();
+  if (stripped.length < 40) return 'max-w-[min(45%,340px)]';
+  if (stripped.length < 120) return 'max-w-[min(62%,500px)]';
+  if (stripped.length < 400) return 'max-w-[min(80%,680px)]';
+  return 'max-w-[min(92%,860px)]';
+}
+
+const ChatMessageInner: React.FC<ChatMessageProps> = ({ message, lang, onCitationClick, onViewInKnowledge }) => {
   const isAssistant = message.role === 'assistant';
+
+  const bubbleWidth = useMemo(
+    () => (isAssistant ? pickBubbleWidth(message.content) : 'max-w-[min(85%,640px)]'),
+    [isAssistant, message.content],
+  );
 
   return (
     <div className={`flex gap-3 group animate-message-appear ${isAssistant ? 'justify-start' : 'justify-end'}`}>
@@ -25,7 +49,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, lang, onCitat
       )}
 
       <div
-        className={`max-w-[85%] sm:max-w-[75%] rounded-2xl p-4 text-sm leading-relaxed transition-all duration-200 ${
+        className={`${bubbleWidth} min-w-0 rounded-2xl p-4 text-sm leading-relaxed transition-all duration-200 ${
           isAssistant
             ? 'bg-white border border-slate-200/80 text-slate-800 shadow-sm hover:shadow-md'
             : 'bg-gradient-to-br from-indigo-600 to-indigo-700 text-white font-medium shadow-md hover:shadow-lg'
@@ -40,7 +64,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, lang, onCitat
           onViewInKnowledge={onViewInKnowledge}
         />
 
-        {/* Citations Panel: show max 2, rest in dropdown */}
+        {/* Citations Panel: show max 3, rest in dropdown */}
         {isAssistant && message.citations && message.citations.length > 0 && (
           <CitationsPanel
             citations={message.citations}
@@ -70,3 +94,22 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, lang, onCitat
     </div>
   );
 };
+
+/**
+ * Memoized so messages that haven't changed don't re-render when, e.g., the
+ * chat scroll position or sidebar toggle updates parent state.
+ */
+export const ChatMessage = memo(ChatMessageInner, (prev, next) => {
+  return (
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.message.role === next.message.role &&
+    prev.message.citations === next.message.citations &&
+    prev.message.modelUsed === next.message.modelUsed &&
+    prev.message.tokensUsed?.input === next.message.tokensUsed?.input &&
+    prev.message.tokensUsed?.output === next.message.tokensUsed?.output &&
+    prev.lang === next.lang &&
+    prev.onCitationClick === next.onCitationClick &&
+    prev.onViewInKnowledge === next.onViewInKnowledge
+  );
+});

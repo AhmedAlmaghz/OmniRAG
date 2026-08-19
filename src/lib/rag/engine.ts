@@ -587,6 +587,20 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 }
 
 /**
+ * Derives a clickable source URL for a citation:
+ * - An external URL when the chunk metadata carries one (web/RSS/YouTube/GitHub sources).
+ * - Otherwise an in-app deep link to the document in the Knowledge Base tab.
+ */
+function getCitationSourceUrl(chunk: DocumentChunk): string {
+  const metaUrl =
+    chunk.metadata?.sourceUrl || chunk.metadata?.url || chunk.metadata?.originalUrl || chunk.metadata?.source?.url;
+  if (typeof metaUrl === 'string' && /^https?:\/\//i.test(metaUrl)) {
+    return metaUrl;
+  }
+  return `/?tab=knowledge&doc=${encodeURIComponent(chunk.documentId)}`;
+}
+
+/**
  * Generates an Agentic RAG Completion with Citations & MCP context using Gemini
  * Supports conversation memory (short-term context) and AI-powered follow-up suggestions.
  */
@@ -787,6 +801,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             pageNumber: chunk.pageNumber,
             score: chunk.score || 0.85,
             snippet: chunk.content.substring(0, 120) + '...',
+            sourceUrl: getCitationSourceUrl(chunk),
           }));
 
           return {
@@ -822,6 +837,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         pageNumber: chunk.pageNumber,
         score: chunk.score || 0.85,
         snippet: chunk.content.substring(0, 120) + '...',
+        sourceUrl: getCitationSourceUrl(chunk),
       }));
 
       // AI-powered contextual follow-up suggestions
@@ -873,6 +889,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
     pageNumber: chunk.pageNumber,
     score: chunk.score || 0.85,
     snippet: chunk.content.substring(0, 120) + '...',
+    sourceUrl: getCitationSourceUrl(chunk),
   }));
 
   return {

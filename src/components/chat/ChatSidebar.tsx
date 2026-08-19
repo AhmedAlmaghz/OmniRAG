@@ -84,9 +84,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
 
   return (
     <aside
-      className={`flex flex-col h-full bg-slate-50 border-slate-200 overflow-hidden transition-all duration-300 ease-in-out shrink-0 ${
-        isOpen ? 'w-[300px] opacity-100' : 'w-0 opacity-0'
-      } ${isRtl ? 'border-l' : 'border-r'}`}
+      className={`flex flex-col h-full bg-slate-50 border-slate-200 overflow-hidden w-full ${isRtl ? 'border-l' : 'border-r'}`}
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
       aria-hidden={!isOpen}
     >

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -10,23 +10,25 @@ import {
   Check,
   Volume2,
   VolumeX,
-  Languages,
   Calculator,
   Download,
   ExternalLink,
-  Play,
-  Pause,
   Image as ImageIcon,
   Video as VideoIcon,
   Music as MusicIcon,
   Maximize2,
   FileText,
-  Sparkles,
-  RefreshCw,
-  Code2,
+  Info,
+  Lightbulb,
+  ShieldAlert,
+  TriangleAlert,
+  OctagonAlert,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { CodeBlock } from '@/components/ui/CodeBlock';
-import { convertTeXToArabicMath, containsMathExpressions, convertNumeralsToArabic } from '@/lib/utils/arabicMath';
+import { convertTeXToArabicMath, containsMathExpressions } from '@/lib/utils/arabicMath';
 import { CitationInline } from '@/components/chat/CitationInline';
 import { Citation } from '@/lib/types/omnirag';
 
@@ -34,10 +36,264 @@ interface RichMessageRendererProps {
   content: string;
   role: 'user' | 'assistant' | 'system';
   lang?: 'ar' | 'en';
-  onCitationClick?: (citation: any) => void;
+  onCitationClick?: (citation: Citation) => void;
   citations?: Citation[];
   onViewInKnowledge?: () => void;
 }
+
+/* ------------------------------------------------------------------ */
+/* Small utilities                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Recursively extract plain text from a React node tree. */
+function extractText(node: React.ReactNode): string {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  if (React.isValidElement(node)) return extractText((node.props as any)?.children);
+  return '';
+}
+
+type AlertType = 'NOTE' | 'TIP' | 'IMPORTANT' | 'WARNING' | 'CAUTION';
+
+function matchAlertType(text: string): AlertType | null {
+  const m = text.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i);
+  return m ? (m[1].toUpperCase() as AlertType) : null;
+}
+
+const ALERT_META: Record<
+  AlertType,
+  { icon: React.ComponentType<{ className?: string }>; label: { ar: string; en: string }; cls: string; iconCls: string }
+> = {
+  NOTE: {
+    icon: Info,
+    label: { ar: 'ملاحظة', en: 'Note' },
+    cls: 'border-blue-200 bg-blue-50/70 text-blue-950',
+    iconCls: 'text-blue-600',
+  },
+  TIP: {
+    icon: Lightbulb,
+    label: { ar: 'تلميح', en: 'Tip' },
+    cls: 'border-emerald-200 bg-emerald-50/70 text-emerald-950',
+    iconCls: 'text-emerald-600',
+  },
+  IMPORTANT: {
+    icon: ShieldAlert,
+    label: { ar: 'مهم', en: 'Important' },
+    cls: 'border-indigo-200 bg-indigo-50/70 text-indigo-950',
+    iconCls: 'text-indigo-600',
+  },
+  WARNING: {
+    icon: TriangleAlert,
+    label: { ar: 'تنبيه', en: 'Warning' },
+    cls: 'border-amber-300 bg-amber-50/80 text-amber-950',
+    iconCls: 'text-amber-600',
+  },
+  CAUTION: {
+    icon: OctagonAlert,
+    label: { ar: 'تحذير', en: 'Caution' },
+    cls: 'border-rose-300 bg-rose-50/80 text-rose-950',
+    iconCls: 'text-rose-600',
+  },
+};
+
+/** Remove a leading `[!TYPE]` marker from the first string child of an element. */
+function stripAlertMarker(el: React.ReactElement): React.ReactElement {
+  const kids = React.Children.toArray((el.props as any).children);
+  let done = false;
+  const next = kids.map((k) => {
+    if (!done && typeof k === 'string') {
+      const replaced = k.replace(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i, '');
+      if (replaced !== k) done = true;
+      return replaced;
+    }
+    return k;
+  });
+  return React.cloneElement(el, {}, ...next);
+}
+
+/* ------------------------------------------------------------------ */
+/* Mermaid diagram (lazy-loaded)                                       */
+/* ------------------------------------------------------------------ */
+
+const MermaidBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lang }) => {
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'default',
+          securityLevel: 'strict',
+          fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-arabic') || 'sans-serif',
+        });
+        const id = `mermaid-${Math.random().toString(36).slice(2)}`;
+        const { svg } = await mermaid.render(id, code);
+        if (!cancelled) setSvg(svg);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || 'mermaid render failed');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  if (error) {
+    return (
+      <div className="my-3 rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-xs text-rose-700">
+        <div className="flex items-center gap-1.5 font-bold mb-1">
+          <FileText className="w-3.5 h-3.5" />
+          {lang === 'ar' ? 'خطأ في مخطط Mermaid' : 'Mermaid render error'}
+        </div>
+        <pre className="text-[11px] font-mono whitespace-pre-wrap">{error}</pre>
+      </div>
+    );
+  }
+
+  if (!svg) {
+    return (
+      <div className="my-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-500 animate-pulse">
+        {lang === 'ar' ? 'جاري عرض المخطط...' : 'Rendering diagram...'}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="my-3 rounded-xl border border-slate-200 bg-white p-3 overflow-x-auto shadow-xs mermaid-container"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/* Sortable table                                                      */
+/* ------------------------------------------------------------------ */
+
+const SortableTable: React.FC<{ children: React.ReactNode; lang: 'ar' | 'en' }> = memo(({ children, lang }) => {
+  const [sort, setSort] = useState<{ col: number; dir: 1 | -1 } | null>(null);
+
+  const parsed = useMemo(() => {
+    const kids = React.Children.toArray(children).filter(React.isValidElement) as React.ReactElement[];
+    const thead = kids.find((k) => (k as any).type === 'thead');
+    const tbody = kids.find((k) => (k as any).type === 'tbody');
+
+    let headerCells: React.ReactNode[] = [];
+    if (thead) {
+      const tr = React.Children.toArray((thead.props as any).children).filter(React.isValidElement)[0] as
+        React.ReactElement | undefined;
+      if (tr) {
+        headerCells = React.Children.toArray((tr.props as any).children)
+          .filter(React.isValidElement)
+          .map((th) => (th as React.ReactElement<any>).props.children);
+      }
+    }
+
+    const rows: React.ReactElement[] = tbody
+      ? (React.Children.toArray((tbody.props as any).children).filter(React.isValidElement) as React.ReactElement[])
+      : [];
+
+    return { headerCells, rows };
+  }, [children]);
+
+  const sortedRows = useMemo(() => {
+    if (!sort) return parsed.rows;
+    const { col, dir } = sort;
+    return [...parsed.rows].sort((a, b) => {
+      const aCells = React.Children.toArray((a.props as any).children).filter(
+        React.isValidElement,
+      ) as React.ReactElement<any>[];
+      const bCells = React.Children.toArray((b.props as any).children).filter(
+        React.isValidElement,
+      ) as React.ReactElement<any>[];
+      const aText = extractText(aCells[col]?.props?.children ?? '');
+      const bText = extractText(bCells[col]?.props?.children ?? '');
+      const aNum = parseFloat(aText.replace(/[^\d.-]/g, ''));
+      const bNum = parseFloat(bText.replace(/[^\d.-]/g, ''));
+      if (!isNaN(aNum) && !isNaN(bNum)) return (aNum - bNum) * dir;
+      return aText.localeCompare(bText, lang === 'ar' ? 'ar' : 'en', { numeric: true }) * dir;
+    });
+  }, [parsed.rows, sort, lang]);
+
+  const toggleSort = useCallback((col: number) => {
+    setSort((prev) => (prev?.col === col ? { col, dir: prev.dir === 1 ? -1 : 1 } : { col, dir: 1 }));
+  }, []);
+
+  return (
+    <div className="my-3 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-xs">
+      <table className="w-full text-right text-xs md:text-sm border-collapse">
+        <thead className="bg-slate-100 text-slate-800 border-b-2 border-slate-200 font-bold">
+          <tr>
+            {parsed.headerCells.map((cell, i) => {
+              const active = sort?.col === i;
+              const SortIcon = !active ? ArrowUpDown : sort!.dir === 1 ? ArrowUp : ArrowDown;
+              return (
+                <th
+                  key={i}
+                  onClick={() => toggleSort(i)}
+                  className={`p-2.5 font-semibold text-slate-900 text-right whitespace-nowrap cursor-pointer select-none transition-colors hover:bg-slate-200/70 ${
+                    active ? 'bg-indigo-50 text-indigo-800' : ''
+                  }`}
+                  title={lang === 'ar' ? 'اضغط للفرز' : 'Click to sort'}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <span>{cell}</span>
+                    <SortIcon className={`w-3 h-3 shrink-0 ${active ? 'text-indigo-600' : 'text-slate-400'}`} />
+                  </span>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {sortedRows.map((row, ri) => (
+            <tr key={ri} className="hover:bg-indigo-50/40 transition-colors">
+              {React.Children.toArray((row.props as any).children)
+                .filter(React.isValidElement)
+                .map((td, ci) => (
+                  <td key={ci} className="p-2.5 text-slate-700 text-right align-top">
+                    {(td as React.ReactElement<any>).props.children}
+                  </td>
+                ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+});
+SortableTable.displayName = 'SortableTable';
+
+/* ------------------------------------------------------------------ */
+/* GFM alert box                                                       */
+/* ------------------------------------------------------------------ */
+
+const AlertBox: React.FC<{ type: AlertType; lang: 'ar' | 'en'; children: React.ReactNode }> = ({
+  type,
+  lang,
+  children,
+}) => {
+  const meta = ALERT_META[type];
+  const Icon = meta.icon;
+  return (
+    <div className={`my-3 rounded-xl border p-3.5 ${meta.cls}`}>
+      <div className={`flex items-center gap-2 font-bold text-xs mb-1.5 ${meta.iconCls}`}>
+        <Icon className="w-4 h-4 shrink-0" />
+        <span>{lang === 'ar' ? meta.label.ar : meta.label.en}</span>
+      </div>
+      <div className="text-xs md:text-sm leading-relaxed [&>p]:my-1">{children}</div>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/* RichMessageRenderer                                                 */
+/* ------------------------------------------------------------------ */
 
 export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   content,
@@ -54,76 +310,87 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [fontSizeClass, setFontSizeClass] = useState<'text-xs' | 'text-sm' | 'text-base'>('text-sm');
 
-  const hasMath = containsMathExpressions(content);
+  const hasMath = useMemo(() => containsMathExpressions(content), [content]);
 
-  // Helper to render text with inline citation numbers as clickable badges
-  const renderTextWithCitations = (
-    text: string,
-    cits: Citation[],
-    language: 'ar' | 'en',
-    onCitClick?: (citation: any) => void,
-    onNav?: () => void,
-  ): React.ReactNode[] => {
-    const parts = text.split(/(\[\d+\])/g);
-    return parts.map((part, i) => {
-      const match = part.match(/^\[(\d+)\]$/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        const cit = cits.find((c) => c.index === num);
-        return (
-          <CitationInline
-            key={`cit-${i}-${num}`}
-            index={num}
-            citation={cit}
-            lang={language}
-            onViewInKnowledge={onNav}
-          />
+  // Media URL detectors (stable across renders)
+  const isImageUrl = useCallback((url: string) => /\.(jpeg|jpg|gif|png|svg|webp|avif)($|\?)/i.test(url), []);
+  const isVideoUrl = useCallback(
+    (url: string) => /\.(mp4|webm|ogg)($|\?)/i.test(url) || /youtube\.com|vimeo\.com|youtu\.be/i.test(url),
+    [],
+  );
+  const isAudioUrl = useCallback((url: string) => /\.(mp3|wav|ogg|m4a)($|\?)/i.test(url), []);
+
+  // Render a string, converting inline citation markers `[N]` into badges.
+  const renderTextWithCitations = useCallback(
+    (text: string): React.ReactNode[] => {
+      const parts = text.split(/(\[\d+\])/g);
+      return parts.map((part, i) => {
+        const match = part.match(/^\[(\d+)\]$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          const cit = citations.find((c) => c.index === num);
+          return (
+            <CitationInline
+              key={`cit-${i}-${num}`}
+              index={num}
+              citation={cit}
+              lang={lang}
+              onViewInKnowledge={onViewInKnowledge}
+              onCitationClick={onCitationClick}
+            />
+          );
+        }
+        return <span key={`txt-${i}`}>{part}</span>;
+      });
+    },
+    [citations, lang, onViewInKnowledge, onCitationClick],
+  );
+
+  // Process arbitrary children, converting plain-string citation markers into badges.
+  const processChildren = useCallback(
+    (children: React.ReactNode): React.ReactNode => {
+      if (typeof children === 'string') return renderTextWithCitations(children);
+      if (Array.isArray(children)) {
+        return children.map((child, i) =>
+          typeof child === 'string' ? <React.Fragment key={i}>{renderTextWithCitations(child)}</React.Fragment> : child,
         );
       }
-      return <span key={`txt-${i}`}>{part}</span>;
-    });
-  };
+      return children;
+    },
+    [renderTextWithCitations],
+  );
 
-  // Copy whole response to clipboard
-  const handleCopyText = () => {
+  const handleCopyText = useCallback(() => {
     navigator.clipboard.writeText(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
+  }, [content]);
 
-  // Text-To-Speech (TTS)
-  const handleToggleSpeak = () => {
+  const handleToggleSpeak = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       alert(lang === 'ar' ? 'متصفحك لا يدعم قراءة النصوص صوتياً' : 'Text-to-Speech not supported in browser');
       return;
     }
-
     if (isSpeaking) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
       return;
     }
-
-    // Clean markdown symbols for speech synthesis
     const cleanText = content
       .replace(/[*_#`$~\[\]()]/g, ' ')
       .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 على $2')
       .trim();
-
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
     utterance.rate = 0.95;
-
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
-
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
     setIsSpeaking(true);
-  };
+  }, [content, isSpeaking, lang]);
 
-  // Export as Markdown File
-  const handleExportMarkdown = () => {
+  const handleExportMarkdown = useCallback(() => {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -131,35 +398,303 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
     link.download = `omnirag-response-${Date.now()}.md`;
     link.click();
     URL.revokeObjectURL(url);
-  };
+  }, [content]);
 
-  // Pre-process text if Arabic Math Mode is enabled
-  const processedContent = React.useMemo(() => {
-    if (!hasMath || mathDisplayMode === 'standard') {
-      return content;
-    }
-
-    // Replace TeX blocks ($...$ or $$...$$) with Arabic Math notation equivalents
-    return content.replace(/(\$\$[\s\S]+?\$\$|\$[^\$]+?\$)/g, (match) => {
+  // Arabic-math pre-processing (only when the toggle is active)
+  const processedContent = useMemo(() => {
+    if (!hasMath || mathDisplayMode === 'standard') return content;
+    return content.replace(/(\$\$[\s\S]+?\$\$|\$[^\$\n]+?\$)/g, (match) => {
       const rawTex = match.replace(/^\$\$?|\$\$?$/g, '');
       const converted = convertTeXToArabicMath(rawTex, { useArabicNumerals });
-      return `\n\n> 🧮 **[معادلة رياضية بالعربية - MathJax4Arabic]:**\n> \`${converted}\`\n\n`;
+      return `\n\n> 🧮 **[معادلة رياضية بالعربية - KaTeX-Arabic]:**\n> \`${converted}\`\n\n`;
     });
   }, [content, hasMath, mathDisplayMode, useArabicNumerals]);
 
-  // Helper to detect URL media formats
-  const isImageUrl = (url: string) => /\.(jpeg|jpg|gif|png|svg|webp)($|\?)/i.test(url);
-  const isVideoUrl = (url: string) =>
-    /\.(mp4|webm|ogg)($|\?)/i.test(url) || /youtube\.com|vimeo\.com|youtu\.be/i.test(url);
-  const isAudioUrl = (url: string) => /\.(mp3|wav|ogg|m4a)($|\?)/i.test(url);
+  // Build the react-markdown `components` map once per relevant change.
+  const components = useMemo(
+    () => ({
+      // Unwrap <pre> so CodeBlock owns its own container (avoids double scroll).
+      pre({ children }: any) {
+        return <>{children}</>;
+      },
+
+      // Code blocks + inline code
+      code({ className, children, ...props }: any) {
+        const match = /language-(\w+)/.exec(className || '');
+        const codeString = String(children).replace(/\n$/, '');
+
+        if (match || codeString.includes('\n')) {
+          const blockLang = match ? match[1] : 'typescript';
+          if (blockLang === 'mermaid') {
+            return <MermaidBlock code={codeString} lang={lang} />;
+          }
+          return <CodeBlock code={codeString} language={blockLang} title={blockLang.toUpperCase()} lang={lang} />;
+        }
+
+        return (
+          <code
+            className="px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200/80 text-indigo-700 font-mono text-[0.85em] dir-ltr inline-block"
+            {...props}
+          >
+            {children}
+          </code>
+        );
+      },
+
+      // Sortable, responsive tables
+      table({ children }: any) {
+        return <SortableTable lang={lang}>{children}</SortableTable>;
+      },
+
+      // GFM alerts + styled blockquotes
+      blockquote({ children }: any) {
+        const kids = React.Children.toArray(children).filter(React.isValidElement) as React.ReactElement[];
+        const firstP = kids.find((k) => (k as any).type === 'p');
+        if (firstP) {
+          const alertType = matchAlertType(extractText((firstP.props as any).children));
+          if (alertType) {
+            const stripped = stripAlertMarker(firstP);
+            const rest = kids.filter((k) => k !== firstP);
+            return (
+              <AlertBox type={alertType} lang={lang}>
+                {stripped}
+                {rest}
+              </AlertBox>
+            );
+          }
+        }
+        return (
+          <blockquote className="my-2.5 border-r-4 border-indigo-500 bg-indigo-50/60 p-3 rounded-l-xl text-indigo-950 font-normal italic">
+            {children}
+          </blockquote>
+        );
+      },
+
+      hr() {
+        return <hr className="my-4 border-0 h-px bg-gradient-to-r from-transparent via-slate-300 to-transparent" />;
+      },
+
+      // Links with media embed handling + security
+      a({ href, children }: any) {
+        if (!href) return <span>{children}</span>;
+
+        if (isImageUrl(href)) {
+          return (
+            <span className="my-2.5 inline-block max-w-md rounded-xl overflow-hidden border border-slate-200 shadow-md align-middle">
+              <img
+                src={href}
+                alt={extractText(children) || 'صورة مدمجة'}
+                loading="lazy"
+                className="w-full h-auto cursor-pointer hover:scale-102 transition-transform duration-200"
+                onClick={() => setSelectedImage(href)}
+              />
+              <span className="bg-slate-900 text-white text-[11px] p-1.5 flex items-center justify-between">
+                <span className="truncate flex items-center gap-1">
+                  <ImageIcon className="w-3 h-3 text-cyan-400" />
+                  <span>{extractText(children)}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedImage(href)}
+                  className="text-cyan-300 hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  <Maximize2 className="w-3 h-3" />
+                  <span>{lang === 'ar' ? 'تكبير' : 'Zoom'}</span>
+                </button>
+              </span>
+            </span>
+          );
+        }
+
+        if (isVideoUrl(href)) {
+          return (
+            <span className="my-3 block rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-lg">
+              <span className="flex items-center gap-1.5 text-xs text-amber-400 mb-2 font-semibold">
+                <VideoIcon className="w-4 h-4" />
+                <span>{lang === 'ar' ? 'مشغل فيديو مدمج:' : 'Embedded Video Player:'}</span>
+              </span>
+              {href.includes('youtube.com') || href.includes('youtu.be') ? (
+                <span className="aspect-video w-full rounded-lg overflow-hidden block">
+                  <iframe
+                    src={href.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')}
+                    className="w-full h-full"
+                    allowFullScreen
+                    title="Embedded YouTube Video"
+                  />
+                </span>
+              ) : (
+                <video controls className="w-full h-auto rounded-lg bg-black max-h-80">
+                  <source src={href} />
+                  {lang === 'ar'
+                    ? 'متصفحك لا يدعم تشغيل الفيديو المباشر.'
+                    : 'Your browser does not support HTML5 video.'}
+                </video>
+              )}
+            </span>
+          );
+        }
+
+        if (isAudioUrl(href)) {
+          return (
+            <span className="my-2.5 block rounded-xl border border-indigo-200 bg-indigo-50/90 p-3 shadow-xs">
+              <span className="flex items-center gap-2 text-xs font-semibold text-indigo-900 mb-1.5">
+                <MusicIcon className="w-4 h-4 text-indigo-600 animate-pulse" />
+                <span>{lang === 'ar' ? 'ملف صوتي مدمج:' : 'Embedded Audio:'}</span>
+                <span className="truncate text-slate-600 font-normal">{href.split('/').pop()}</span>
+              </span>
+              <audio controls className="w-full h-9 rounded-md">
+                <source src={href} />
+                {lang === 'ar' ? 'متصفحك لا يدعم التشغيل الصوتي المباشر.' : 'Audio playback not supported.'}
+              </audio>
+            </span>
+          );
+        }
+
+        return (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={href}
+            className="text-indigo-600 hover:text-indigo-800 underline font-semibold inline-flex items-center gap-0.5 mx-0.5"
+          >
+            <span className="truncate max-w-[280px]">{children}</span>
+            <ExternalLink className="w-3 h-3 inline shrink-0" />
+          </a>
+        );
+      },
+
+      // Lists
+      ul({ children }: any) {
+        return (
+          <ul className="my-2 list-disc list-inside space-y-1 text-slate-800 pr-2 marker:text-indigo-400">
+            {children}
+          </ul>
+        );
+      },
+      ol({ children }: any) {
+        return (
+          <ol className="my-2 list-decimal list-inside space-y-1 text-slate-800 pr-2 marker:text-indigo-600 marker:font-bold">
+            {children}
+          </ol>
+        );
+      },
+      li({ children }: any) {
+        return <li className="leading-relaxed">{processChildren(children)}</li>;
+      },
+
+      // Task-list checkboxes (GFM)
+      input({ type, checked, ...props }: any) {
+        if (type === 'checkbox') {
+          return (
+            <input
+              type="checkbox"
+              checked={!!checked}
+              readOnly
+              {...props}
+              className="mr-1.5 rtl:ml-1.5 rtl:mr-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 align-middle"
+            />
+          );
+        }
+        return <input type={type} {...props} />;
+      },
+
+      // Headings
+      h1({ children }: any) {
+        return (
+          <h1 className="text-xl font-extrabold text-slate-900 mt-4 mb-2 pb-1 border-b border-slate-200">
+            {processChildren(children)}
+          </h1>
+        );
+      },
+      h2({ children }: any) {
+        return (
+          <h2 className="text-lg font-bold text-slate-900 mt-3 mb-1.5 flex items-center gap-2 before:content-['##'] before:text-indigo-400 before:font-mono before:text-sm">
+            {processChildren(children)}
+          </h2>
+        );
+      },
+      h3({ children }: any) {
+        return (
+          <h3 className="text-base font-bold text-slate-800 mt-2.5 mb-1 flex items-center gap-2 before:content-['###'] before:text-indigo-400 before:font-mono before:text-xs">
+            {processChildren(children)}
+          </h3>
+        );
+      },
+      h4({ children }: any) {
+        return <h4 className="text-sm font-bold text-slate-800 mt-2 mb-1">{processChildren(children)}</h4>;
+      },
+
+      // Emphasis / misc inline
+      strong({ children }: any) {
+        return <strong className="font-bold text-slate-900">{children}</strong>;
+      },
+      em({ children }: any) {
+        return <em className="italic">{children}</em>;
+      },
+      del({ children }: any) {
+        return <del className="line-through text-slate-400">{children}</del>;
+      },
+      kbd({ children }: any) {
+        return (
+          <kbd className="px-1.5 py-0.5 rounded-md border border-slate-300 bg-slate-100 text-slate-700 font-mono text-[0.8em] shadow-[0_1px_0_rgba(0,0,0,0.15)] dir-ltr inline-block">
+            {children}
+          </kbd>
+        );
+      },
+      sub({ children }: any) {
+        return <sub className="text-[0.75em]">{children}</sub>;
+      },
+      sup({ children }: any) {
+        return <sup className="text-[0.75em]">{children}</sup>;
+      },
+
+      // Paragraphs with inline citation detection + bare image auto-embed
+      p({ children, node }: any) {
+        if (
+          node?.children?.length === 1 &&
+          node.children[0]?.type === 'text' &&
+          isImageUrl(String(node.children[0].value))
+        ) {
+          const url = String(node.children[0].value);
+          return (
+            <span className="my-2.5 inline-block max-w-md rounded-xl overflow-hidden border border-slate-200 shadow-md">
+              <img
+                src={url}
+                alt="embedded"
+                loading="lazy"
+                className="w-full h-auto cursor-pointer hover:scale-102 transition-transform duration-200"
+                onClick={() => setSelectedImage(url)}
+              />
+            </span>
+          );
+        }
+        return <p className="my-2 leading-relaxed">{processChildren(children)}</p>;
+      },
+    }),
+    [lang, processChildren, isImageUrl, isVideoUrl, isAudioUrl],
+  );
+
+  // Memoize the rendered markdown tree so unchanged messages don't re-parse.
+  const markdownTree = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false, errorColor: '#ef4444' }]]}
+        components={components as any}
+      >
+        {processedContent}
+      </ReactMarkdown>
+    ),
+    [processedContent, components],
+  );
 
   return (
     <div className={`space-y-3 ${role === 'user' ? 'text-slate-900' : 'text-slate-800'}`}>
-      {/* Quick Interactive ToolBar for Assistant Responses */}
+      {/* Interactive toolbar for assistant responses */}
       {role === 'assistant' && (
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-200/80 text-xs text-slate-600 bg-slate-50/80 p-2 rounded-xl">
           <div className="flex flex-wrap items-center gap-1.5">
-            {/* MathJax / Arabic Math Toggle */}
             {hasMath && (
               <div className="flex items-center gap-1 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg text-amber-900 font-medium">
                 <Calculator className="w-3.5 h-3.5 text-amber-600" />
@@ -171,7 +706,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                     mathDisplayMode === 'standard' ? 'bg-amber-600 text-white' : 'hover:bg-amber-100 text-amber-800'
                   }`}
                 >
-                  MathJax (English)
+                  KaTeX
                 </button>
                 <button
                   type="button"
@@ -179,11 +714,10 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                   className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition ${
                     mathDisplayMode === 'arabic' ? 'bg-amber-600 text-white' : 'hover:bg-amber-100 text-amber-800'
                   }`}
-                  title="عرض المعادلات بالرموز والمصطلحات العربية (MathJax4Arabic)"
+                  title="عرض المعادلات بالرموز والمصطلحات العربية"
                 >
-                  MathJax4Arabic (عربي)
+                  KaTeX-Arabic (عربي)
                 </button>
-
                 {mathDisplayMode === 'arabic' && (
                   <button
                     type="button"
@@ -201,35 +735,24 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
               </div>
             )}
 
-            {/* Font Size Adjuster */}
             <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5 text-slate-600">
               <span className="text-[10px] px-1 font-semibold">{lang === 'ar' ? 'الحجم:' : 'Size:'}</span>
-              <button
-                type="button"
-                onClick={() => setFontSizeClass('text-xs')}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer ${fontSizeClass === 'text-xs' ? 'bg-slate-800 text-white font-bold' : 'hover:bg-slate-100'}`}
-              >
-                A-
-              </button>
-              <button
-                type="button"
-                onClick={() => setFontSizeClass('text-sm')}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer ${fontSizeClass === 'text-sm' ? 'bg-slate-800 text-white font-bold' : 'hover:bg-slate-100'}`}
-              >
-                A
-              </button>
-              <button
-                type="button"
-                onClick={() => setFontSizeClass('text-base')}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer ${fontSizeClass === 'text-base' ? 'bg-slate-800 text-white font-bold' : 'hover:bg-slate-100'}`}
-              >
-                A+
-              </button>
+              {(['text-xs', 'text-sm', 'text-base'] as const).map((sz) => (
+                <button
+                  key={sz}
+                  type="button"
+                  onClick={() => setFontSizeClass(sz)}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer ${
+                    fontSizeClass === sz ? 'bg-slate-800 text-white font-bold' : 'hover:bg-slate-100'
+                  }`}
+                >
+                  {sz === 'text-xs' ? 'A-' : sz === 'text-sm' ? 'A' : 'A+'}
+                </button>
+              ))}
             </div>
           </div>
 
           <div className="flex items-center gap-1">
-            {/* Speech Button */}
             <button
               type="button"
               onClick={handleToggleSpeak}
@@ -238,7 +761,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                   ? 'bg-rose-50 text-rose-700 border-rose-300 animate-pulse font-bold'
                   : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
               }`}
-              title="قراءة النص صوتياً"
+              title={lang === 'ar' ? 'قراءة النص صوتيا' : 'Read aloud'}
             >
               {isSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-indigo-600" />}
               <span>
@@ -252,12 +775,11 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
               </span>
             </button>
 
-            {/* Copy Button */}
             <button
               type="button"
               onClick={handleCopyText}
               className="flex items-center gap-1 px-2 py-1 rounded-lg border bg-white hover:bg-slate-100 text-slate-700 border-slate-200 text-xs cursor-pointer transition"
-              title="نسخ الإجابة الكاملة"
+              title={lang === 'ar' ? 'نسخ الإجابة الكاملة' : 'Copy full answer'}
             >
               {copied ? (
                 <Check className="w-3.5 h-3.5 text-emerald-600" />
@@ -267,12 +789,11 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
               <span>{copied ? (lang === 'ar' ? 'تم النسخ' : 'Copied') : lang === 'ar' ? 'نسخ' : 'Copy'}</span>
             </button>
 
-            {/* Export Markdown */}
             <button
               type="button"
               onClick={handleExportMarkdown}
               className="flex items-center gap-1 px-2 py-1 rounded-lg border bg-white hover:bg-slate-100 text-slate-700 border-slate-200 text-xs cursor-pointer transition"
-              title="تصدير كملف ماركداون"
+              title={lang === 'ar' ? 'تصدير كملف ماركداون' : 'Export as Markdown'}
             >
               <Download className="w-3.5 h-3.5 text-slate-500" />
               <span>{lang === 'ar' ? 'تصدير .md' : 'Export'}</span>
@@ -283,215 +804,11 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
 
       {/* Main Markdown Body */}
       <div
-        className={`rich-markdown-body leading-relaxed ${fontSizeClass} ${role === 'user' ? 'text-slate-900 font-medium' : 'text-slate-800'}`}
+        className={`rich-markdown-body leading-relaxed ${fontSizeClass} ${
+          role === 'user' ? 'text-slate-900 font-medium' : 'text-slate-800'
+        }`}
       >
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[rehypeKatex]}
-          components={{
-            // Code Blocks Override
-            code({ node, inline, className, children, ...props }: any) {
-              const match = /language-(\w+)/.exec(className || '');
-              const codeString = String(children).replace(/\n$/, '');
-
-              if (!inline && (match || codeString.includes('\n'))) {
-                return (
-                  <CodeBlock
-                    code={codeString}
-                    language={match ? match[1] : 'typescript'}
-                    title={match ? match[1].toUpperCase() : 'كود برمجي'}
-                  />
-                );
-              }
-
-              return (
-                <code
-                  className="px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200/80 text-indigo-700 font-mono text-xs dir-ltr inline-block"
-                  {...props}
-                >
-                  {children}
-                </code>
-              );
-            },
-
-            // Styled Responsive Tables
-            table({ children }) {
-              return (
-                <div className="my-3 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <table className="w-full text-right text-xs md:text-sm border-collapse">{children}</table>
-                </div>
-              );
-            },
-            thead({ children }) {
-              return (
-                <thead className="bg-slate-100 text-slate-800 border-b border-slate-200 font-bold">{children}</thead>
-              );
-            },
-            tbody({ children }) {
-              return <tbody className="divide-y divide-slate-100">{children}</tbody>;
-            },
-            tr({ children }) {
-              return <tr className="hover:bg-slate-50/80 transition-colors">{children}</tr>;
-            },
-            th({ children }) {
-              return <th className="p-2.5 font-semibold text-slate-900 text-right">{children}</th>;
-            },
-            td({ children }) {
-              return <td className="p-2.5 text-slate-700 text-right">{children}</td>;
-            },
-
-            // Blockquotes
-            blockquote({ children }) {
-              return (
-                <blockquote className="my-2.5 border-r-4 border-indigo-500 bg-indigo-50/60 p-3 rounded-l-xl text-indigo-950 font-normal italic">
-                  {children}
-                </blockquote>
-              );
-            },
-
-            // Links with media handling & Security target_blank
-            a({ href, children }) {
-              if (!href) return <span>{children}</span>;
-
-              // Image link auto-embed
-              if (isImageUrl(href)) {
-                return (
-                  <div className="my-2.5 inline-block max-w-md rounded-xl overflow-hidden border border-slate-200 shadow-md">
-                    <img
-                      src={href}
-                      alt={String(children) || 'صورة مدمجة'}
-                      className="w-full h-auto cursor-pointer hover:scale-102 transition-transform duration-200"
-                      onClick={() => setSelectedImage(href)}
-                    />
-                    <div className="bg-slate-900 text-white text-[11px] p-1.5 flex items-center justify-between">
-                      <span className="truncate flex items-center gap-1">
-                        <ImageIcon className="w-3 h-3 text-cyan-400" />
-                        <span>{String(children)}</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedImage(href)}
-                        className="text-cyan-300 hover:underline flex items-center gap-0.5 cursor-pointer"
-                      >
-                        <Maximize2 className="w-3 h-3" />
-                        <span>{lang === 'ar' ? 'تكبير' : 'Zoom'}</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
-
-              // Video link auto-embed
-              if (isVideoUrl(href)) {
-                return (
-                  <div className="my-3 rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-lg">
-                    <div className="flex items-center gap-1.5 text-xs text-amber-400 mb-2 font-semibold">
-                      <VideoIcon className="w-4 h-4" />
-                      <span>{lang === 'ar' ? 'مشغل فيديو مدمج:' : 'Embedded Video Player:'}</span>
-                    </div>
-                    {href.includes('youtube.com') || href.includes('youtu.be') ? (
-                      <div className="aspect-video w-full rounded-lg overflow-hidden">
-                        <iframe
-                          src={href.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')}
-                          className="w-full h-full"
-                          allowFullScreen
-                          title="Embedded YouTube Video"
-                        />
-                      </div>
-                    ) : (
-                      <video controls className="w-full h-auto rounded-lg bg-black max-h-80">
-                        <source src={href} />
-                        {lang === 'ar'
-                          ? 'متصفحك لا يدعم تشغيل الفيديو المباشر.'
-                          : 'Your browser does not support HTML5 video.'}
-                      </video>
-                    )}
-                  </div>
-                );
-              }
-
-              // Audio link auto-embed
-              if (isAudioUrl(href)) {
-                return (
-                  <div className="my-2.5 rounded-xl border border-indigo-200 bg-indigo-50/90 p-3 shadow-xs">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-indigo-900 mb-1.5">
-                      <MusicIcon className="w-4 h-4 text-indigo-600 animate-pulse" />
-                      <span>{lang === 'ar' ? 'ملف صوتي مدمج:' : 'Embedded Audio:'}</span>
-                      <span className="truncate text-slate-600 font-normal">{href.split('/').pop()}</span>
-                    </div>
-                    <audio controls className="w-full h-9 rounded-md">
-                      <source src={href} />
-                      {lang === 'ar' ? 'متصفحك لا يدعم التشغيل الصوتي المباشر.' : 'Audio playback not supported.'}
-                    </audio>
-                  </div>
-                );
-              }
-
-              return (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-indigo-600 hover:text-indigo-800 underline font-semibold inline-flex items-center gap-0.5 mx-1"
-                >
-                  <span>{children}</span>
-                  <ExternalLink className="w-3 h-3 inline shrink-0" />
-                </a>
-              );
-            },
-
-            // Lists
-            ul({ children }) {
-              return <ul className="my-2 list-disc list-inside space-y-1 text-slate-800 pr-2">{children}</ul>;
-            },
-            ol({ children }) {
-              return <ol className="my-2 list-decimal list-inside space-y-1 text-slate-800 pr-2">{children}</ol>;
-            },
-            li({ children }) {
-              return <li className="leading-relaxed">{children}</li>;
-            },
-
-            // Headers
-            h1({ children }) {
-              return (
-                <h1 className="text-xl font-extrabold text-slate-900 mt-4 mb-2 pb-1 border-b border-slate-200">
-                  {children}
-                </h1>
-              );
-            },
-            h2({ children }) {
-              return <h2 className="text-lg font-bold text-slate-900 mt-3 mb-1.5">{children}</h2>;
-            },
-            h3({ children }) {
-              return <h3 className="text-base font-bold text-slate-800 mt-2.5 mb-1">{children}</h3>;
-            },
-
-            // Paragraphs with inline citation detection: convert [1], [2] to clickable CitationInline
-            p({ children }) {
-              return (
-                <p className="my-2 leading-relaxed">
-                  {typeof children === 'string'
-                    ? renderTextWithCitations(children, citations, lang, onCitationClick, onViewInKnowledge)
-                    : children}
-                </p>
-              );
-            },
-
-            // Text nodes also need citation processing
-            text({ children }) {
-              const text = String(children);
-              const hasCitation = /\[(\d+)\]/.test(text) && citations.length > 0;
-              if (hasCitation) {
-                return (
-                  <span>{renderTextWithCitations(text, citations, lang, onCitationClick, onViewInKnowledge)}</span>
-                );
-              }
-              return <>{children}</>;
-            },
-          }}
-        >
-          {processedContent}
-        </ReactMarkdown>
+        {markdownTree}
       </div>
 
       {/* Image Lightbox Modal */}
@@ -500,18 +817,21 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
           className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn"
           onClick={() => setSelectedImage(null)}
         >
-          <div className="relative max-w-4xl w-full bg-slate-900 rounded-2xl p-2 border border-slate-800 overflow-hidden shadow-2xl">
+          <div
+            className="relative max-w-4xl w-full bg-slate-900 rounded-2xl p-2 border border-slate-800 overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <img
               src={selectedImage}
               alt="Large preview"
               className="w-full h-auto max-h-[85vh] object-contain rounded-xl"
             />
-            <div className="p-3 bg-slate-950 flex items-center justify-between text-white text-xs">
+            <div className="p-3 bg-slate-950 flex items-center justify-between text-white text-xs gap-3">
               <span className="truncate text-slate-400 font-mono">{selectedImage}</span>
               <button
                 type="button"
                 onClick={() => setSelectedImage(null)}
-                className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-bold cursor-pointer"
+                className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-bold cursor-pointer shrink-0"
               >
                 {lang === 'ar' ? 'إغلاق المعاينة' : 'Close Preview'}
               </button>

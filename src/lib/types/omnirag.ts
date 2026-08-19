@@ -123,6 +123,8 @@ export interface Citation {
   pageNumber?: number;
   score: number;
   snippet: string;
+  /** Direct URL to the source document (external link or in-app deep link) */
+  sourceUrl?: string;
 }
 
 export interface Message {
