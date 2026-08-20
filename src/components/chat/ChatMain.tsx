@@ -52,6 +52,7 @@ interface ChatMainProps {
   onViewInKnowledge?: () => void;
   onExportChat: () => void;
   onExportPdf: () => void;
+  isExportingPdf?: boolean;
   onPrintChat: () => void;
   onSaveToSources?: () => void;
   isSavingToSources?: boolean;
@@ -108,6 +109,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   onViewInKnowledge,
   onExportChat,
   onExportPdf,
+  isExportingPdf = false,
   onPrintChat,
   onSaveToSources,
   isSavingToSources = false,
@@ -192,7 +194,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 160)}px`;
     }
   }, [inputPrompt]);
 
@@ -271,14 +273,15 @@ export const ChatMain: React.FC<ChatMainProps> = ({
             <Printer className="w-4 h-4" />
           </button>
 
-          {/* Export as PDF (via print → Save as PDF) */}
+          {/* Export as PDF (real file download) */}
           <button
             type="button"
             onClick={onExportPdf}
-            className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 transition cursor-pointer flex items-center justify-center"
+            disabled={isExportingPdf}
+            className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 transition cursor-pointer flex items-center justify-center disabled:opacity-60 disabled:cursor-wait"
             title={lang === 'ar' ? 'تصدير المحادثة كملف PDF' : 'Export Chat as PDF'}
           >
-            <FileDown className="w-4 h-4" />
+            {isExportingPdf ? <RotateCcw className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
           </button>
 
           {/* Export JSON */}
@@ -465,10 +468,11 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           <button
             type="button"
             onClick={onExportPdf}
-            className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/70 transition cursor-pointer"
+            disabled={isExportingPdf}
+            className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/70 transition cursor-pointer disabled:opacity-50 disabled:cursor-wait"
             title={lang === 'ar' ? 'تصدير كملف PDF' : 'Export as PDF'}
           >
-            <FileDown className="w-4 h-4" />
+            {isExportingPdf ? <RotateCcw className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
           </button>
 
           <span className="w-px h-5 bg-slate-700 mx-0.5" />
@@ -525,21 +529,21 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       )}
 
       {/* Modern Input Bar */}
-      <div className="no-print p-4 pt-2 bg-gradient-to-t from-white via-white to-transparent shrink-0">
-        <div className="max-w-4xl mx-auto">
+      <div className="no-print px-3 pb-2 pt-1 bg-gradient-to-t from-white via-white to-transparent shrink-0">
+        <div className="max-w-3xl mx-auto">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               onSendMessage();
             }}
-            className="relative flex items-end bg-white rounded-3xl shadow-md border border-slate-200 focus-within:ring-4 focus-within:ring-indigo-500/15 focus-within:border-indigo-400 transition-all group"
+            className="relative flex items-end bg-white rounded-2xl shadow-md border border-slate-200 focus-within:ring-4 focus-within:ring-indigo-500/15 focus-within:border-indigo-400 transition-all group"
           >
             {/* Mode Selector */}
-            <div className="relative group/mode ml-2 rtl:ml-0 rtl:mr-2 mb-1">
+            <div className="relative group/mode ml-1.5 rtl:ml-0 rtl:mr-1.5 mb-1">
               <button
                 type="button"
                 onClick={() => setShowModeMenu(!showModeMenu)}
-                className="w-10 h-10 rounded-full hover:bg-slate-100 transition flex items-center justify-center shrink-0 cursor-pointer"
+                className="w-8 h-8 rounded-full hover:bg-slate-100 transition flex items-center justify-center shrink-0 cursor-pointer"
                 title={lang === 'ar' ? 'وضع المحادثة' : 'Chat Mode'}
               >
                 {modeIcon(selectedMode)}
@@ -589,8 +593,8 @@ export const ChatMain: React.FC<ChatMainProps> = ({
                   ? 'اكتب سؤالك هنا... (Enter للإرسال، Shift+Enter لسطر جديد)'
                   : 'Type your question... (Enter to send, Shift+Enter for new line)'
               }
-              className="flex-1 px-2 py-3.5 bg-transparent focus:outline-none text-sm text-slate-900 placeholder:text-slate-400 font-medium resize-none max-h-[200px] leading-relaxed"
-              style={{ minHeight: '44px' }}
+              className="flex-1 px-2 py-2.5 bg-transparent focus:outline-none text-sm text-slate-900 placeholder:text-slate-400 font-medium resize-none max-h-[160px] leading-relaxed"
+              style={{ minHeight: '36px' }}
             />
 
             {/* Send / Stop Button */}
@@ -598,22 +602,22 @@ export const ChatMain: React.FC<ChatMainProps> = ({
               <button
                 type="button"
                 onClick={onStopGeneration}
-                className="w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1 animate-pulse"
+                className="w-8 h-8 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1 animate-pulse"
                 title={lang === 'ar' ? 'إيقاف التوليد' : 'Stop generating'}
               >
-                <Square className="w-4 h-4 fill-current" />
+                <Square className="w-3.5 h-3.5 fill-current" />
               </button>
             ) : (
               <button
                 type="submit"
                 disabled={!inputPrompt.trim()}
-                className="w-10 h-10 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed group-focus-within:scale-105 shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1"
+                className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed group-focus-within:scale-105 shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1"
               >
-                <Send className={`w-4 h-4 ${lang === 'ar' ? 'rtl:-scale-x-100' : ''}`} />
+                <Send className={`w-3.5 h-3.5 ${lang === 'ar' ? 'rtl:-scale-x-100' : ''}`} />
               </button>
             )}
           </form>
-          <div className="mt-2 text-center text-[10px] text-slate-400 font-mono flex items-center justify-center gap-1.5">
+          <div className="mt-1.5 text-center text-[10px] text-slate-400 font-mono flex items-center justify-center gap-1.5">
             <Sparkles className="w-3 h-3 text-indigo-400" />
             <span>{lang === 'ar' ? 'OmniRAG — ذاكرة المحادثة نشطة' : 'OmniRAG — Conversation memory active'}</span>
             {/* Regenerate last answer */}

@@ -491,9 +491,21 @@ Supported features:
     downloadAnchor.remove();
   };
 
-  // Print / PDF export go through the native print pipeline (see chatExport.ts).
+  // Print goes through the native print dialog; PDF export generates a real
+  // PDF file and downloads it directly (falls back to printing on failure).
   const handlePrintChat = useCallback(() => printChatTranscript(), []);
-  const handleExportPdf = useCallback(() => exportChatAsPdf(), []);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const handleExportPdf = useCallback(async () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    try {
+      const currentConv = conversations.find((c) => c.id === activeConversationId);
+      const ok = await exportChatAsPdf(currentConv?.title);
+      if (!ok) printChatTranscript();
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [isExportingPdf, conversations, activeConversationId]);
 
   // Save the current conversation into the knowledge base as a reference
   // document. The transcript is ingested through the documents API, which
@@ -814,6 +826,7 @@ Supported features:
         onViewInKnowledge={handleViewInKnowledge}
         onExportChat={handleExportChat}
         onExportPdf={handleExportPdf}
+        isExportingPdf={isExportingPdf}
         onPrintChat={handlePrintChat}
         onSaveToSources={handleSaveToSources}
         isSavingToSources={isSavingToSources}

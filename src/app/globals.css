@@ -271,12 +271,24 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
   background: transparent;
 }
 
-/* Scrollbars in dark mode */
+/* Scrollbars in dark mode — brighter thumbs for contrast on dark surfaces */
+.dark * {
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+.dark *::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+}
+.dark *::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.42);
+}
+.dark .lazy-scroll {
+  scrollbar-color: rgba(129, 140, 248, 0.4) transparent;
+}
 .dark .lazy-scroll::-webkit-scrollbar-thumb {
-  background: rgba(129, 140, 248, 0.28);
+  background: rgba(129, 140, 248, 0.4);
 }
 .dark .lazy-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(129, 140, 248, 0.45);
+  background: rgba(129, 140, 248, 0.6);
 }
 
 /* ── Chat transcript zoom (fullscreen "تكبير الخط") ─────────────────────
@@ -330,8 +342,11 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
   [data-separator] {
     display: none !important;
   }
-  /* Ink-friendly message bubbles. */
+  /* Ink-friendly message bubbles. In print the layout becomes document-like:
+     bubbles span the full printable width and follow the page size — wider
+     paper gives wider bubbles, narrower paper shrinks them. */
   .print-chat-stream .rounded-2xl {
+    max-width: 100% !important;
     box-shadow: none !important;
     border: 1px solid #e2e8f0 !important;
     background: #fff !important;
@@ -457,26 +472,51 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
   text-align: left;
 }
 
-/* Smooth scrolling for chat containers */
+/* Custom scrollbars — thin, soft slate-indigo thumbs that stay visible
+   without stealing attention. Applied to chat areas and, via the generic
+   rules below, to every scrollable surface in the app. */
 .lazy-scroll {
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(99, 102, 241, 0.35) transparent;
 }
-
-/* Custom scrollbar for chat areas */
 .lazy-scroll::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 .lazy-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 .lazy-scroll::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.18);
+  background: rgba(99, 102, 241, 0.35);
   border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
 }
 .lazy-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.32);
+  background: rgba(79, 70, 229, 0.55);
+  background-clip: content-box;
+}
+
+/* Consistent thin scrollbars everywhere else (panels, modals, code blocks). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.3) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
 }
 
 /* Scale hover utility for interactive elements */
