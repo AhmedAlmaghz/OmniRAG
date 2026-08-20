@@ -16,12 +16,19 @@ import {
   Maximize2,
   Minimize2,
   ArrowDown,
+  ArrowUp,
   Square,
   RotateCcw,
+  Printer,
+  FileDown,
+  BookmarkPlus,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { Message, ChatMode, Citation, MCPToolCall } from '@/lib/types/omnirag';
 import { ChatMessage } from '@/components/chat/ChatMessage';
 import { FollowUpSuggestions } from '@/components/chat/FollowUpSuggestions';
+import { QuestionNavigator } from '@/components/chat/QuestionNavigator';
 
 interface ChatMainProps {
   lang: 'ar' | 'en';
@@ -44,8 +51,11 @@ interface ChatMainProps {
   onCitationClick: (c: Citation) => void;
   onViewInKnowledge?: () => void;
   onExportChat: () => void;
+  onExportPdf: () => void;
+  onPrintChat: () => void;
+  onSaveToSources?: () => void;
+  isSavingToSources?: boolean;
   onOpenSourcesModal: () => void;
-  onClearCollections: () => void;
   activeTitle?: string;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
@@ -97,8 +107,11 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   onCitationClick,
   onViewInKnowledge,
   onExportChat,
+  onExportPdf,
+  onPrintChat,
+  onSaveToSources,
+  isSavingToSources = false,
   onOpenSourcesModal,
-  onClearCollections,
   activeTitle,
   sidebarOpen = true,
   onToggleSidebar,
@@ -110,6 +123,9 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const [showJumpToTop, setShowJumpToTop] = useState(false);
+  // Transcript zoom level for the fullscreen floating bar (0 = normal).
+  const [zoomLevel, setZoomLevel] = useState(0);
   // Track whether the user is near the bottom so we only auto-scroll when they
   // are following the conversation (not reading history further up).
   const isNearBottomRef = useRef(true);
@@ -138,19 +154,38 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     }
   }, [messages, isLoading, pendingToolApproval]);
 
-  // Show the jump-to-bottom button when scrolled up.
+  // Show the jump-to-bottom / jump-to-top buttons based on scroll position.
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     isNearBottomRef.current = distanceFromBottom < 120;
     setShowJumpToBottom(distanceFromBottom > 240);
+    setShowJumpToTop(el.scrollTop > 240);
   }, []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     isNearBottomRef.current = true;
     setShowJumpToBottom(false);
+  }, []);
+
+  const scrollToTop = useCallback(() => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    setShowJumpToTop(false);
+  }, []);
+
+  /** Scroll the stream so a specific message (by id) is visible near the top. */
+  const jumpToMessage = useCallback((messageId: string) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const target = container.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+    if (!target) return;
+    const top = target.offsetTop - container.offsetTop - 12;
+    container.scrollTo({ top, behavior: 'smooth' });
+    // Brief highlight so the user can spot the landed message.
+    target.classList.add('ring-2', 'ring-indigo-400', 'ring-offset-2');
+    window.setTimeout(() => target.classList.remove('ring-2', 'ring-indigo-400', 'ring-offset-2'), 1600);
   }, []);
 
   // Auto-resize textarea
@@ -171,7 +206,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-50/30 relative" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       {/* Compact Toolbar */}
-      <div className="p-2 border-b border-slate-200 bg-white/80 backdrop-blur-sm flex items-center justify-between gap-2 shrink-0">
+      <div className="no-print p-2 border-b border-slate-200 bg-white/80 backdrop-blur-sm flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
           {/* Sidebar toggle — visible when the history column is collapsed */}
           {onToggleSidebar && (
@@ -209,12 +244,49 @@ export const ChatMain: React.FC<ChatMainProps> = ({
             )}
           </button>
 
-          {/* Export */}
+          {/* Save conversation to knowledge sources */}
+          {onSaveToSources && (
+            <button
+              type="button"
+              onClick={onSaveToSources}
+              disabled={isSavingToSources || messages.length === 0}
+              className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 text-slate-600 transition cursor-pointer flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+              title={lang === 'ar' ? 'حفظ المحادثة في المصادر كمرجع' : 'Save chat to sources as reference'}
+            >
+              {isSavingToSources ? (
+                <RotateCcw className="w-4 h-4 animate-spin" />
+              ) : (
+                <BookmarkPlus className="w-4 h-4" />
+              )}
+            </button>
+          )}
+
+          {/* Print transcript */}
+          <button
+            type="button"
+            onClick={onPrintChat}
+            className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 transition cursor-pointer flex items-center justify-center"
+            title={lang === 'ar' ? 'طباعة المحادثة' : 'Print Chat'}
+          >
+            <Printer className="w-4 h-4" />
+          </button>
+
+          {/* Export as PDF (via print → Save as PDF) */}
+          <button
+            type="button"
+            onClick={onExportPdf}
+            className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 transition cursor-pointer flex items-center justify-center"
+            title={lang === 'ar' ? 'تصدير المحادثة كملف PDF' : 'Export Chat as PDF'}
+          >
+            <FileDown className="w-4 h-4" />
+          </button>
+
+          {/* Export JSON */}
           <button
             type="button"
             onClick={onExportChat}
             className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 transition cursor-pointer flex items-center justify-center"
-            title={lang === 'ar' ? 'تصدير المحادثة' : 'Export Chat'}
+            title={lang === 'ar' ? 'تصدير المحادثة (JSON)' : 'Export Chat (JSON)'}
           >
             <Download className="w-4 h-4" />
           </button>
@@ -257,107 +329,189 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       )}
 
       {/* Messages Stream */}
-      <div
-        ref={scrollContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-5 lazy-scroll"
-      >
-        {messageList}
+      <div className="relative flex-1 min-h-0 print-expand">
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="print-chat-stream chat-stream-zoom h-full overflow-y-auto px-4 sm:px-6 py-6 space-y-5 lazy-scroll"
+          data-zoom={zoomLevel}
+        >
+          {messageList}
 
-        {/* Pending Tool Approval Card */}
-        {pendingToolApproval && (
-          <div className="my-3 p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl shadow-sm text-slate-800 animate-fadeIn">
-            <div className="flex items-start justify-between gap-3 mb-2">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
-                  <AlertTriangle className="w-4 h-4" />
+          {/* Pending Tool Approval Card */}
+          {pendingToolApproval && (
+            <div className="my-3 p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl shadow-sm text-slate-800 animate-fadeIn">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0">
+                    <AlertTriangle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-900">
+                      {lang === 'ar' ? 'طلب موافقة لتشغيل أداة MCP' : 'Human Approval Required'}
+                    </h4>
+                    <p className="text-[11px] text-amber-800">
+                      {lang === 'ar'
+                        ? 'الأداة ذات أثر جانبي وتتطلب تفويضاً'
+                        : 'Tool has side effects and needs authorization'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-amber-900">
-                    {lang === 'ar' ? 'طلب موافقة لتشغيل أداة MCP' : 'Human Approval Required'}
-                  </h4>
-                  <p className="text-[11px] text-amber-800">
-                    {lang === 'ar'
-                      ? 'الأداة ذات أثر جانبي وتتطلب تفويضاً'
-                      : 'Tool has side effects and needs authorization'}
-                  </p>
-                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-200 text-amber-900">
+                  {pendingToolApproval.scopedToolName}
+                </span>
               </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-200 text-amber-900">
-                {pendingToolApproval.scopedToolName}
-              </span>
+              <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200 text-xs font-mono text-slate-700 mb-3 overflow-x-auto">
+                <span className="font-bold text-amber-900 text-[10px] block mb-1">
+                  {lang === 'ar' ? 'البرامترات:' : 'Input Arguments:'}
+                </span>
+                <pre className="text-[11px] whitespace-pre-wrap">
+                  {JSON.stringify(pendingToolApproval.inputParams, null, 2)}
+                </pre>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onRejectTool}
+                  className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onApproveTool(pendingToolApproval)}
+                  className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{lang === 'ar' ? 'تأكيد التشغيل' : 'Authorize'}</span>
+                </button>
+              </div>
             </div>
-            <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200 text-xs font-mono text-slate-700 mb-3 overflow-x-auto">
-              <span className="font-bold text-amber-900 text-[10px] block mb-1">
-                {lang === 'ar' ? 'البرامترات:' : 'Input Arguments:'}
-              </span>
-              <pre className="text-[11px] whitespace-pre-wrap">
-                {JSON.stringify(pendingToolApproval.inputParams, null, 2)}
-              </pre>
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onRejectTool}
-                className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold transition cursor-pointer flex items-center gap-1"
-              >
-                <XCircle className="w-3.5 h-3.5" />
-                {lang === 'ar' ? 'إلغاء' : 'Cancel'}
-              </button>
-              <button
-                type="button"
-                onClick={() => onApproveTool(pendingToolApproval)}
-                className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>{lang === 'ar' ? 'تأكيد التشغيل' : 'Authorize'}</span>
-              </button>
-            </div>
-          </div>
-        )}
+          )}
 
-        {/* Loading Indicator — modern typing dots */}
-        {isLoading && (
-          <div className="flex items-center gap-3 text-xs text-slate-500 animate-message-appear">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-md">
-              <Sparkles className="w-4 h-4 animate-pulse" />
+          {/* Loading Indicator — modern typing dots */}
+          {isLoading && (
+            <div className="flex items-center gap-3 text-xs text-slate-500 animate-message-appear">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                <Sparkles className="w-4 h-4 animate-pulse" />
+              </div>
+              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-sm">
+                <span
+                  className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
+                  style={{ animationDelay: '0ms' }}
+                />
+                <span
+                  className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
+                  style={{ animationDelay: '150ms' }}
+                />
+                <span
+                  className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
+                  style={{ animationDelay: '300ms' }}
+                />
+                <span className="text-[11px] text-slate-500 ml-1">{lang === 'ar' ? 'يفكر...' : 'Thinking...'}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-sm">
-              <span
-                className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
-                style={{ animationDelay: '0ms' }}
-              />
-              <span
-                className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
-                style={{ animationDelay: '150ms' }}
-              />
-              <span
-                className="w-2 h-2 rounded-full bg-indigo-400 animate-typing-dot"
-                style={{ animationDelay: '300ms' }}
-              />
-              <span className="text-[11px] text-slate-500 ml-1">{lang === 'ar' ? 'يفكر...' : 'Thinking...'}</span>
-            </div>
-          </div>
-        )}
+          )}
 
-        <div ref={messagesEndRef} className="h-2" />
+          <div ref={messagesEndRef} className="h-2" />
+        </div>
+
+        {/* Question navigator rail — one tick per user question, click to jump */}
+        <QuestionNavigator messages={messages} lang={lang} onJumpToMessage={jumpToMessage} />
+
+        {/* Jump-to-top / jump-to-bottom buttons — appear based on scroll position */}
+        <div className="no-print absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-1.5">
+          {showJumpToTop && (
+            <button
+              type="button"
+              onClick={scrollToTop}
+              className="w-9 h-9 rounded-full bg-white border border-slate-200 shadow-lg hover:bg-indigo-50 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all cursor-pointer animate-fadeIn"
+              title={lang === 'ar' ? 'الانتقال إلى الأعلى' : 'Jump to top'}
+            >
+              <ArrowUp className="w-4 h-4" />
+            </button>
+          )}
+          {showJumpToBottom && (
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="w-9 h-9 rounded-full bg-white border border-slate-200 shadow-lg hover:bg-indigo-50 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all cursor-pointer animate-fadeIn"
+              title={lang === 'ar' ? 'الانتقال إلى الأسفل' : 'Jump to bottom'}
+            >
+              <ArrowDown className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Jump-to-bottom button — appears when scrolled up */}
-      {showJumpToBottom && (
-        <button
-          type="button"
-          onClick={scrollToBottom}
-          className="absolute bottom-40 left-1/2 -translate-x-1/2 z-10 w-9 h-9 rounded-full bg-white border border-slate-200 shadow-lg hover:bg-indigo-50 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all cursor-pointer animate-fadeIn"
-          title={lang === 'ar' ? 'الانتقال إلى الأسفل' : 'Jump to bottom'}
+      {/* Fullscreen floating action bar — print, PDF export, text zoom, exit.
+          Positioned just under the toolbar so it floats over the message
+          stream without covering any existing controls. */}
+      {isFullscreen && (
+        <div
+          className="no-print absolute top-14 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-2 py-1.5 rounded-2xl bg-slate-900/90 backdrop-blur-md border border-slate-700/60 shadow-2xl animate-fadeIn"
+          role="toolbar"
+          aria-label={lang === 'ar' ? 'أدوات ملء الشاشة' : 'Fullscreen tools'}
         >
-          <ArrowDown className="w-4 h-4" />
-        </button>
+          <button
+            type="button"
+            onClick={onPrintChat}
+            className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/70 transition cursor-pointer"
+            title={lang === 'ar' ? 'طباعة المحادثة' : 'Print chat'}
+          >
+            <Printer className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onExportPdf}
+            className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/70 transition cursor-pointer"
+            title={lang === 'ar' ? 'تصدير كملف PDF' : 'Export as PDF'}
+          >
+            <FileDown className="w-4 h-4" />
+          </button>
+
+          <span className="w-px h-5 bg-slate-700 mx-0.5" />
+
+          <button
+            type="button"
+            onClick={() => setZoomLevel((z) => Math.max(0, z - 1))}
+            disabled={zoomLevel === 0}
+            className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/70 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title={lang === 'ar' ? 'تصغير الخط' : 'Decrease text size'}
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <span className="text-[10px] font-mono font-bold text-indigo-300 w-8 text-center select-none">
+            {100 + zoomLevel * 12}%
+          </span>
+          <button
+            type="button"
+            onClick={() => setZoomLevel((z) => Math.min(3, z + 1))}
+            disabled={zoomLevel === 3}
+            className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/70 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title={lang === 'ar' ? 'تكبير الخط' : 'Increase text size'}
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+
+          <span className="w-px h-5 bg-slate-700 mx-0.5" />
+
+          <button
+            type="button"
+            onClick={onToggleFullscreen}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold transition cursor-pointer"
+            title={lang === 'ar' ? 'الخروج من ملء الشاشة (Esc)' : 'Exit fullscreen (Esc)'}
+          >
+            <Minimize2 className="w-3.5 h-3.5" />
+            <span>{lang === 'ar' ? 'خروج' : 'Exit'}</span>
+          </button>
+        </div>
       )}
 
       {/* Follow-up Suggestions Bar */}
       {suggestions.length > 0 && !isLoading && (
-        <div className="px-4 py-2 bg-white/60 border-t border-slate-200/80 shrink-0">
+        <div className="no-print px-4 py-2 bg-white/60 border-t border-slate-200/80 shrink-0">
           <FollowUpSuggestions
             suggestions={suggestions}
             lang={lang}
@@ -370,39 +524,8 @@ export const ChatMain: React.FC<ChatMainProps> = ({
         </div>
       )}
 
-      {/* Collection Scope Indicator */}
-      {selectedCollectionIds.length > 0 && (
-        <div className="mx-4 mb-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200/80 text-amber-900 text-xs flex items-center justify-between gap-2 shadow-2xs max-w-2xl mx-auto">
-          <span className="flex items-center gap-1.5">
-            <FolderKanban className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span className="font-medium">
-              {lang === 'ar'
-                ? `النطاق محدد بـ ${selectedCollectionIds.length} مصادر`
-                : `Scoped to ${selectedCollectionIds.length} sources`}
-            </span>
-          </span>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onOpenSourcesModal}
-              className="font-bold underline text-amber-800 hover:text-amber-950 transition cursor-pointer"
-            >
-              {lang === 'ar' ? 'تعديل' : 'Edit'}
-            </button>
-            <button
-              type="button"
-              onClick={onClearCollections}
-              className="p-0.5 rounded-full hover:bg-amber-200/60 text-amber-700 hover:text-amber-950 transition cursor-pointer"
-              title={lang === 'ar' ? 'إلغاء التصفية' : 'Clear filter'}
-            >
-              <XCircle className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Modern Input Bar */}
-      <div className="p-4 pt-2 bg-gradient-to-t from-white via-white to-transparent shrink-0">
+      <div className="no-print p-4 pt-2 bg-gradient-to-t from-white via-white to-transparent shrink-0">
         <div className="max-w-4xl mx-auto">
           <form
             onSubmit={(e) => {

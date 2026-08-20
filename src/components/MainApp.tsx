@@ -269,7 +269,7 @@ export default function MainApp() {
 
   return (
     <div
-      className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${resolvedTheme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} ${activeTab === 'chat' ? 'h-screen' : ''}`}
+      className={`print-expand min-h-screen flex flex-col font-sans transition-colors duration-300 ${resolvedTheme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} ${activeTab === 'chat' ? 'h-screen' : ''}`}
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
     >
       {/* Top Main Navigation Header with integrated links */}
@@ -290,7 +290,7 @@ export default function MainApp() {
       {/* Workspace Active Tab View Content
           Chat is the primary workspace and fills the full viewport width.
           Other tabs keep the centered max-width container for their content. */}
-      <main className="flex-1 w-full min-h-0">
+      <main className="print-expand flex-1 w-full min-h-0">
         {activeTab === 'chat' && (
           <div className="w-full h-full">
             <ChatStudio tenantId={tenantId} lang={lang} onNavigateTab={handleTabChange} />

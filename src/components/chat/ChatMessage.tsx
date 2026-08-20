@@ -50,7 +50,10 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({ message, lang, onCitatio
   );
 
   return (
-    <div className={`flex gap-3 group animate-message-appear ${isAssistant ? 'justify-start' : 'justify-end'}`}>
+    <div
+      data-message-id={message.id}
+      className={`flex gap-3 group animate-message-appear ${isAssistant ? 'justify-start' : 'justify-end'}`}
+    >
       {isAssistant && (
         <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white flex items-center justify-center shrink-0 shadow-md mt-0.5">
           <Bot className="w-4 h-4" />

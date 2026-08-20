@@ -75,30 +75,67 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
   margin-block-end: 0.625rem;
 }
 
-/* ── Dark theme (class-based, toggled by the preferences store) ───────── */
+/* ── Dark theme (class-based, toggled by the preferences store) ─────────
+   A consistent, low-glare dark palette built on deep blue-gray (slate-900
+   base) instead of pure black, with layered surfaces for depth. Unlayered
+   rules intentionally override Tailwind's layered utilities so the whole app
+   restyles without touching every component. */
 .dark body {
-  --bg-primary: #020617;
+  --bg-primary: #0f172a;
   --text-primary: #e2e8f0;
   background-color: var(--bg-primary);
   color: var(--text-primary);
 }
-/* Core chat surfaces get dark counterparts so the main workspace is fully
-   usable in dark mode. Component-level `dark:` utilities still apply on top. */
-.dark .bg-slate-50\/30 {
-  background-color: rgb(2 6 23 / 0.5);
+
+/* Layered surface tokens used across the app in dark mode:
+   base #0f172a → card #1e293b → raised #243044 → border #334155. */
+.dark .bg-slate-50,
+.dark .bg-slate-50\/30,
+.dark .bg-slate-50\/50,
+.dark .bg-slate-50\/70,
+.dark .bg-slate-50\/80 {
+  background-color: #131c2e;
 }
-.dark .bg-white\/80 {
-  background-color: rgb(15 23 42 / 0.85);
+.dark .bg-white {
+  background-color: #1e293b;
 }
+.dark .bg-white\/80,
 .dark .bg-white\/60 {
-  background-color: rgb(15 23 42 / 0.7);
+  background-color: rgb(21 30 46 / 0.85);
 }
-.dark .border-slate-200 {
+.dark .bg-slate-100 {
+  background-color: #243044;
+}
+.dark .bg-slate-200 {
+  background-color: #334155;
+}
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-100:hover,
+.dark .hover\:bg-slate-200\/70:hover,
+.dark .hover\:bg-slate-200:hover {
+  background-color: #2a3a52;
+}
+.dark .hover\:bg-indigo-50\/40:hover,
+.dark .hover\:bg-indigo-50\/90:hover,
+.dark .hover\:bg-indigo-50:hover {
+  background-color: rgb(99 102 241 / 0.12);
+}
+
+/* Borders */
+.dark .border-slate-200,
+.dark .border-slate-200\/80,
+.dark .border-slate-200\/60,
+.dark .border-slate-100 {
   border-color: rgb(51 65 85 / 0.7);
 }
-.dark .border-slate-200\/80 {
+.dark .border-slate-300 {
+  border-color: #475569;
+}
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
   border-color: rgb(51 65 85 / 0.55);
 }
+
+/* Text */
 .dark .text-slate-900,
 .dark .text-slate-800 {
   color: #e2e8f0;
@@ -107,37 +144,96 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
   color: #cbd5e1;
 }
 .dark .text-slate-600 {
-  color: #94a3b8;
+  color: #a5b4cb;
 }
 .dark .text-slate-500 {
   color: #94a3b8;
 }
 .dark .text-slate-400 {
+  color: #7c8ba1;
+}
+.dark .placeholder\:text-slate-400::placeholder {
   color: #64748b;
 }
-.dark .hover\:bg-slate-100:hover {
-  background-color: rgb(30 41 59);
-}
-.dark .hover\:bg-slate-50:hover {
-  background-color: rgb(30 41 59);
-}
-/* Assistant message bubbles */
-.dark .bg-white.border {
-  background-color: #0f172a;
-}
+
 /* Chat input bar gradient + form field */
 .dark .bg-gradient-to-t.from-white {
-  --tw-gradient-from: #020617;
-  --tw-gradient-via: #020617;
-  background-image: linear-gradient(to top, var(--tw-gradient-from), var(--tw-gradient-via), transparent);
+  background-image: linear-gradient(to top, #0f172a, rgb(15 23 42 / 0.85), transparent);
 }
 .dark form.bg-white {
-  background-color: #0f172a;
-  border-color: rgb(51 65 85);
+  background-color: #1e293b;
+  border-color: #334155;
 }
 .dark textarea.bg-transparent {
   color: #e2e8f0;
 }
+
+/* GFM alert boxes — soften the pastel light backgrounds for dark mode */
+.dark .bg-blue-50\/70 {
+  background-color: rgb(59 130 246 / 0.12);
+}
+.dark .bg-emerald-50\/70,
+.dark .bg-emerald-50\/80 {
+  background-color: rgb(16 185 129 / 0.12);
+}
+.dark .bg-indigo-50\/70,
+.dark .bg-indigo-50\/60 {
+  background-color: rgb(99 102 241 / 0.14);
+}
+.dark .bg-amber-50\/80,
+.dark .bg-amber-50,
+.dark .bg-amber-50\/50 {
+  background-color: rgb(245 158 11 / 0.12);
+}
+.dark .bg-rose-50\/80,
+.dark .bg-rose-50,
+.dark .bg-rose-50\/50,
+.dark .bg-rose-50\/60 {
+  background-color: rgb(244 63 94 / 0.12);
+}
+.dark .text-blue-950 {
+  color: #bfdbfe;
+}
+.dark .text-emerald-950,
+.dark .text-emerald-900,
+.dark .text-emerald-800 {
+  color: #a7f3d0;
+}
+.dark .text-indigo-950,
+.dark .text-indigo-900 {
+  color: #c7d2fe;
+}
+.dark .text-amber-950,
+.dark .text-amber-900,
+.dark .text-amber-800 {
+  color: #fde68a;
+}
+.dark .text-rose-950,
+.dark .text-rose-900,
+.dark .text-rose-800,
+.dark .text-rose-700 {
+  color: #fecdd3;
+}
+.dark .border-blue-200 {
+  border-color: rgb(59 130 246 / 0.3);
+}
+.dark .border-emerald-200 {
+  border-color: rgb(16 185 129 / 0.3);
+}
+.dark .border-indigo-200,
+.dark .border-indigo-200\/80 {
+  border-color: rgb(99 102 241 / 0.3);
+}
+.dark .border-amber-200,
+.dark .border-amber-200\/80,
+.dark .border-amber-300 {
+  border-color: rgb(245 158 11 / 0.32);
+}
+.dark .border-rose-200,
+.dark .border-rose-300 {
+  border-color: rgb(244 63 94 / 0.32);
+}
+
 /* Markdown body readability in dark mode */
 .dark .rich-markdown-body {
   color: #cbd5e1;
@@ -150,14 +246,102 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
   color: #f1f5f9;
 }
 .dark .rich-markdown-body blockquote {
-  background-color: rgb(49 46 129 / 0.25);
+  background-color: rgb(99 102 241 / 0.12);
   color: #c7d2fe;
+}
+.dark .rich-markdown-body .bg-slate-100 {
+  background-color: #2a3a52;
 }
 .dark .katex {
   color: #e2e8f0;
 }
 .dark .katex-arabic {
   --ka-color: #e2e8f0;
+}
+
+/* Tables & diagrams */
+.dark .bg-slate-100.text-slate-800 {
+  background-color: #243044;
+  color: #e2e8f0;
+}
+.dark .mermaid-container {
+  background-color: #1e293b;
+}
+.dark .mermaid-container svg {
+  background: transparent;
+}
+
+/* Scrollbars in dark mode */
+.dark .lazy-scroll::-webkit-scrollbar-thumb {
+  background: rgba(129, 140, 248, 0.28);
+}
+.dark .lazy-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(129, 140, 248, 0.45);
+}
+
+/* ── Chat transcript zoom (fullscreen "تكبير الخط") ─────────────────────
+   Uses the CSS `zoom` property so the whole message region — including
+   rem-based Tailwind text, math, code and tables — scales together.
+   `zoom` is supported in all evergreen browsers (Firefox 126+). */
+.chat-stream-zoom[data-zoom='1'] {
+  zoom: 1.12;
+}
+.chat-stream-zoom[data-zoom='2'] {
+  zoom: 1.25;
+}
+.chat-stream-zoom[data-zoom='3'] {
+  zoom: 1.4;
+}
+
+/* ── Print styles — clean transcript output for Print & Export-as-PDF ───
+   Hides all app chrome and prints only the message stream on white paper,
+   forcing light colors even when dark mode is active. */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  body {
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  /* Let the message stream flow across pages instead of scrolling. */
+  .print-chat-stream {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 0 !important;
+  }
+  /* Flatten the layout so the transcript occupies the full page width. */
+  .print-expand {
+    position: static !important;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+  /* Ink-friendly message bubbles. */
+  .print-chat-stream .rounded-2xl {
+    box-shadow: none !important;
+    border: 1px solid #e2e8f0 !important;
+    background: #fff !important;
+    break-inside: avoid;
+  }
+  .print-chat-stream .text-slate-800,
+  .print-chat-stream .text-slate-900,
+  .print-chat-stream .rich-markdown-body {
+    color: #0f172a !important;
+  }
+  /* Force light math colors for paper. */
+  .print-chat-stream .katex,
+  .print-chat-stream .katex-arabic {
+    color: #0f172a !important;
+  }
+  /* Hide the header, footer and side panels regardless of .no-print. */
+  header,
+  footer {
+    display: none !important;
+  }
 }
 
 .no-scrollbar::-webkit-scrollbar {

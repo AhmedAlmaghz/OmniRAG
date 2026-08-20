@@ -28,6 +28,7 @@ import {
   Collection,
 } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { printChatTranscript, exportChatAsPdf, buildTranscriptText } from '@/lib/chat/chatExport';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { ChatMain } from '@/components/chat/ChatMain';
 
@@ -490,6 +491,63 @@ Supported features:
     downloadAnchor.remove();
   };
 
+  // Print / PDF export go through the native print pipeline (see chatExport.ts).
+  const handlePrintChat = useCallback(() => printChatTranscript(), []);
+  const handleExportPdf = useCallback(() => exportChatAsPdf(), []);
+
+  // Save the current conversation into the knowledge base as a reference
+  // document. The transcript is ingested through the documents API, which
+  // creates a source connector, chunks the content and indexes it in Qdrant.
+  const [isSavingToSources, setIsSavingToSources] = useState(false);
+  const handleSaveToSources = useCallback(async () => {
+    if (messages.length === 0 || isSavingToSources) return;
+    setIsSavingToSources(true);
+    try {
+      const currentConv = conversations.find((c) => c.id === activeConversationId);
+      const title =
+        currentConv?.title ||
+        (lang === 'ar'
+          ? `محادثة OmniRAG — ${new Date().toLocaleDateString('ar')}`
+          : `OmniRAG Chat — ${new Date().toLocaleDateString()}`);
+      const content = buildTranscriptText(messages, title);
+
+      const res = await fetchWithAuth('/api/v1/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: lang === 'ar' ? `مرجع محادثة: ${title}` : `Chat Reference: ${title}`,
+          content,
+          sourceType: 'custom_mcp',
+          language: lang,
+          collectionIds: selectedCollectionIds,
+          sourceConfig: { origin: 'chat-studio', conversationId: activeConversationId },
+        }),
+      });
+
+      if (res.ok) {
+        setMcpApprovalSuccess(
+          lang === 'ar'
+            ? 'تم حفظ المحادثة في المصادر المعرفية كمرجع قابل للبحث.'
+            : 'Conversation saved to knowledge sources as a searchable reference.',
+        );
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSecurityNotice(
+          data.error || (lang === 'ar' ? 'تعذر حفظ المحادثة في المصادر.' : 'Could not save the chat to sources.'),
+        );
+      }
+      setTimeout(() => {
+        setMcpApprovalSuccess(null);
+        setSecurityNotice(null);
+      }, 4000);
+    } catch {
+      setSecurityNotice(lang === 'ar' ? 'حدث خطأ أثناء الحفظ في المصادر.' : 'Error while saving to sources.');
+      setTimeout(() => setSecurityNotice(null), 4000);
+    } finally {
+      setIsSavingToSources(false);
+    }
+  }, [messages, isSavingToSources, conversations, lang, selectedCollectionIds, activeConversationId]);
+
   // Deterministic fallback suggestions for when AI suggestions are unavailable
   const getFallbackSuggestions = (msgList: Message[]): string[] => {
     if (!msgList || msgList.length <= 1) {
@@ -732,7 +790,7 @@ Supported features:
      the conversation truly fills the whole screen. */
   const chatSurface = (
     <div
-      className={`flex flex-col h-full bg-white ${isFullscreen ? '' : 'border-x border-slate-200/80 shadow-xs'} overflow-hidden relative`}
+      className={`print-expand flex flex-col h-full bg-white ${isFullscreen ? '' : 'border-x border-slate-200/80 shadow-xs'} overflow-hidden relative`}
     >
       <ChatMain
         lang={lang}
@@ -755,8 +813,11 @@ Supported features:
         onCitationClick={handleCitationClick}
         onViewInKnowledge={handleViewInKnowledge}
         onExportChat={handleExportChat}
+        onExportPdf={handleExportPdf}
+        onPrintChat={handlePrintChat}
+        onSaveToSources={handleSaveToSources}
+        isSavingToSources={isSavingToSources}
         onOpenSourcesModal={() => setShowSourcesModal(true)}
-        onClearCollections={handleClearAllCollections}
         activeTitle={activeConv?.title}
         sidebarOpen={isSidebarOpen}
         onToggleSidebar={toggleSidebar}
@@ -860,14 +921,17 @@ Supported features:
   // Focus fullscreen: the chat surface alone, covering the entire viewport.
   if (isFullscreen) {
     return (
-      <div className="fixed inset-0 z-40 bg-white shadow-2xl animate-fadeIn" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+      <div
+        className="print-expand fixed inset-0 z-40 bg-white shadow-2xl animate-fadeIn"
+        dir={lang === 'ar' ? 'rtl' : 'ltr'}
+      >
         {chatSurface}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-white" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div className="print-expand flex h-full w-full overflow-hidden bg-white" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       <Group orientation="horizontal" className="h-full w-full">
         {/* Conversation Sidebar — collapsible & drag-resizable */}
         <Panel
@@ -879,7 +943,7 @@ Supported features:
           minSize="13"
           maxSize="32"
           onResize={(size) => setIsSidebarOpen(size.asPercentage > 0.5)}
-          className="min-w-0"
+          className="no-print min-w-0"
         >
           <ChatSidebar
             conversations={conversations}
@@ -921,7 +985,7 @@ Supported features:
               minSize="16"
               maxSize="36"
               onResize={(size) => setIsInspectorCollapsed(size.asPercentage <= 0.5)}
-              className="min-w-0"
+              className="no-print min-w-0"
             >
               <div className="h-full flex flex-col bg-slate-50 border-slate-200/80 p-4 overflow-hidden">
                 <div className="flex flex-col h-full overflow-hidden">
