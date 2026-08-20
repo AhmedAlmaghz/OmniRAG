@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { PluggableList } from 'unified';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -28,7 +29,9 @@ import {
   ArrowDown,
 } from 'lucide-react';
 import { CodeBlock } from '@/components/ui/CodeBlock';
-import { convertTeXToArabicMath, containsMathExpressions } from '@/lib/utils/arabicMath';
+import { containsMathExpressions } from '@/lib/utils/arabicMath';
+import rehypeKatexArabic from '@/lib/math/rehypeKatexArabic';
+import { useUserPreferences } from '@/lib/preferences/userPreferences';
 import { CitationInline } from '@/components/chat/CitationInline';
 import { Citation } from '@/lib/types/omnirag';
 
@@ -305,10 +308,13 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [mathDisplayMode, setMathDisplayMode] = useState<'standard' | 'arabic'>('standard');
-  const [useArabicNumerals, setUseArabicNumerals] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [fontSizeClass, setFontSizeClass] = useState<'text-xs' | 'text-sm' | 'text-base'>('text-sm');
+
+  // Global user preferences (math engine, numerals) — applied automatically,
+  // no per-message toggles. Managed in Settings → Appearance.
+  const { preferences } = useUserPreferences();
+  const { mathMode, mathArabicNumerals } = preferences;
 
   const hasMath = useMemo(() => containsMathExpressions(content), [content]);
 
@@ -400,15 +406,9 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
     URL.revokeObjectURL(url);
   }, [content]);
 
-  // Arabic-math pre-processing (only when the toggle is active)
-  const processedContent = useMemo(() => {
-    if (!hasMath || mathDisplayMode === 'standard') return content;
-    return content.replace(/(\$\$[\s\S]+?\$\$|\$[^\$\n]+?\$)/g, (match) => {
-      const rawTex = match.replace(/^\$\$?|\$\$?$/g, '');
-      const converted = convertTeXToArabicMath(rawTex, { useArabicNumerals });
-      return `\n\n> 🧮 **[معادلة رياضية بالعربية - KaTeX-Arabic]:**\n> \`${converted}\`\n\n`;
-    });
-  }, [content, hasMath, mathDisplayMode, useArabicNumerals]);
+  // Math is rendered automatically by the rehype pipeline below — standard
+  // KaTeX or KaTeX4Arabic depending on the global user preference. No
+  // content pre-processing is needed anymore.
 
   // Build the react-markdown `components` map once per relevant change.
   const components = useMemo(
@@ -675,18 +675,39 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
     [lang, processChildren, isImageUrl, isVideoUrl, isAudioUrl],
   );
 
+  // Select the math engine from the global preference. The plugin list is
+  // memoized so ReactMarkdown doesn't re-run the whole pipeline on renders
+  // unrelated to math settings.
+  const rehypePlugins = useMemo<PluggableList>(
+    () =>
+      mathMode === 'arabic'
+        ? [
+            [
+              rehypeKatexArabic,
+              {
+                numerals: mathArabicNumerals ? 'arabic' : 'latin',
+                throwOnError: false,
+                strict: false,
+                errorColor: '#ef4444',
+              },
+            ],
+          ]
+        : [[rehypeKatex, { strict: false, throwOnError: false, errorColor: '#ef4444' }]],
+    [mathMode, mathArabicNumerals],
+  );
+
   // Memoize the rendered markdown tree so unchanged messages don't re-parse.
   const markdownTree = useMemo(
     () => (
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false, errorColor: '#ef4444' }]]}
+        rehypePlugins={rehypePlugins}
         components={components as any}
       >
-        {processedContent}
+        {content}
       </ReactMarkdown>
     ),
-    [processedContent, components],
+    [content, rehypePlugins, components],
   );
 
   return (
@@ -696,42 +717,24 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-200/80 text-xs text-slate-600 bg-slate-50/80 p-2 rounded-xl">
           <div className="flex flex-wrap items-center gap-1.5">
             {hasMath && (
-              <div className="flex items-center gap-1 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg text-amber-900 font-medium">
+              <div
+                className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg text-amber-900 font-medium"
+                title={
+                  lang === 'ar'
+                    ? 'تُعرض المعادلات تلقائياً حسب إعدادك العمومي في: الإعدادات ← المظهر والخطوط'
+                    : 'Equations render automatically per your global setting in: Settings → Appearance'
+                }
+              >
                 <Calculator className="w-3.5 h-3.5 text-amber-600" />
-                <span className="text-[11px]">{lang === 'ar' ? 'عرض الرياضيات:' : 'Math Mode:'}</span>
-                <button
-                  type="button"
-                  onClick={() => setMathDisplayMode('standard')}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition ${
-                    mathDisplayMode === 'standard' ? 'bg-amber-600 text-white' : 'hover:bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  KaTeX
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMathDisplayMode('arabic')}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition ${
-                    mathDisplayMode === 'arabic' ? 'bg-amber-600 text-white' : 'hover:bg-amber-100 text-amber-800'
-                  }`}
-                  title="عرض المعادلات بالرموز والمصطلحات العربية"
-                >
-                  KaTeX-Arabic (عربي)
-                </button>
-                {mathDisplayMode === 'arabic' && (
-                  <button
-                    type="button"
-                    onClick={() => setUseArabicNumerals(!useArabicNumerals)}
-                    className={`px-1.5 py-0.5 rounded text-[10px] border cursor-pointer transition ${
-                      useArabicNumerals
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-white text-slate-700 border-slate-300'
-                    }`}
-                    title="تحويل الأرقام إلى الأرقام العربية (٠-٩)"
-                  >
-                    {useArabicNumerals ? 'أرقام (٠-٩)' : 'أرقام (0-9)'}
-                  </button>
-                )}
+                <span className="text-[11px]">
+                  {mathMode === 'arabic'
+                    ? lang === 'ar'
+                      ? 'رياضيات عربية (KaTeX4Arabic)'
+                      : 'Arabic Math (KaTeX4Arabic)'
+                    : lang === 'ar'
+                      ? 'رياضيات قياسية (KaTeX)'
+                      : 'Standard Math (KaTeX)'}
+                </span>
               </div>
             )}
 

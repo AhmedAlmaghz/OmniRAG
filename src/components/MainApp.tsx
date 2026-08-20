@@ -13,6 +13,7 @@ import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
 import { logOutUser, getSession } from '@/lib/auth/authClient';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { useUserPreferences } from '@/lib/preferences/userPreferences';
 
 import { Layers } from 'lucide-react';
 
@@ -25,16 +26,15 @@ export default function MainApp() {
   const [activeTab, setActiveTab] = useState<TabType>('chat');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
-  // Load saved theme, session, active tab, and first launch onboarding check from localStorage
+  // Global appearance preferences (theme, fonts, density, math engine).
+  // The store hydrates from localStorage on mount and applies the resolved
+  // theme class + data attributes to <html> automatically.
+  const { update: updatePreferences, resolvedTheme } = useUserPreferences();
+
+  // Load session, active tab, and first launch onboarding check from localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedTheme = localStorage.getItem('omnirag-theme') as 'light' | 'dark';
-      if (savedTheme) {
-        setTheme(savedTheme);
-      }
-
       const savedAuth = localStorage.getItem('omnirag-auth');
       const savedEmail = localStorage.getItem('omnirag-user-email');
 
@@ -113,10 +113,9 @@ export default function MainApp() {
   };
 
   const handleThemeChange = (newTheme: 'light' | 'dark') => {
-    setTheme(newTheme);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('omnirag-theme', newTheme);
-    }
+    // Persisted through the global preferences store, which also applies the
+    // `.dark` class to <html> immediately.
+    updatePreferences({ theme: newTheme });
   };
 
   // Dynamically fetch or determine correct tenant name
@@ -270,7 +269,7 @@ export default function MainApp() {
 
   return (
     <div
-      className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-950 text-slate-100 dark' : 'bg-slate-50 text-slate-900'} ${activeTab === 'chat' ? 'h-screen' : ''}`}
+      className={`min-h-screen flex flex-col font-sans transition-colors duration-300 ${resolvedTheme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} ${activeTab === 'chat' ? 'h-screen' : ''}`}
       dir={lang === 'ar' ? 'rtl' : 'ltr'}
     >
       {/* Top Main Navigation Header with integrated links */}
@@ -284,7 +283,7 @@ export default function MainApp() {
         onLogOut={handleLogOut}
         currentTenantName={currentTenantName}
         activeTab={activeTab}
-        theme={theme}
+        theme={resolvedTheme}
         onThemeChange={handleThemeChange}
       />
 
@@ -316,7 +315,7 @@ export default function MainApp() {
           available height between the header and the bottom of the viewport. */}
       {activeTab !== 'chat' && (
         <footer
-          className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${theme === 'dark' ? 'bg-slate-900 border-t border-slate-800' : 'bg-white border-t border-slate-200'}`}
+          className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${resolvedTheme === 'dark' ? 'bg-slate-900 border-t border-slate-800' : 'bg-white border-t border-slate-200'}`}
         >
           <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
             <span>

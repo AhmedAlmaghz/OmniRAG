@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { randomApiKey } from '@/lib/crypto/webRandom';
 import {
@@ -36,6 +36,10 @@ import ModelSettingsView from './ModelSettingsView';
 import DiagnosticUtility from './diagnostics/DiagnosticUtility';
 import EnvVariablesManager from './env/EnvVariablesManager';
 import FirstLaunchEnvModal from './env/FirstLaunchEnvModal';
+import { useUserPreferences, type MathMode } from '@/lib/preferences/userPreferences';
+import { renderArabicToString } from 'katex4arabic';
+import katex from 'katex';
+import { Calculator, Sigma } from 'lucide-react';
 
 interface SettingsViewProps {
   tenantId: string;
@@ -43,6 +47,43 @@ interface SettingsViewProps {
   userEmail?: string | null;
   onLogOut?: () => void;
 }
+
+/* ── Live math preview ────────────────────────────────────────────────────
+   Renders a representative equation with the *currently selected* engine so
+   the user sees exactly what their chat messages will look like. */
+const MATH_PREVIEW_SAMPLES = [
+  'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}',
+  '\\int_{0}^{\\infty} e^{-x^2} \\, dx = \\frac{\\sqrt{\\pi}}{2}',
+  '\\lim_{x \\to 0} \\frac{\\sin(x)}{x} = 1',
+];
+
+const MathPreview: React.FC<{ mode: MathMode; arabicNumerals: boolean }> = ({ mode, arabicNumerals }) => {
+  const rendered = useMemo(
+    () =>
+      MATH_PREVIEW_SAMPLES.map((latex) =>
+        mode === 'arabic'
+          ? renderArabicToString(latex, {
+              numerals: arabicNumerals ? 'arabic' : 'latin',
+              displayMode: true,
+              throwOnError: false,
+            })
+          : katex.renderToString(latex, { displayMode: true, throwOnError: false, strict: false }),
+      ),
+    [mode, arabicNumerals],
+  );
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-2">
+      {rendered.map((html, i) => (
+        <div
+          key={i}
+          className="rounded-lg bg-white border border-slate-100 px-3 py-2 text-slate-900 overflow-x-auto"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ))}
+    </div>
+  );
+};
 
 type TabType =
   'account' | 'notifications' | 'security' | 'appearance' | 'aiModels' | 'ingestion' | 'diagnostics' | 'envVars';
@@ -98,13 +139,19 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
     },
   ]);
 
-  // --- Appearance State ---
-  const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
-  const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg'>('md');
-  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
-  const [arabicFont, setArabicFont] = useState<'cairo' | 'tajawal' | 'ibm'>('cairo');
+  // --- Appearance State (global preferences store) ---
+  // These values live in the shared preferences store so they apply
+  // automatically across the whole app (chat, knowledge base, settings…).
+  const { preferences, update: updatePreferences } = useUserPreferences();
+  const { theme, fontSize, density, arabicFont, mathMode, mathArabicNumerals } = preferences;
+  const setTheme = (v: 'light' | 'dark' | 'system') => updatePreferences({ theme: v });
+  const setFontSize = (v: 'sm' | 'md' | 'lg') => updatePreferences({ fontSize: v });
+  const setDensity = (v: 'comfortable' | 'compact') => updatePreferences({ density: v });
+  const setArabicFont = (v: 'cairo' | 'tajawal' | 'ibm') => updatePreferences({ arabicFont: v });
+  const setMathMode = (v: MathMode) => updatePreferences({ mathMode: v });
+  const setMathArabicNumerals = (v: boolean) => updatePreferences({ mathArabicNumerals: v });
 
-  // Load from local storage on mount
+  // Load profile/security values from local storage on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedName = localStorage.getItem(`omnirag_profile_name_${userEmail}`);
@@ -114,10 +161,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       const savedOrg = localStorage.getItem(`omnirag_profile_org_${userEmail}`);
       const savedColor = localStorage.getItem(`omnirag_profile_color_${userEmail}`);
 
-      const savedTheme = localStorage.getItem('omnirag_theme');
-      const savedFontSize = localStorage.getItem('omnirag_font_size');
-      const savedDensity = localStorage.getItem('omnirag_density');
-      const savedArabicFont = localStorage.getItem('omnirag_arabic_font');
       const savedApiKey = localStorage.getItem(`omnirag_api_key_${userEmail}`);
 
       if (savedName) setDisplayName(savedName);
@@ -129,10 +172,6 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       if (savedOrg) setOrganization(savedOrg);
       if (savedColor) setAvatarColor(savedColor);
 
-      if (savedTheme) setTheme(savedTheme as any);
-      if (savedFontSize) setFontSize(savedFontSize as any);
-      if (savedDensity) setDensity(savedDensity as any);
-      if (savedArabicFont) setArabicFont(savedArabicFont as any);
       if (savedApiKey) setApiKey(savedApiKey);
     }
   }, [userEmail]);
@@ -148,11 +187,8 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
         localStorage.setItem(`omnirag_profile_bio_${userEmail}`, bio);
         localStorage.setItem(`omnirag_profile_org_${userEmail}`, organization);
         localStorage.setItem(`omnirag_profile_color_${userEmail}`, avatarColor);
-
-        localStorage.setItem('omnirag_theme', theme);
-        localStorage.setItem('omnirag_font_size', fontSize);
-        localStorage.setItem('omnirag_density', density);
-        localStorage.setItem('omnirag_arabic_font', arabicFont);
+        // Appearance + math preferences are already persisted instantly by the
+        // preferences store on every change — nothing extra to do here.
       }
       setIsSaving(false);
       setSaveSuccess(true);
@@ -214,6 +250,17 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       densityTitle: 'كثافة عرض الواجهة',
       comfortable: 'عرض متباعد مريح',
       compact: 'عرض مكثف سريع',
+      mathTitle: 'عرض المعادلات الرياضية',
+      mathDesc:
+        'يُطبق هذا الإعداد تلقائياً على جميع المحادثات — لا حاجة لأي أزرار داخل الرسائل. تُكتب المعادلات بصيغة LaTeX وتُعرض فوراً.',
+      mathStandard: 'قياسي (KaTeX)',
+      mathStandardDesc: 'عرض عالمي بالرموز اللاتينية x, y, sin من اليسار لليمين.',
+      mathArabic: 'عربي (KaTeX4Arabic)',
+      mathArabicDesc: 'رموز عربية أصيلة: س، ص، جا، جتا، تكامل — من اليمين لليسار.',
+      mathNumerals: 'الأرقام العربية الهندية (٠-٩)',
+      mathNumeralsDesc: 'تحويل الأرقام داخل المعادلات إلى ٠١٢٣٤٥٦٧٨٩.',
+      mathPreview: 'معاينة حية',
+      mathAppliedNote: 'التغيير فوري — افتح أي محادثة رياضية لترى الأثر مباشرة.',
       emailAlerts: 'تنبيهات البريد الإلكتروني الفورية',
       emailAlertsDesc: 'استلام تقارير دورية وتنبيهات عند إتمام الفهرسة ومزامنة الملفات.',
       securityMcp: 'تنبيهات جدار الحماية وبوابات MCP',
@@ -271,6 +318,17 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       densityTitle: 'Display Density Layout',
       comfortable: 'Comfortable Spacing',
       compact: 'Compact Dense Layout',
+      mathTitle: 'Mathematical Equations Display',
+      mathDesc:
+        'This setting applies automatically to every conversation — no per-message buttons needed. Equations are written in LaTeX and rendered instantly.',
+      mathStandard: 'Standard (KaTeX)',
+      mathStandardDesc: 'Universal rendering with Latin symbols x, y, sin, left-to-right.',
+      mathArabic: 'Arabic (KaTeX4Arabic)',
+      mathArabicDesc: 'Authentic Arabic notation: س، ص، جا، جتا، integral — right-to-left.',
+      mathNumerals: 'Arabic-Indic Numerals (٠-٩)',
+      mathNumeralsDesc: 'Convert digits inside equations to ٠١٢٣٤٥٦٧٨٩.',
+      mathPreview: 'Live Preview',
+      mathAppliedNote: 'Changes are instant — open any math conversation to see the effect.',
       emailAlerts: 'Instant Email Alerts',
       emailAlertsDesc: 'Receive reports and logs when document ingestion and indexing finishes.',
       securityMcp: 'MCP Security Firewalls Alerts',
@@ -1041,6 +1099,111 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                             </button>
                           ))}
                         </div>
+                      </div>
+
+                      {/* ── Math Rendering Engine (global, auto-applied) ── */}
+                      <div className="pt-5 border-t border-slate-100">
+                        <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">
+                          <Sigma className="w-4 h-4 text-indigo-600" />
+                          {t.mathTitle}
+                        </label>
+                        <p className="text-xs text-slate-500 leading-relaxed mb-3 max-w-2xl">{t.mathDesc}</p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                          <button
+                            type="button"
+                            onClick={() => setMathMode('standard')}
+                            aria-pressed={mathMode === 'standard'}
+                            className={`p-4 rounded-xl border text-start transition cursor-pointer select-none ${
+                              mathMode === 'standard'
+                                ? 'border-indigo-650 bg-indigo-555/5 ring-2 ring-indigo-200'
+                                : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 mb-1.5">
+                              <Calculator className="w-4 h-4 text-slate-500" />
+                              <span
+                                className={`text-xs font-bold ${mathMode === 'standard' ? 'text-indigo-700' : 'text-slate-700'}`}
+                              >
+                                {t.mathStandard}
+                              </span>
+                              {mathMode === 'standard' && (
+                                <span className="ms-auto text-[9px] font-bold bg-indigo-600 text-white px-1.5 py-0.5 rounded">
+                                  {lang === 'ar' ? 'نشط' : 'ACTIVE'}
+                                </span>
+                              )}
+                            </span>
+                            <span className="block text-[11px] text-slate-500 leading-relaxed">
+                              {t.mathStandardDesc}
+                            </span>
+                            <span
+                              className="mt-2 block text-center text-sm text-slate-800 bg-slate-50 border border-slate-100 rounded-lg py-1.5"
+                              dir="ltr"
+                            >
+                              x = (−b ± √(b²−4ac)) / 2a
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setMathMode('arabic')}
+                            aria-pressed={mathMode === 'arabic'}
+                            className={`p-4 rounded-xl border text-start transition cursor-pointer select-none ${
+                              mathMode === 'arabic'
+                                ? 'border-indigo-650 bg-indigo-555/5 ring-2 ring-indigo-200'
+                                : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 mb-1.5">
+                              <Sigma className="w-4 h-4 text-amber-600" />
+                              <span
+                                className={`text-xs font-bold ${mathMode === 'arabic' ? 'text-indigo-700' : 'text-slate-700'}`}
+                              >
+                                {t.mathArabic}
+                              </span>
+                              {mathMode === 'arabic' && (
+                                <span className="ms-auto text-[9px] font-bold bg-indigo-600 text-white px-1.5 py-0.5 rounded">
+                                  {lang === 'ar' ? 'نشط' : 'ACTIVE'}
+                                </span>
+                              )}
+                            </span>
+                            <span className="block text-[11px] text-slate-500 leading-relaxed">{t.mathArabicDesc}</span>
+                            <span className="mt-2 block text-center text-sm text-slate-800 bg-amber-50/60 border border-amber-100 rounded-lg py-1.5 font-arabic">
+                              س = (−ب ± √(ب²−٤أج)) / ٢أ
+                            </span>
+                          </button>
+                        </div>
+
+                        {/* Arabic-Indic numerals toggle (only relevant in Arabic mode) */}
+                        {mathMode === 'arabic' && (
+                          <div className="flex items-start justify-between gap-4 p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 mb-4">
+                            <div className="space-y-1">
+                              <h3 className="font-semibold text-slate-900 text-xs">{t.mathNumerals}</h3>
+                              <p className="text-xs text-slate-500 leading-relaxed max-w-xl">{t.mathNumeralsDesc}</p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 select-none">
+                              <input
+                                type="checkbox"
+                                checked={mathArabicNumerals}
+                                onChange={(e) => setMathArabicNumerals(e.target.checked)}
+                                className="sr-only peer"
+                              />
+                              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] rtl:after:right-[2px] rtl:after:left-auto after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600" />
+                            </label>
+                          </div>
+                        )}
+
+                        {/* Live preview of the selected engine */}
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            {t.mathPreview}
+                          </span>
+                          <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            {t.mathAppliedNote}
+                          </span>
+                        </div>
+                        <MathPreview mode={mathMode} arabicNumerals={mathArabicNumerals} />
                       </div>
                     </div>
                   </div>

@@ -1,5 +1,18 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Cairo:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Cairo:wght@400;600;700&family=Tajawal:wght@400;500;700&family=Amiri:ital,wght@0,400;0,700;1,400&display=swap');
 @import 'tailwindcss';
+/* KaTeX4Arabic rendering styles (RTL math, Arabic operator names, mirroring).
+   Loaded after tailwind so its `.katex-arabic` rules win over preflight. */
+@import 'katex4arabic/katex-arabic.css';
+
+/* Register the Arabic font families as Tailwind v4 theme tokens so the
+   `font-arabic`, `font-cairo` and `font-tajawal` utilities exist. They read
+   the live `--font-arabic` variable, which the preferences store overrides
+   via html[data-arabic-font]. */
+@theme {
+  --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, sans-serif;
+  --font-cairo: 'Cairo', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --font-tajawal: 'Tajawal', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+}
 
 /* Tailwind v4 is CSS-first and has no tailwind.config.js by default, so the
    `dark:` variant defaults to `@media (prefers-color-scheme: dark)` only —
@@ -12,6 +25,7 @@
 
 :root {
   --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, sans-serif;
+  --font-math-arabic: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', 'Cairo', serif;
   --bg-primary: #f8fafc;
   --text-primary: #0f172a;
 }
@@ -22,6 +36,128 @@ body {
   font-family: var(--font-arabic);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Global user preferences — applied automatically from the preferences
+   store (src/lib/preferences/userPreferences.ts). The store writes
+   data-* attributes and the .dark class onto <html>; these rules turn
+   them into real styling across the entire application.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Arabic font family (Settings → Appearance → Arabic Font) ─────────── */
+html[data-arabic-font='cairo'] {
+  --font-arabic: 'Cairo', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+}
+html[data-arabic-font='tajawal'] {
+  --font-arabic: 'Tajawal', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+}
+html[data-arabic-font='ibm'] {
+  --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, sans-serif;
+}
+
+/* ── Global text size (Settings → Appearance → Text Sizing) ─────────────
+   Scaling the root font-size proportionally rescales every rem-based
+   Tailwind utility (text sizes, spacing), giving a consistent global zoom. */
+html[data-font-size='sm'] {
+  font-size: 14.5px;
+}
+html[data-font-size='md'] {
+  font-size: 16px;
+}
+html[data-font-size='lg'] {
+  font-size: 18px;
+}
+
+/* ── Display density (Settings → Appearance → Density) ──────────────────
+   Tightens the vertical rhythm of the chat message stream. */
+html[data-density='compact'] .space-y-5 > :not(:last-child) {
+  margin-block-end: 0.625rem;
+}
+
+/* ── Dark theme (class-based, toggled by the preferences store) ───────── */
+.dark body {
+  --bg-primary: #020617;
+  --text-primary: #e2e8f0;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+/* Core chat surfaces get dark counterparts so the main workspace is fully
+   usable in dark mode. Component-level `dark:` utilities still apply on top. */
+.dark .bg-slate-50\/30 {
+  background-color: rgb(2 6 23 / 0.5);
+}
+.dark .bg-white\/80 {
+  background-color: rgb(15 23 42 / 0.85);
+}
+.dark .bg-white\/60 {
+  background-color: rgb(15 23 42 / 0.7);
+}
+.dark .border-slate-200 {
+  border-color: rgb(51 65 85 / 0.7);
+}
+.dark .border-slate-200\/80 {
+  border-color: rgb(51 65 85 / 0.55);
+}
+.dark .text-slate-900,
+.dark .text-slate-800 {
+  color: #e2e8f0;
+}
+.dark .text-slate-700 {
+  color: #cbd5e1;
+}
+.dark .text-slate-600 {
+  color: #94a3b8;
+}
+.dark .text-slate-500 {
+  color: #94a3b8;
+}
+.dark .text-slate-400 {
+  color: #64748b;
+}
+.dark .hover\:bg-slate-100:hover {
+  background-color: rgb(30 41 59);
+}
+.dark .hover\:bg-slate-50:hover {
+  background-color: rgb(30 41 59);
+}
+/* Assistant message bubbles */
+.dark .bg-white.border {
+  background-color: #0f172a;
+}
+/* Chat input bar gradient + form field */
+.dark .bg-gradient-to-t.from-white {
+  --tw-gradient-from: #020617;
+  --tw-gradient-via: #020617;
+  background-image: linear-gradient(to top, var(--tw-gradient-from), var(--tw-gradient-via), transparent);
+}
+.dark form.bg-white {
+  background-color: #0f172a;
+  border-color: rgb(51 65 85);
+}
+.dark textarea.bg-transparent {
+  color: #e2e8f0;
+}
+/* Markdown body readability in dark mode */
+.dark .rich-markdown-body {
+  color: #cbd5e1;
+}
+.dark .rich-markdown-body h1,
+.dark .rich-markdown-body h2,
+.dark .rich-markdown-body h3,
+.dark .rich-markdown-body h4,
+.dark .rich-markdown-body strong {
+  color: #f1f5f9;
+}
+.dark .rich-markdown-body blockquote {
+  background-color: rgb(49 46 129 / 0.25);
+  color: #c7d2fe;
+}
+.dark .katex {
+  color: #e2e8f0;
+}
+.dark .katex-arabic {
+  --ka-color: #e2e8f0;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -241,6 +377,34 @@ body {
 }
 .rich-markdown-body .katex-display > .katex {
   font-size: 1.15em;
+}
+
+/* === KaTeX4Arabic polish ===
+   Display-mode Arabic equations get breathing room and a horizontal escape
+   hatch for very wide formulas, mirroring the standard KaTeX treatment. */
+.rich-markdown-body .katex-arabic.is-display {
+  margin: 0.75em 0;
+  padding: 0.5rem 0.25rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.rich-markdown-body .katex-arabic.is-display::-webkit-scrollbar {
+  height: 5px;
+}
+.rich-markdown-body .katex-arabic.is-display::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.25);
+  border-radius: 9999px;
+}
+.rich-markdown-body .katex-arabic.is-inline {
+  vertical-align: -0.2em;
+}
+/* Failed formulas stay readable and clearly marked. */
+.rich-markdown-body .katex-arabic--error {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px dashed rgba(239, 68, 68, 0.4);
+  border-radius: 0.5rem;
+  padding: 0.15rem 0.5rem;
 }
 
 /* === GFM Task list checkbox polish === */
