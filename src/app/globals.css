@@ -320,6 +320,16 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
     height: auto !important;
     max-height: none !important;
   }
+  /* react-resizable-panels containers must stop constraining height. */
+  [data-group],
+  [data-panel] {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  [data-separator] {
+    display: none !important;
+  }
   /* Ink-friendly message bubbles. */
   .print-chat-stream .rounded-2xl {
     box-shadow: none !important;
