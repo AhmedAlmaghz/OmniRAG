@@ -13,6 +13,15 @@ interface ChatMessageProps {
   onViewInKnowledge?: () => void;
 }
 
+/** Compact HH:MM timestamp for the message footer. */
+function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Dynamic bubble width. Widths are expressed as `min(percent, cap)` where the
  * percentage is relative to the chat panel container, so the bubble grows and
@@ -74,14 +83,22 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({ message, lang, onCitatio
           />
         )}
 
-        {/* Assistant Footer Info */}
+        {/* Footer: model + tokens + timestamp */}
         {isAssistant && message.modelUsed && (
           <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-400 font-mono">
             <span className="flex items-center gap-1">
               <Cpu className="w-3 h-3 text-indigo-500" />
               {message.modelUsed}
             </span>
-            {message.tokensUsed && <span>{message.tokensUsed.input + message.tokensUsed.output} tokens</span>}
+            <span className="flex items-center gap-2">
+              {message.tokensUsed && <span>{message.tokensUsed.input + message.tokensUsed.output} tokens</span>}
+              {message.createdAt && <span>{formatTime(message.createdAt)}</span>}
+            </span>
+          </div>
+        )}
+        {!isAssistant && message.createdAt && (
+          <div className="mt-1.5 text-right text-[10px] text-indigo-200/80 font-mono">
+            {formatTime(message.createdAt)}
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Send,
   Sparkles,
@@ -16,6 +16,8 @@ import {
   Maximize2,
   Minimize2,
   ArrowDown,
+  Square,
+  RotateCcw,
 } from 'lucide-react';
 import { Message, ChatMode, Citation, MCPToolCall } from '@/lib/types/omnirag';
 import { ChatMessage } from '@/components/chat/ChatMessage';
@@ -35,6 +37,8 @@ interface ChatMainProps {
   mcpApprovalSuccess: string | null;
   pendingToolApproval: MCPToolCall | null;
   onSendMessage: (prompt?: string, approvedToolCall?: MCPToolCall) => void;
+  onStopGeneration?: () => void;
+  onRegenerate?: () => void;
   onApproveTool: (tc: MCPToolCall) => void;
   onRejectTool: () => void;
   onCitationClick: (c: Citation) => void;
@@ -86,6 +90,8 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   mcpApprovalSuccess,
   pendingToolApproval,
   onSendMessage,
+  onStopGeneration,
+  onRegenerate,
   onApproveTool,
   onRejectTool,
   onCitationClick,
@@ -107,6 +113,23 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   // Track whether the user is near the bottom so we only auto-scroll when they
   // are following the conversation (not reading history further up).
   const isNearBottomRef = useRef(true);
+
+  // Memoize the rendered message list. With stable citation callbacks from the
+  // parent, this means typing in the input box never re-creates or re-parses
+  // any message — only the input itself re-renders.
+  const messageList = useMemo(
+    () =>
+      messages.map((msg) => (
+        <ChatMessage
+          key={msg.id}
+          message={msg}
+          lang={lang}
+          onCitationClick={onCitationClick}
+          onViewInKnowledge={onViewInKnowledge}
+        />
+      )),
+    [messages, lang, onCitationClick, onViewInKnowledge],
+  );
 
   // Smart auto-scroll: only when the user is already near the bottom.
   useEffect(() => {
@@ -239,15 +262,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-5 lazy-scroll"
       >
-        {messages.map((msg) => (
-          <ChatMessage
-            key={msg.id}
-            message={msg}
-            lang={lang}
-            onCitationClick={onCitationClick}
-            onViewInKnowledge={onViewInKnowledge}
-          />
-        ))}
+        {messageList}
 
         {/* Pending Tool Approval Card */}
         {pendingToolApproval && (
@@ -455,18 +470,43 @@ export const ChatMain: React.FC<ChatMainProps> = ({
               style={{ minHeight: '44px' }}
             />
 
-            {/* Send Button */}
-            <button
-              type="submit"
-              disabled={isLoading || !inputPrompt.trim()}
-              className="w-10 h-10 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed group-focus-within:scale-105 shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1"
-            >
-              <Send className={`w-4 h-4 ${lang === 'ar' ? 'rtl:-scale-x-100' : ''}`} />
-            </button>
+            {/* Send / Stop Button */}
+            {isLoading && onStopGeneration ? (
+              <button
+                type="button"
+                onClick={onStopGeneration}
+                className="w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1 animate-pulse"
+                title={lang === 'ar' ? 'إيقاف التوليد' : 'Stop generating'}
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!inputPrompt.trim()}
+                className="w-10 h-10 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white flex items-center justify-center transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed group-focus-within:scale-105 shrink-0 mb-1 mr-1 rtl:mr-0 rtl:ml-1"
+              >
+                <Send className={`w-4 h-4 ${lang === 'ar' ? 'rtl:-scale-x-100' : ''}`} />
+              </button>
+            )}
           </form>
           <div className="mt-2 text-center text-[10px] text-slate-400 font-mono flex items-center justify-center gap-1.5">
             <Sparkles className="w-3 h-3 text-indigo-400" />
             <span>{lang === 'ar' ? 'OmniRAG — ذاكرة المحادثة نشطة' : 'OmniRAG — Conversation memory active'}</span>
+            {/* Regenerate last answer */}
+            {onRegenerate && !isLoading && messages.some((m) => m.role === 'assistant') && (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 text-slate-500 transition cursor-pointer"
+                title={lang === 'ar' ? 'إعادة توليد آخر إجابة' : 'Regenerate last answer'}
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>{lang === 'ar' ? 'إعادة التوليد' : 'Regenerate'}</span>
+              </button>
+            )}
+            {/* Character counter */}
+            {inputPrompt.length > 0 && <span className="text-slate-400 tabular-nums">{inputPrompt.length}</span>}
           </div>
         </div>
       </div>

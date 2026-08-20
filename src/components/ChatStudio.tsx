@@ -3,7 +3,7 @@
 import { APP_VERSION } from '@/lib/config/systemConfig';
 import { getAiModelConfig } from '@/lib/config/aiModels';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
 import {
   BookOpen,
@@ -87,6 +87,20 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
 
   const toggleFullscreen = useCallback(() => setIsFullscreen((v) => !v), []);
 
+  // Stable citation callbacks. These are passed deep into memoized message
+  // components; keeping their identity stable is what lets `ChatMessage`'s
+  // `memo` bail out while the user types in the input box. Without this, every
+  // keystroke would re-parse the markdown of every rendered message.
+  const handleCitationClick = useCallback((cit: Citation) => {
+    setActiveCitation(cit);
+    setActiveRightTab('citations');
+  }, []);
+
+  const handleViewInKnowledge = useMemo(
+    () => (onNavigateTab ? () => onNavigateTab('knowledge') : undefined),
+    [onNavigateTab],
+  );
+
   // Keyboard shortcuts: Ctrl/Cmd+B toggles the sidebar, Ctrl/Cmd+Shift+F toggles
   // focus fullscreen, Escape exits fullscreen
   useEffect(() => {
@@ -152,6 +166,8 @@ Supported features:
   const [inputPrompt, setInputPrompt] = useState('');
   const [selectedMode, setSelectedMode] = useState<ChatMode>('hybrid');
   const [isLoading, setIsLoading] = useState(false);
+  // Lets the user cancel an in-flight generation (Stop button).
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
   const [pendingToolApproval, setPendingToolApproval] = useState<MCPToolCall | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
@@ -505,11 +521,21 @@ Supported features:
     ];
   };
 
-  const handleSendMessage = async (promptToSend?: string, approvedToolCall?: MCPToolCall) => {
+  const handleSendMessage = async (
+    promptToSend?: string,
+    approvedToolCall?: MCPToolCall,
+    regenerate = false,
+    historyBase?: Message[],
+  ) => {
     const textPrompt = promptToSend || inputPrompt;
     if (!textPrompt.trim() || isLoading) return;
 
     setSecurityNotice(null);
+
+    // Abort any in-flight generation before starting a new one.
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     const userMsg: Message = {
       id: `msg-${Date.now()}`,
@@ -522,25 +548,32 @@ Supported features:
       createdAt: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    if (!promptToSend) setInputPrompt('');
+    // Regeneration re-asks the last prompt without duplicating the user bubble.
+    if (!regenerate) {
+      setMessages((prev) => [...prev, userMsg]);
+      if (!promptToSend) setInputPrompt('');
+      // Persist user message
+      fetchWithAuth('/api/v1/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save_message', tenantId, message: userMsg }),
+      }).catch((err) => console.error('PostgreSQL user message save error:', err));
+    }
     setIsLoading(true);
     setAiSuggestions([]);
 
-    // Persist user message
-    fetchWithAuth('/api/v1/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_message', tenantId, message: userMsg }),
-    }).catch((err) => console.error('PostgreSQL user message save error:', err));
-
-    // Build conversation history (last 10 messages) for memory
-    const conversationHistory = [...messages, userMsg].slice(-10).map((m) => ({ role: m.role, content: m.content }));
+    // Build conversation history (last 10 messages) for memory. On regeneration
+    // the base already ends with the user prompt, so we don't append it again.
+    const baseMessages = historyBase ?? messages;
+    const conversationHistory = (regenerate ? baseMessages : [...baseMessages, userMsg])
+      .slice(-10)
+      .map((m) => ({ role: m.role, content: m.content }));
 
     try {
       const res = await fetchWithAuth('/api/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+        signal: controller.signal,
         body: JSON.stringify({
           tenantId,
           prompt: textPrompt,
@@ -554,6 +587,22 @@ Supported features:
       });
 
       const data = await res.json();
+
+      // User pressed Stop — fetchWithAuth converts the AbortError into a 503
+      // fallback response, so detect the abort via the controller signal.
+      if (controller.signal.aborted) {
+        const stoppedMsg: Message = {
+          id: `msg-stopped-${Date.now()}`,
+          tenantId,
+          conversationId: activeConversationId,
+          role: 'assistant',
+          content: lang === 'ar' ? '⏹️ تم إيقاف التوليد بناءً على طلبك.' : '⏹️ Generation stopped.',
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, stoppedMsg]);
+        setIsLoading(false);
+        return;
+      }
 
       if (!res.ok) {
         const blockedReason =
@@ -630,11 +679,33 @@ Supported features:
         setActiveCitation(data.citations[0]);
       }
     } catch {
-      setSecurityNotice(lang === 'ar' ? 'حدث خطأ في الاتصال بالخادم.' : 'Connection error.');
+      if (controller.signal.aborted) {
+        // Aborted mid-flight — the Stop handler already surfaced feedback.
+      } else {
+        setSecurityNotice(lang === 'ar' ? 'حدث خطأ في الاتصال بالخادم.' : 'Connection error.');
+      }
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Stop the in-flight generation.
+  const handleStopGeneration = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
+  // Regenerate the last assistant answer by re-sending the last user prompt.
+  const handleRegenerate = useCallback(() => {
+    if (isLoading) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    if (!lastUser) return;
+    // Drop the trailing assistant reply so the fresh answer replaces it, and use
+    // the trimmed list as the memory base (it already ends with the user prompt).
+    const base =
+      messages.length > 0 && messages[messages.length - 1].role === 'assistant' ? messages.slice(0, -1) : messages;
+    setMessages(base);
+    handleSendMessage(lastUser.content, undefined, true, base);
+  }, [messages, isLoading]);
 
   const handleApproveTool = (toolCall: MCPToolCall) => {
     const approvedCall = { ...toolCall, status: 'approved' as const };
@@ -677,13 +748,12 @@ Supported features:
         mcpApprovalSuccess={mcpApprovalSuccess}
         pendingToolApproval={pendingToolApproval}
         onSendMessage={handleSendMessage}
+        onStopGeneration={handleStopGeneration}
+        onRegenerate={handleRegenerate}
         onApproveTool={handleApproveTool}
         onRejectTool={handleRejectTool}
-        onCitationClick={(cit) => {
-          setActiveCitation(cit);
-          setActiveRightTab('citations');
-        }}
-        onViewInKnowledge={onNavigateTab ? () => onNavigateTab('knowledge') : undefined}
+        onCitationClick={handleCitationClick}
+        onViewInKnowledge={handleViewInKnowledge}
         onExportChat={handleExportChat}
         onOpenSourcesModal={() => setShowSourcesModal(true)}
         onClearCollections={handleClearAllCollections}
