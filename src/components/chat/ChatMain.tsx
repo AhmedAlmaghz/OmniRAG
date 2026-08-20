@@ -15,8 +15,6 @@ import {
   PanelLeftOpen,
   Maximize2,
   Minimize2,
-  ArrowDown,
-  ArrowUp,
   Square,
   RotateCcw,
   Printer,
@@ -420,32 +418,17 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           <div ref={messagesEndRef} className="h-2" />
         </div>
 
-        {/* Question navigator rail — one tick per user question, click to jump */}
-        <QuestionNavigator messages={messages} lang={lang} onJumpToMessage={jumpToMessage} />
-
-        {/* Jump-to-top / jump-to-bottom buttons — appear based on scroll position */}
-        <div className="no-print absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-1.5">
-          {showJumpToTop && (
-            <button
-              type="button"
-              onClick={scrollToTop}
-              className="w-9 h-9 rounded-full bg-white border border-slate-200 shadow-lg hover:bg-indigo-50 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all cursor-pointer animate-fadeIn"
-              title={lang === 'ar' ? 'الانتقال إلى الأعلى' : 'Jump to top'}
-            >
-              <ArrowUp className="w-4 h-4" />
-            </button>
-          )}
-          {showJumpToBottom && (
-            <button
-              type="button"
-              onClick={scrollToBottom}
-              className="w-9 h-9 rounded-full bg-white border border-slate-200 shadow-lg hover:bg-indigo-50 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 flex items-center justify-center transition-all cursor-pointer animate-fadeIn"
-              title={lang === 'ar' ? 'الانتقال إلى الأسفل' : 'Jump to bottom'}
-            >
-              <ArrowDown className="w-4 h-4" />
-            </button>
-          )}
-        </div>
+        {/* Side navigation cluster: scroll-to-top above the question rail,
+            scroll-to-bottom below it. */}
+        <QuestionNavigator
+          messages={messages}
+          lang={lang}
+          onJumpToMessage={jumpToMessage}
+          showScrollTop={showJumpToTop}
+          showScrollBottom={showJumpToBottom}
+          onScrollToTop={scrollToTop}
+          onScrollToBottom={scrollToBottom}
+        />
       </div>
 
       {/* Fullscreen floating action bar — print, PDF export, text zoom, exit.

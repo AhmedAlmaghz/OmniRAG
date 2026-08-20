@@ -397,7 +397,16 @@ export class MemoryDatabase implements IOmniRAGDatabase {
       await this.getMessages(defaultConv.id, tenantId);
       return [defaultConv];
     }
-    return convs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    // Attach a preview of each conversation's first user request so the
+    // sidebar can show it on hover without extra round-trips.
+    return convs
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .map((c) => {
+        const firstUser = this.messages
+          .filter((m) => m.conversationId === c.id && m.tenantId === tenantId && m.role === 'user')
+          .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
+        return { ...c, firstUserMessage: firstUser?.content };
+      });
   }
 
   async getConversationById(id: string, tenantId: string): Promise<Conversation | null> {

@@ -113,6 +113,8 @@ export interface Conversation {
   enabledMcpServers: string[];
   createdAt: string;
   updatedAt: string;
+  /** Preview of the first user request in this conversation (list views). */
+  firstUserMessage?: string;
 }
 
 export interface Citation {

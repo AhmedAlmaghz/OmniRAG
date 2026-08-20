@@ -393,6 +393,19 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
 
 /* === Chat UI Animations & Polish === */
 
+/* Generic fade-in used by tooltips, modals and floating bars. */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fadeIn {
+  animation: fadeIn 0.18s ease-out both;
+}
+
 /* Message appear animation */
 @keyframes message-appear {
   from {

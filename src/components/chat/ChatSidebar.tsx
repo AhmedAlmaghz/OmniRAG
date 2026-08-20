@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { Plus, MessageSquare, Pencil, Trash2, Check, X, Search, PanelLeftClose, Sparkles } from 'lucide-react';
 import { Conversation } from '@/lib/types/omnirag';
 
@@ -37,8 +37,40 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  // Hover preview: which conversation's first-user-request bubble is shown,
+  // plus the anchor rect used to position it (fixed, so it escapes the
+  // scrollable list's overflow clipping).
+  const [preview, setPreview] = useState<{ convId: string; top: number; side: number } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isRtl = lang === 'ar';
+
+  // Show the preview after a short delay so quick mouse pass-throughs don't
+  // flash tooltips; cancel any pending timer on leave.
+  const handleHoverStart = useCallback(
+    (convId: string, el: HTMLElement) => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = setTimeout(() => {
+        const rect = el.getBoundingClientRect();
+        setPreview({
+          convId,
+          top: rect.top + rect.height / 2,
+          // The bubble opens toward the chat content: in RTL the sidebar sits
+          // on the right, so the bubble opens to the item's LEFT edge
+          // (anchored via `right`); in LTR it opens to the RIGHT edge
+          // (anchored via `left`).
+          side: isRtl ? window.innerWidth - rect.left : rect.right,
+        });
+      }, 350);
+    },
+    [isRtl],
+  );
+
+  const handleHoverEnd = useCallback(() => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = null;
+    setPreview(null);
+  }, []);
 
   const filteredConversations = useMemo(() => {
     if (!searchQuery.trim()) return conversations;
@@ -169,6 +201,8 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     onSelectConversation(conv.id);
                   }
                 }}
+                onMouseEnter={(e) => handleHoverStart(conv.id, e.currentTarget)}
+                onMouseLeave={handleHoverEnd}
                 className={`group relative rounded-xl px-3 py-2.5 cursor-pointer transition-all duration-200 ${
                   isActive ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-white text-slate-700 hover:shadow-sm'
                 }`}
@@ -279,6 +313,33 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
           })
         )}
       </div>
+
+      {/* Hover preview bubble — the first user request of the hovered
+          conversation. Rendered with fixed positioning so it is never clipped
+          by the scrollable list, and opens toward the chat content side. */}
+      {preview &&
+        (() => {
+          const conv = conversations.find((c) => c.id === preview.convId);
+          if (!conv?.firstUserMessage || editingConvId === conv.id) return null;
+          return (
+            <div
+              className={`fixed z-50 w-60 p-2.5 rounded-xl bg-slate-900 text-white text-[11px] leading-relaxed shadow-2xl pointer-events-none animate-fadeIn ${
+                isRtl ? 'text-right' : 'text-left'
+              }`}
+              style={{
+                top: preview.top,
+                transform: 'translateY(-50%)',
+                ...(isRtl ? { right: preview.side + 8 } : { left: preview.side + 8 }),
+              }}
+              role="tooltip"
+            >
+              <span className="block text-[9px] font-bold text-indigo-300 mb-1 uppercase tracking-wide">
+                {lang === 'ar' ? 'طلب المستخدم' : 'User Request'}
+              </span>
+              <span className="line-clamp-4">{conv.firstUserMessage}</span>
+            </div>
+          );
+        })()}
 
       {/* Sidebar Footer */}
       <div className="p-3 border-t border-slate-200 bg-white shrink-0">

@@ -1245,9 +1245,22 @@ export async function getPostgresConversations(tenantId: string): Promise<Conver
 
   const client = await p.connect();
   try {
-    const res = await client.query('SELECT * FROM conversations WHERE tenant_id = $1 ORDER BY updated_at DESC', [
-      tenantId,
-    ]);
+    // A single LATERAL join fetches each conversation's first user message so
+    // the sidebar can preview the original request without N+1 queries.
+    const res = await client.query(
+      `SELECT c.*, fum.first_user_message
+       FROM conversations c
+       LEFT JOIN LATERAL (
+         SELECT content AS first_user_message
+         FROM messages m
+         WHERE m.conversation_id = c.id AND m.tenant_id = c.tenant_id AND m.role = 'user'
+         ORDER BY m.created_at ASC
+         LIMIT 1
+       ) fum ON TRUE
+       WHERE c.tenant_id = $1
+       ORDER BY c.updated_at DESC`,
+      [tenantId],
+    );
     return res.rows.map((row: any) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -1258,6 +1271,7 @@ export async function getPostgresConversations(tenantId: string): Promise<Conver
       enabledMcpServers: row.enabled_mcp_servers || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      firstUserMessage: row.first_user_message || undefined,
     }));
   } catch (error) {
     console.error('Failed to get Postgres conversations:', error);
