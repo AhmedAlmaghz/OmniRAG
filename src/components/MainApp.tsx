@@ -16,6 +16,7 @@ import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { useUserPreferences } from '@/lib/preferences/userPreferences';
 
 import { Layers } from 'lucide-react';
+import { ToastProvider } from '@/components/ui/Toast';
 
 type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'analytics' | 'settings';
 
@@ -268,10 +269,11 @@ export default function MainApp() {
   }
 
   return (
-    <div
-      className={`print-expand min-h-screen flex flex-col font-sans transition-colors duration-300 ${resolvedTheme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} ${activeTab === 'chat' ? 'h-screen' : ''}`}
-      dir={lang === 'ar' ? 'rtl' : 'ltr'}
-    >
+    <ToastProvider>
+      <div
+        className={`print-expand min-h-screen flex flex-col font-sans transition-colors duration-300 ${resolvedTheme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} ${activeTab === 'chat' ? 'h-screen' : ''}`}
+        dir={lang === 'ar' ? 'rtl' : 'ltr'}
+      >
       {/* Top Main Navigation Header with integrated links */}
       <Header
         currentTenantId={tenantId}
@@ -334,6 +336,7 @@ export default function MainApp() {
           </div>
         </footer>
       )}
-    </div>
+      </div>
+    </ToastProvider>
   );
 }

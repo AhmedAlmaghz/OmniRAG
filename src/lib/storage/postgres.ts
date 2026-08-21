@@ -733,6 +733,28 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
   }
 }
 
+/**
+ * Delete all lexical chunk rows belonging to one document. Used by the
+ * version/revert/reindex paths, which replace a document's entire chunk grid:
+ * without this, rows from superseded versions accumulate in Postgres forever
+ * (the Qdrant side is purged via deleteQdrantDocument).
+ */
+export async function deletePostgresChunksByDocument(documentId: string, tenantId: string) {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+
+  const client = await p.connect();
+  try {
+    await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
+    await client.query('DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2', [documentId, tenantId]);
+  } catch (error) {
+    console.error('Failed to delete Postgres chunks for document:', error);
+  } finally {
+    client.release();
+  }
+}
+
 export async function insertPostgresChunk(chunk: {
   id: string;
   tenantId: string;

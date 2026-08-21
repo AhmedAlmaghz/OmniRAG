@@ -1,11 +1,57 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { db } from '@/lib/storage/db';
 import { Document, DocumentChunk, SourceConnector, SourceType } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { chunkDocument, resolveChunkGeometry, estimateTokenCount } from '@/lib/rag/chunker';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Request validation for document ingestion. Previously the body was
+ * destructured with zero validation: content had no size limit, `language`
+ * accepted anything, `collectionIds` could be a non-array, and
+ * `chunkingConfig` was passed straight into the chunker. All of that is now
+ * schema-checked with explicit, localized error messages.
+ */
+const MAX_CONTENT_CHARS = 4_000_000; // ~4M chars ≈ 10MB of UTF-8 text
+
+const createDocumentSchema = z.object({
+  title: z.string().trim().min(1, 'عنوان المستند مطلوب').max(500, 'العنوان طويل جداً (الحد 500 حرف)'),
+  content: z
+    .string()
+    .min(1, 'محتوى المستند مطلوب')
+    .max(MAX_CONTENT_CHARS, 'المحتوى يتجاوز الحد الأقصى المسموح (4 ملايين حرف)'),
+  sourceType: z.string().optional(),
+  sourceId: z.string().optional(),
+  language: z.enum(['ar', 'en', 'auto']).default('ar'),
+  collectionIds: z.array(z.string().min(1)).max(50).default([]),
+  chunkingConfig: z
+    .object({
+      strategy: z.enum(['semantic', 'markdown', 'recursive']).optional(),
+      size: z.number().int().min(64).max(8192).optional(),
+      overlap: z.number().int().min(0).max(90).optional(),
+    })
+    .optional(),
+  sourceConfig: z.record(z.string(), z.any()).default({}),
+});
+
+const VALID_SOURCE_TYPES: SourceType[] = [
+  'file',
+  'url',
+  'rss',
+  'youtube',
+  'github',
+  'notion',
+  'gdrive',
+  'confluence',
+  'slack',
+  'email',
+  'database',
+  'api',
+];
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   // Load client-supplied dynamic environment keys from headers into process.env / global store
@@ -56,20 +102,41 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
     const tenantId = authCtx.tenantId;
-    const {
-      title,
-      content,
-      sourceType = 'file',
-      sourceId: providedSourceId,
-      language = 'ar',
-      collectionIds = [],
-      chunkingConfig,
-      sourceConfig = {},
-    } = body;
 
-    if (!title || !content) {
-      return NextResponse.json({ error: 'العنوان والمحتوى مطلوبان' }, { status: 400 });
+    const parsed = createDocumentSchema.safeParse(body);
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0];
+      return NextResponse.json(
+        {
+          error: firstIssue?.message || 'بيانات المستند غير صالحة',
+          code: 'VALIDATION_ERROR',
+          issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+        },
+        { status: 400 },
+      );
     }
+
+    const { title, content, sourceType, sourceId: providedSourceId, language, collectionIds, chunkingConfig, sourceConfig } =
+      parsed.data;
+
+    // Verify referenced collections actually exist for this tenant instead of
+    // silently accepting dangling ids that would later filter out every chunk.
+    if (collectionIds.length > 0) {
+      const existingCols = await db.getCollections(tenantId);
+      const existingIds = new Set(existingCols.map((c) => c.id));
+      const missing = collectionIds.filter((id) => !existingIds.has(id));
+      if (missing.length > 0) {
+        return NextResponse.json(
+          {
+            error: `مجموعات غير موجودة: ${missing.join('، ')}`,
+            code: 'UNKNOWN_COLLECTIONS',
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    const ingestionStartedAt = Date.now();
 
     // Ensure a Source Connector exists or is created for this ingested document
     let sourceId = providedSourceId;
@@ -91,22 +158,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     }
 
     if (!sourceObj) {
-      const validSourceType: SourceType = (
-        [
-          'file',
-          'youtube',
-          'web',
-          'github',
-          'database',
-          'notion',
-          'gdrive',
-          'slack',
-          's3',
-          'api',
-          'custom_mcp',
-          'pdf',
-        ] as SourceType[]
-      ).includes(sourceType as SourceType)
+      const validSourceType: SourceType = VALID_SOURCE_TYPES.includes(sourceType as SourceType)
         ? (sourceType as SourceType)
         : 'file';
 
@@ -136,7 +188,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       content,
       sourceType: sourceObj.type === 'file' ? 'file' : 'integration',
       language,
-      status: 'indexed',
+      // Status lifecycle: the document starts as `processing` and only becomes
+      // `indexed` after the vector store confirms the upsert (or `failed`).
+      status: 'processing',
       chunkCount: 0,
       version: 1,
       createdAt: nowIso,
@@ -163,30 +217,19 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       ],
     };
 
-    // Advanced dynamic chunking logic
-    const strategy = chunkingConfig?.strategy || 'semantic';
-    const targetSize = Math.max(128, chunkingConfig?.size || 512);
-    const overlapPercent = Math.min(50, Math.max(0, chunkingConfig?.overlap || 20));
-    const charSize = Math.floor(targetSize * 2.5); // ~2.5 chars per token for AR/EN
-    const overlapChars = Math.floor(charSize * (overlapPercent / 100));
-    const step = Math.max(50, charSize - overlapChars);
-
-    const chunkTextList: string[] = [];
-
-    if (strategy === 'markdown') {
-      const sections = content.split(/(?=\n#+ )/);
-      sections.forEach((s: string) => {
-        if (s.trim()) chunkTextList.push(s.trim());
-      });
-    } else {
-      for (let i = 0; i < content.length; i += step) {
-        const snippet = content.substring(i, i + charSize).trim();
-        if (snippet) chunkTextList.push(snippet);
-      }
-    }
+    // Unified chunking — all ingestion paths go through chunkDocument so the
+    // same document always produces the same chunk grid regardless of route.
+    // Geometry (size/overlap/strategy) is validated and clamped inside.
+    const chunkTextList = chunkDocument(content, chunkingConfig);
+    const geometry = resolveChunkGeometry(chunkingConfig);
+    const strategy = geometry.strategy;
 
     newDoc.chunkCount = chunkTextList.length;
     await db.addDocument(newDoc);
+
+    // Chunks carry a concrete language ('ar'|'en'); 'auto' resolves to Arabic
+    // as the app's default content language.
+    const chunkLanguage: DocumentChunk['language'] = language === 'en' ? 'en' : 'ar';
 
     const chunks: DocumentChunk[] = chunkTextList.map((text, index) => ({
       id: `chunk-${docId}-${index + 1}`,
@@ -196,35 +239,50 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       content: text,
       chunkIndex: index,
       pageNumber: 1,
-      language,
+      language: chunkLanguage,
       metadata: {
         sourceId: sourceObj.id,
         position: index,
         strategy,
-        tokenCount: Math.round(text.length / 2.8),
+        tokenCount: estimateTokenCount(text),
       },
     }));
-    await db.addChunks(chunks);
+    const indexResult = await db.addChunks(chunks);
 
-    // Register sync log for visual feedback in Sources Manager
+    // Flip the document status based on the REAL indexing outcome and persist
+    // the failure reasons (if any) so the UI can surface them.
+    const finalStatus: Document['status'] = indexResult.success ? 'indexed' : 'failed';
+    newDoc.status = finalStatus;
+    newDoc.metadata = {
+      ...newDoc.metadata,
+      indexedAt: new Date().toISOString(),
+      indexErrors: indexResult.errors.length > 0 ? indexResult.errors : undefined,
+    };
+    await db.updateDocument(docId, { status: finalStatus, metadata: newDoc.metadata }, tenantId);
+
+    // Register sync log with the MEASURED duration for honest feedback.
+    const durationMs = Date.now() - ingestionStartedAt;
     await db.addSyncLog({
       id: `log-${Date.now()}`,
       tenantId,
       sourceId: sourceObj.id,
       sourceName: sourceObj.name,
-      status: 'success',
+      status: indexResult.success ? 'success' : 'failed',
       itemsProcessed: chunkTextList.length,
-      durationMs: 1200,
-      message: `تم استيعاب وتجزيء المستند "${title}" بنجاح وفهرسته في قواعد متجهات Qdrant`,
+      durationMs,
+      message: indexResult.success
+        ? `تم استيعاب وتجزئة المستند "${title}" إلى ${chunkTextList.length} مقطع وفهرسته في قواعد المتجهات`
+        : `تم استيعاب "${title}" لكن الفهرسة المتجهية فشلت: ${indexResult.errors.join('؛ ')}`,
       timestamp: new Date().toISOString(),
     });
 
     return NextResponse.json(
       {
-        success: true,
+        success: indexResult.success,
         document: newDoc,
         source: sourceObj,
         chunkCount: chunkTextList.length,
+        indexing: indexResult,
       },
       { status: 201 },
     );

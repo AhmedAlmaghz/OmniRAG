@@ -23,7 +23,73 @@ interface ServerOcrCacheEntry {
   hits: number;
 }
 
-const SERVER_OCR_CACHE = new Map<string, ServerOcrCacheEntry>();
+/**
+ * Bounded LRU cache for server-side OCR results.
+ *
+ * The previous implementation was a plain `Map` with NO eviction: every parsed
+ * upload (up to 50MB of extracted text each) was cached forever, so a busy
+ * tenant could grow process memory without limit until the server OOM'd.
+ *
+ * This LRU enforces two ceilings — a maximum entry count AND a maximum total
+ * character volume — evicting least-recently-used entries first. `get`
+ * refreshes recency so hot documents stay cached.
+ */
+class BoundedOcrCache {
+  private readonly map = new Map<string, ServerOcrCacheEntry>();
+
+  constructor(
+    private readonly maxEntries: number = 25,
+    private readonly maxTotalChars: number = 8_000_000,
+  ) {}
+
+  private totalChars = 0;
+
+  has(key: string): boolean {
+    return this.map.has(key);
+  }
+
+  get(key: string): ServerOcrCacheEntry | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    // Refresh recency: re-insert so this key becomes the newest.
+    this.map.delete(key);
+    this.map.set(key, entry);
+    return entry;
+  }
+
+  set(key: string, entry: ServerOcrCacheEntry): void {
+    // Never cache a single entry larger than the whole budget.
+    if (entry.charCount > this.maxTotalChars) return;
+
+    if (this.map.has(key)) {
+      const old = this.map.get(key)!;
+      this.totalChars -= old.charCount;
+      this.map.delete(key);
+    }
+
+    this.map.set(key, entry);
+    this.totalChars += entry.charCount;
+    this.evict();
+  }
+
+  private evict(): void {
+    // Evict least-recently-used (first key in insertion order) until both
+    // ceilings are satisfied.
+    while (this.map.size > this.maxEntries || this.totalChars > this.maxTotalChars) {
+      const oldestKey = this.map.keys().next().value;
+      if (!oldestKey) break;
+      const oldest = this.map.get(oldestKey)!;
+      this.totalChars -= oldest.charCount;
+      this.map.delete(oldestKey);
+    }
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+}
+
+const SERVER_OCR_CACHE = new BoundedOcrCache();
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',

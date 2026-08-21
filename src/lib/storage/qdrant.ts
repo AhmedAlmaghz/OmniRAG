@@ -102,8 +102,11 @@ export async function upsertQdrantChunk(params: {
  * bits of practical collision resistance — astronomically better than 32 bits
  * — and is deterministic so re-upserting the same chunk id yields the same
  * point id (idempotent writes).
+ *
+ * Exported so the delete path and unit tests can assert they derive the SAME
+ * point id for a given chunk id (the exact invariant the old code violated).
  */
-function toQdrantPointId(rawId: string): string {
+export function toQdrantPointId(rawId: string): string {
   if (/^[0-9a-f]{8}-[-0-9a-f]{4}-[-0-9a-f]{4}-[-0-9a-f]{4}-[-0-9a-f]{12}$/i.test(rawId)) {
     return rawId;
   }
@@ -126,6 +129,10 @@ function toQdrantPointId(rawId: string): string {
  * `upsertQdrantChunk` path issued one round-trip per point, so ingesting 50
  * chunks meant 50 sequential Qdrant writes. This batches them into one
  * multi-point upsert, the intended Qdrant bulk-write shape.
+ *
+ * Returns `true` only when the upsert actually reached Qdrant and succeeded.
+ * Callers use this to flip document status to `failed` instead of silently
+ * reporting success while zero vectors were stored.
  */
 export async function upsertQdrantChunks(
   points: Array<{
@@ -143,41 +150,41 @@ export async function upsertQdrantChunks(
       [key: string]: any;
     };
   }>,
-) {
-  if (points.length === 0) return;
+): Promise<boolean> {
+  if (points.length === 0) return true;
   await ensureQdrantCollection();
   const qc = getQdrantClient();
-  if (!qc) return;
+  if (!qc) return false;
 
   try {
     await qc.upsert(COLLECTION_NAME, {
       wait: true,
       points: points.map((p) => ({ id: toQdrantPointId(p.id), vector: p.vector, payload: p.payload })),
     });
+    return true;
   } catch (error) {
     console.error(`Failed to upsert ${points.length} point(s) into Qdrant:`, error);
+    return false;
   }
 }
 
+/**
+ * Deletes a single chunk point by its chunk id.
+ *
+ * IMPORTANT: this MUST derive the point id with the exact same
+ * `toQdrantPointId` used by `upsertQdrantChunks`. The previous implementation
+ * re-derived ids with the legacy 32-bit Java-string hashCode, which mapped
+ * chunk ids to DIFFERENT point ids than the upsert path created — so deletes
+ * silently targeted points that never existed and vectors leaked forever.
+ */
 export async function deleteQdrantChunk(id: string) {
   await ensureQdrantCollection();
   const qc = getQdrantClient();
   if (!qc) return;
 
   try {
-    let pointId = id;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pointId)) {
-      const cleaned = pointId.replace(/[^a-f0-9]/gi, '');
-      if (cleaned.length >= 32) {
-        pointId = `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20, 32)}`;
-      } else {
-        const hash = Array.from(pointId).reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0);
-        const hex = Math.abs(hash).toString(16).padStart(32, '0');
-        pointId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-      }
-    }
     await qc.delete(COLLECTION_NAME, {
-      points: [pointId],
+      points: [toQdrantPointId(id)],
     });
   } catch (error) {
     console.error(`Failed to delete point ${id} from Qdrant:`, error);

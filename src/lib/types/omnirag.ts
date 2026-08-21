@@ -94,6 +94,26 @@ export interface DocumentChunk {
   metadata?: Record<string, any>;
 }
 
+/**
+ * Structured outcome of a batch chunk-indexing operation. Previously the
+ * ingestion path swallowed embedding/Qdrant errors and always reported success,
+ * so a document could show "indexed" while having zero searchable vectors.
+ * Callers now receive explicit counts and can flip the document status to
+ * `failed` (or `indexed` with a warning) accordingly.
+ */
+export interface ChunkIndexResult {
+  /** Number of chunks that successfully reached the vector store. */
+  indexed: number;
+  /** Number of chunks that failed embedding or vector upsert. */
+  failed: number;
+  /** Total chunks attempted. */
+  total: number;
+  /** Human-readable failure reasons (empty when fully successful). */
+  errors: string[];
+  /** True when every chunk was indexed successfully. */
+  success: boolean;
+}
+
 export interface Collection {
   id: string;
   tenantId: TenantId;

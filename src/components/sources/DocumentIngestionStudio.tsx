@@ -974,11 +974,17 @@ export function DocumentIngestionStudio({
       if (res.ok) {
         const data = await res.json();
 
+        // The API now reports the REAL indexing outcome: HTTP 201 with
+        // `success: false` means the document was saved but vector indexing
+        // failed (e.g. Qdrant down). Surface that honestly instead of
+        // celebrating a full success.
+        const indexingFailed = data?.success === false;
+
         // Fast-forward animation to completed
         setSteps((prev) =>
           prev.map((s) => ({
             ...s,
-            status: 'completed',
+            status: indexingFailed && s.status === 'processing' ? 'error' : 'completed',
             progress: 100,
           })),
         );
@@ -1000,18 +1006,26 @@ export function DocumentIngestionStudio({
           sourceType: determinedSourceType,
         });
 
-        setStatusMessage({
-          type: 'success',
-          text:
-            lang === 'ar'
-              ? `تم حفظ الموصل واستيعاب المستند بنجاح! (${createdChunkCount} مقطع دلالي مفهرس)`
-              : 'Document and source connector saved successfully!',
-        });
+        setStatusMessage(
+          indexingFailed
+            ? {
+                type: 'error',
+                text:
+                  lang === 'ar'
+                    ? `تم حفظ المستند لكن الفهرسة المتجهية فشلت: ${data?.indexing?.errors?.join('؛ ') || 'خطأ غير معروف'} — يمكنك إعادة الفهرسة من بطاقة المستند`
+                    : `Document saved but vector indexing failed: ${data?.indexing?.errors?.join('; ') || 'unknown error'} — you can reindex from the document card`,
+              }
+            : {
+                type: 'success',
+                text:
+                  lang === 'ar'
+                    ? `تم حفظ الموصل واستيعاب المستند بنجاح! (${createdChunkCount} مقطع دلالي مفهرس)`
+                    : 'Document and source connector saved successfully!',
+              },
+        );
 
         onIngestionCompleted(createdSourceId);
       } else {
-        const err = await res.json();
-
         // Set currently active step to error
         setSteps((prev) =>
           prev.map((s) => {
@@ -1021,6 +1035,7 @@ export function DocumentIngestionStudio({
             return s;
           }),
         );
+        const err = await res.json().catch(() => ({}));
         setStatusMessage({ type: 'error', text: err.error || 'Failed to ingest document' });
       }
     } catch (err: any) {
@@ -1723,7 +1738,12 @@ export function DocumentIngestionStudio({
                     </div>
                     <p className="text-[11px] text-slate-300 line-clamp-3 leading-relaxed font-sans">{chk.content}</p>
                     <div className="text-[9px] text-slate-500 truncate">
-                      Vector Vector: [0.024, -0.118, 0.892, 0.441, -0.052, ...]
+                      {/* Honest placeholder: embeddings are generated server-side
+                          during indexing, so no vector values exist at preview
+                          time. The old UI printed fabricated numbers here. */}
+                      {lang === 'ar'
+                        ? 'التضمين المتجهي (3072d) يُولَّد عند الفهرسة'
+                        : 'Embedding (3072d) generated at index time'}
                     </div>
                   </div>
                 ))}

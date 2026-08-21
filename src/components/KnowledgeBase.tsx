@@ -12,6 +12,8 @@ import {
   DocumentChunk,
 } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { useToast } from './ui/Toast';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 import { AddSourceWizard } from './sources/AddSourceWizard';
 import { DocumentIngestionStudio } from './sources/DocumentIngestionStudio';
 import { EditSourceModal } from './sources/EditSourceModal';
@@ -88,6 +90,7 @@ type TabType =
 
 export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar' }: KnowledgeBaseProps) {
   const isRtl = lang === 'ar';
+  const { toast } = useToast();
 
   // Primary active tab
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
@@ -113,8 +116,15 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
 
   // Loading and action state
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [reindexingDocId, setReindexingDocId] = useState<string | null>(null);
+
+  // Confirmation dialog state (replaces native confirm())
+  const [pendingDeleteDoc, setPendingDeleteDoc] = useState<Document | null>(null);
+  const [pendingDeleteSource, setPendingDeleteSource] = useState<SourceConnector | null>(null);
+  const [isClearCacheConfirmOpen, setIsClearCacheConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // View preferences
   const [docViewMode, setDocViewMode] = useState<'grid' | 'list'>('grid');
@@ -136,61 +146,52 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   const [viewingLogsSource, setViewingLogsSource] = useState<SourceConnector | null>(null);
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
 
-  // Load all knowledge base data
+  // Load all knowledge base data. Tracks whether ANY core request failed so
+  // the UI can show an error banner with retry instead of silently rendering an
+  // empty state that is indistinguishable from "no documents yet".
   const fetchKnowledgeData = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
-        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(
-          () =>
-            ({
-              ok: false,
-              json: async () => ({ sources: [], syncLogs: [], mcpResources: [] }),
-            }) as Response,
-        ),
-        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(
-          () =>
-            ({
-              ok: false,
-              json: async () => ({ collections: [] }),
-            }) as Response,
-        ),
-        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(
-          () =>
-            ({
-              ok: false,
-              json: async () => ({ documents: [] }),
-            }) as Response,
-        ),
-        fetchWithAuth('/api/v1/sources/system-status').catch(
-          () =>
-            ({
-              ok: false,
-              json: async () => ({}),
-            }) as Response,
-        ),
+        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(() => null),
+        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(() => null),
+        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(() => null),
+        fetchWithAuth('/api/v1/sources/system-status').catch(() => null),
       ]);
 
       let sourcesData: any = {};
       let colsData: any = {};
       let docsData: any = {};
       let keysData: any = null;
+      let failedRequests = 0;
 
       try {
-        if (sourcesRes.ok) sourcesData = await sourcesRes.json();
-      } catch (e) {}
+        if (sourcesRes?.ok) sourcesData = await sourcesRes.json();
+        else failedRequests++;
+      } catch (e) {
+        failedRequests++;
+      }
 
       try {
-        if (colsRes.ok) colsData = await colsRes.json();
-      } catch (e) {}
+        if (colsRes?.ok) colsData = await colsRes.json();
+        else failedRequests++;
+      } catch (e) {
+        failedRequests++;
+      }
 
       try {
-        if (docsRes.ok) docsData = await docsRes.json();
-      } catch (e) {}
+        if (docsRes?.ok) docsData = await docsRes.json();
+        else failedRequests++;
+      } catch (e) {
+        failedRequests++;
+      }
 
       try {
-        if (keysRes.ok) keysData = await keysRes.json();
-      } catch (e) {}
+        if (keysRes?.ok) keysData = await keysRes.json();
+      } catch (e) {
+        /* keys status is non-critical */
+      }
 
       if (sourcesData.sources) setSources(sourcesData.sources);
       if (sourcesData.syncLogs) setSyncLogs(sourcesData.syncLogs);
@@ -198,16 +199,72 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       if (colsData.collections) setCollections(colsData.collections);
       if (keysData) setKeysStatus(keysData);
       if (docsData.documents) setDocuments(docsData.documents);
+
+      // If the core document/source loads failed, surface it — a backend
+      // outage must not masquerade as an empty knowledge base.
+      if (failedRequests >= 2) {
+        setLoadError(
+          isRtl
+            ? 'تعذر الاتصال بالخادم أثناء تحميل بيانات قاعدة المعرفة'
+            : 'Could not reach the server while loading knowledge base data',
+        );
+      }
     } catch (error) {
       console.error('Failed to load knowledge base data:', error);
+      setLoadError(isRtl ? 'حدث خطأ غير متوقع أثناء تحميل البيانات' : 'An unexpected error occurred while loading data');
     } finally {
       setIsLoading(false);
     }
-  }, [tenantId]);
+  }, [tenantId, isRtl]);
 
   useEffect(() => {
     fetchKnowledgeData();
   }, [fetchKnowledgeData]);
+
+  // Live status polling: while any document is still processing/pending, poll
+  // the lightweight status endpoint every 4s and merge fresh statuses in. This
+  // replaces the old behavior where a processing document stayed "جاري
+  // الفهرسة" until the user manually refreshed.
+  const hasProcessingDocs = useMemo(
+    () => documents.some((d) => d.status === 'processing' || d.status === 'pending'),
+    [documents],
+  );
+
+  useEffect(() => {
+    if (!hasProcessingDocs) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetchWithAuth(`/api/v1/documents/status?tenantId=${tenantId}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !Array.isArray(data?.statuses)) return;
+
+        const statusById = new Map<string, any>(data.statuses.map((s: any) => [s.id, s]));
+        setDocuments((prev) =>
+          prev.map((doc) => {
+            const fresh = statusById.get(doc.id);
+            if (!fresh || fresh.status === doc.status) return doc;
+            return {
+              ...doc,
+              status: fresh.status,
+              chunkCount: fresh.chunkCount ?? doc.chunkCount,
+              metadata: { ...doc.metadata, indexErrors: fresh.indexErrors },
+            };
+          }),
+        );
+      } catch {
+        /* transient polling failure — retry on next tick */
+      }
+    };
+
+    const interval = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [hasProcessingDocs, tenantId]);
 
   // Sync single source
   const handleSyncSource = async (sourceId: string) => {
@@ -218,10 +275,25 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         body: JSON.stringify({ tenantId }),
       });
       if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const syncOk = data?.result?.success !== false;
+        toast({
+          title: syncOk
+            ? isRtl
+              ? 'تمت المزامنة بنجاح'
+              : 'Sync completed'
+            : isRtl
+              ? 'اكتملت المزامنة مع أخطاء فهرسة'
+              : 'Sync finished with indexing errors',
+          variant: syncOk ? 'success' : 'warning',
+        });
         fetchKnowledgeData();
+      } else {
+        toast({ title: isRtl ? 'فشلت المزامنة' : 'Sync failed', variant: 'error' });
       }
     } catch (err) {
       console.error('Sync failed:', err);
+      toast({ title: isRtl ? 'فشلت المزامنة' : 'Sync failed', variant: 'error' });
     }
   };
 
@@ -238,46 +310,48 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
           }),
         ),
       );
+      toast({
+        title: isRtl ? `تمت مزامنة ${sources.length} موصل` : `Synced ${sources.length} connectors`,
+        variant: 'success',
+      });
       await fetchKnowledgeData();
     } catch (err) {
       console.error('Sync all failed:', err);
+      toast({ title: isRtl ? 'فشلت مزامنة بعض الموصلات' : 'Some connectors failed to sync', variant: 'error' });
     } finally {
       setIsSyncingAll(false);
     }
   };
 
-  // Delete source
-  const handleDeleteSource = async (sourceId: string) => {
-    if (
-      !confirm(
-        isRtl
-          ? 'هل أنت متأكد من حذف هذا الموصل وإلغاء فهرسة مستنداته؟'
-          : 'Are you sure you want to delete this source connector?',
-      )
-    )
-      return;
+  // Delete source — confirmation now goes through the accessible ConfirmDialog
+  // instead of native confirm(); the actual DELETE happens in confirmDeleteSource.
+  const confirmDeleteSource = async () => {
+    if (!pendingDeleteSource) return;
+    setIsDeleting(true);
     try {
-      const res = await fetchWithAuth(`/api/v1/sources?id=${sourceId}&tenantId=${tenantId}`, {
+      const res = await fetchWithAuth(`/api/v1/sources?id=${pendingDeleteSource.id}&tenantId=${tenantId}`, {
         method: 'DELETE',
       });
       if (res.ok) {
+        toast({ title: isRtl ? 'تم حذف الموصل' : 'Connector deleted', variant: 'success' });
         fetchKnowledgeData();
+      } else {
+        toast({ title: isRtl ? 'فشل حذف الموصل' : 'Failed to delete connector', variant: 'error' });
       }
     } catch (err) {
       console.error('Delete source failed:', err);
+      toast({ title: isRtl ? 'فشل حذف الموصل' : 'Failed to delete connector', variant: 'error' });
+    } finally {
+      setIsDeleting(false);
+      setPendingDeleteSource(null);
     }
   };
 
-  // Delete Document
-  const handleDeleteDocument = async (docId: string) => {
-    if (
-      !confirm(
-        isRtl
-          ? 'هل تود حذف هذا المستند ومتجهاته نهائياً من Qdrant؟'
-          : 'Permanently delete this document and its Qdrant vectors?',
-      )
-    )
-      return;
+  // Delete Document — same ConfirmDialog flow.
+  const confirmDeleteDocument = async () => {
+    if (!pendingDeleteDoc) return;
+    setIsDeleting(true);
+    const docId = pendingDeleteDoc.id;
     try {
       const res = await fetchWithAuth(`/api/v1/documents?id=${docId}&tenantId=${tenantId}`, {
         method: 'DELETE',
@@ -285,22 +359,48 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       if (res.ok) {
         if (inspectingDoc?.id === docId) setInspectingDoc(null);
         if (previewingDoc?.id === docId) setPreviewingDoc(null);
+        toast({ title: isRtl ? 'تم حذف المستند ومتجهاته' : 'Document and vectors deleted', variant: 'success' });
         fetchKnowledgeData();
+      } else {
+        toast({ title: isRtl ? 'فشل حذف المستند' : 'Failed to delete document', variant: 'error' });
       }
     } catch (err) {
       console.error('Delete document failed:', err);
+      toast({ title: isRtl ? 'فشل حذف المستند' : 'Failed to delete document', variant: 'error' });
+    } finally {
+      setIsDeleting(false);
+      setPendingDeleteDoc(null);
     }
   };
 
-  // Re-index Document
+  // Re-index Document — calls the REAL reindex endpoint, which re-chunks the
+  // document and rebuilds its embeddings + Qdrant points. The old
+  // implementation was a 1-second setTimeout that changed nothing.
   const handleReindexDocument = async (doc: Document) => {
     setReindexingDocId(doc.id);
     try {
-      // Simulate re-indexing request to backend
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const res = await fetchWithAuth(`/api/v1/documents/${doc.id}/reindex`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        toast({
+          title: isRtl ? `تمت إعادة فهرسة "${doc.title}"` : `Reindexed "${doc.title}"`,
+          message: isRtl ? `${data?.indexing?.indexed ?? 0} مقطع دلالي` : `${data?.indexing?.indexed ?? 0} chunks`,
+          variant: 'success',
+        });
+      } else {
+        toast({
+          title: isRtl ? 'فشلت إعادة الفهرسة' : 'Reindex failed',
+          message: data?.message || data?.error,
+          variant: 'error',
+        });
+      }
       await fetchKnowledgeData();
     } catch (err) {
       console.error('Reindexing failed:', err);
+      toast({ title: isRtl ? 'فشلت إعادة الفهرسة' : 'Reindex failed', variant: 'error' });
     } finally {
       setReindexingDocId(null);
     }
@@ -323,6 +423,8 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   const indexedDocsCount = documents.filter(
     (d) => d.status === 'indexed' || (d.status as string) === 'success' || !d.status,
   ).length;
+  const failedDocsCount = documents.filter((d) => d.status === 'failed' || (d.status as string) === 'error').length;
+  const processingDocsCount = documents.filter((d) => d.status === 'processing' || d.status === 'pending').length;
   const healthPercentage = totalDocsCount > 0 ? Math.round((indexedDocsCount / totalDocsCount) * 100) : 100;
   const avgChunksPerDoc = totalDocsCount > 0 ? (totalChunksCount / totalDocsCount).toFixed(1) : '0';
   const healthySourcesCount = sources.filter((s) => s.status === 'healthy').length;
@@ -455,154 +557,107 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             onClick={fetchKnowledgeData}
             className="p-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition flex items-center justify-center cursor-pointer shadow-3xs"
             title={isRtl ? 'تحديث البيانات' : 'Refresh Data'}
+            aria-label={isRtl ? 'تحديث البيانات' : 'Refresh Data'}
           >
             <RefreshCw className={`w-4 h-4 text-slate-500 ${isLoading ? 'animate-spin text-indigo-600' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* 2. TAB NAVIGATION BAR */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200/80 no-scrollbar">
-        <button
-          onClick={() => setActiveTab('dashboard')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'dashboard'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
+      {/* Load error banner — a backend outage must be visible, not silently
+          rendered as an empty knowledge base. */}
+      {loadError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-2xl px-4 py-3"
         >
-          <BarChart3 className="w-4 h-4" />
-          <span>{isRtl ? 'لوحة التحكم والصحة' : 'Overview & Health'}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('documents')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'documents'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>{isRtl ? 'بطاقات المستندات' : 'Document Cards'}</span>
-          <span
-            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-              activeTab === 'documents' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
-            }`}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" aria-hidden="true" />
+            <p className="text-xs font-bold text-rose-800 dark:text-rose-300 truncate">{loadError}</p>
+          </div>
+          <button
+            onClick={fetchKnowledgeData}
+            className="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
           >
-            {documents.length}
-          </span>
-        </button>
+            {isRtl ? 'إعادة المحاولة' : 'Retry'}
+          </button>
+        </div>
+      )}
 
-        <button
-          onClick={() => setActiveTab('collections')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'collections'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <Folder className="w-4 h-4" />
-          <span>{isRtl ? 'المجموعات المعرفية' : 'Collections Map'}</span>
-          <span
-            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-              activeTab === 'collections' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
-            }`}
-          >
-            {collections.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('upload')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'upload'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <Upload className="w-4 h-4" />
-          <span>{isRtl ? 'استوديو الرفع والتجزئة' : 'Ingestion Studio'}</span>
-          <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded font-bold uppercase">
-            OCR 50p
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('ocr_cache')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'ocr_cache'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <Zap className="w-4 h-4 text-amber-500 fill-amber-500/20" />
-          <span>{isRtl ? 'ذاكرة OCR المؤقتة' : 'Mistral OCR Cache'}</span>
-          <span
-            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-              activeTab === 'ocr_cache'
-                ? 'bg-indigo-700 text-white'
-                : 'bg-amber-50 text-amber-700 border border-amber-200'
-            }`}
-          >
-            {ocrCacheEntries.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('connectors')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'connectors'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <Database className="w-4 h-4" />
-          <span>{isRtl ? 'الموصلات الآلية' : 'Connectors'}</span>
-          <span
-            className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
-              activeTab === 'connectors' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
-            }`}
-          >
-            {sources.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('youtube')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'youtube'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <MonitorPlay className="w-4 h-4 text-rose-500" />
-          <span>{isRtl ? 'مفرغ يوتيوب الذكي' : 'YouTube Transcriber'}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('keys')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'keys'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <Key className="w-4 h-4" />
-          <span>{isRtl ? 'مفاتيح الخدمات' : 'API Integrations'}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('mcp')}
-          className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
-            activeTab === 'mcp'
-              ? 'bg-indigo-600 text-white shadow-2xs'
-              : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
-          }`}
-        >
-          <Zap className="w-4 h-4 text-amber-500" />
-          <span>{isRtl ? 'سياق MCP' : 'MCP Context'}</span>
-        </button>
+      {/* 2. TAB NAVIGATION BAR — data-driven, accessible (role=tablist). */}
+      <div
+        role="tablist"
+        aria-label={isRtl ? 'أقسام قاعدة المعرفة' : 'Knowledge base sections'}
+        className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200/80 no-scrollbar"
+      >
+        {(
+          [
+            { id: 'dashboard', icon: BarChart3, label: isRtl ? 'لوحة التحكم والصحة' : 'Overview & Health' },
+            { id: 'documents', icon: Layers, label: isRtl ? 'بطاقات المستندات' : 'Document Cards', count: documents.length },
+            { id: 'collections', icon: Folder, label: isRtl ? 'المجموعات المعرفية' : 'Collections Map', count: collections.length },
+            { id: 'upload', icon: Upload, label: isRtl ? 'استوديو الرفع والتجزئة' : 'Ingestion Studio', badge: 'OCR 50p' },
+            { id: 'ocr_cache', icon: Zap, label: isRtl ? 'ذاكرة OCR المؤقتة' : 'Mistral OCR Cache', count: ocrCacheEntries.length, amber: true },
+            { id: 'connectors', icon: Database, label: isRtl ? 'الموصلات الآلية' : 'Connectors', count: sources.length },
+            { id: 'youtube', icon: MonitorPlay, label: isRtl ? 'مفرغ يوتيوب الذكي' : 'YouTube Transcriber' },
+            { id: 'keys', icon: Key, label: isRtl ? 'مفاتيح الخدمات' : 'API Integrations' },
+            { id: 'mcp', icon: Zap, label: isRtl ? 'سياق MCP' : 'MCP Context' },
+          ] as Array<{
+            id: TabType;
+            icon: React.ElementType;
+            label: string;
+            count?: number;
+            badge?: string;
+            amber?: boolean;
+          }>
+        ).map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shrink-0 ${
+                isActive
+                  ? 'bg-indigo-600 text-white shadow-2xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200/60'
+              }`}
+            >
+              <Icon
+                className={`w-4 h-4 ${
+                  tab.id === 'ocr_cache'
+                    ? 'text-amber-500 fill-amber-500/20'
+                    : tab.id === 'youtube'
+                      ? 'text-rose-500'
+                      : tab.id === 'mcp'
+                        ? 'text-amber-500'
+                        : ''
+                }`}
+                aria-hidden="true"
+              />
+              <span>{tab.label}</span>
+              {typeof tab.count === 'number' && (
+                <span
+                  className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+                    isActive
+                      ? 'bg-indigo-700 text-white'
+                      : tab.amber
+                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                        : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              )}
+              {tab.badge && (
+                <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded font-bold uppercase">
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* 3. TAB 1: OVERVIEW & HEALTH DASHBOARD VIEW */}
@@ -853,7 +908,8 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 </p>
               </div>
 
-              {/* Health Checks Diagnostic List */}
+              {/* Health Checks Diagnostic List — values are computed from real
+                  state, not hardcoded marketing chips. */}
               <div className="space-y-2 text-xs">
                 <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                   <span className="text-slate-700 flex items-center gap-2 font-medium">
@@ -867,11 +923,37 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
 
                 <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                   <span className="text-slate-700 flex items-center gap-2 font-medium">
-                    <FileCheck className="w-4 h-4 text-emerald-600" />
-                    <span>{isRtl ? 'المستندات اليتيمة غير المفهرسة' : 'Orphaned Unindexed Documents'}</span>
+                    <FileCheck className={`w-4 h-4 ${failedDocsCount > 0 ? 'text-rose-600' : 'text-emerald-600'}`} />
+                    <span>{isRtl ? 'مستندات فشلت فهرستها' : 'Documents with failed indexing'}</span>
                   </span>
-                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-mono">
-                    0 DETECTED
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono ${
+                      failedDocsCount > 0
+                        ? 'text-rose-700 bg-rose-50 border-rose-200'
+                        : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                    }`}
+                  >
+                    {failedDocsCount} {isRtl ? 'مكتشف' : 'DETECTED'}
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-700 flex items-center gap-2 font-medium">
+                    <Activity className={`w-4 h-4 ${processingDocsCount > 0 ? 'text-amber-600' : 'text-slate-400'}`} />
+                    <span>{isRtl ? 'مستندات قيد المعالجة الآن' : 'Documents processing now'}</span>
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono ${
+                      processingDocsCount > 0
+                        ? 'text-amber-700 bg-amber-50 border-amber-200'
+                        : 'text-slate-600 bg-slate-100 border-slate-200'
+                    }`}
+                  >
+                    {processingDocsCount > 0
+                      ? `${processingDocsCount} ${isRtl ? 'نشط' : 'ACTIVE'}`
+                      : isRtl
+                        ? 'لا يوجد'
+                        : 'IDLE'}
                   </span>
                 </div>
 
@@ -881,7 +963,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     <span>{isRtl ? 'محرك استخراج النصوص (OCR)' : 'OCR Layout Extraction'}</span>
                   </span>
                   <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 font-mono">
-                    MISTRAL AI
+                    {keysStatus?.mistralActive ? 'MISTRAL AI' : 'GEMINI FALLBACK'}
                   </span>
                 </div>
 
@@ -891,7 +973,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     <span>{isRtl ? 'أبعاد متجهات التضمين' : 'Embedding Vector Dimension'}</span>
                   </span>
                   <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 font-mono">
-                    768 DIM (COSINE)
+                    3072 DIM (COSINE)
                   </span>
                 </div>
               </div>
@@ -949,7 +1031,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     onInspectChunks={() => setInspectingDoc(doc)}
                     onViewHistory={() => setVersionHistoryDoc(doc)}
                     onReindex={() => handleReindexDocument(doc)}
-                    onDelete={() => handleDeleteDocument(doc.id)}
+                    onDelete={() => setPendingDeleteDoc(doc)}
                     isReindexing={reindexingDocId === doc.id}
                   />
                 ))}
@@ -1020,6 +1102,20 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   <option value="database">Database</option>
                 </select>
 
+                {/* Indexing Status Filter — previously declared in state but had
+                    no UI control, so it could never be used. */}
+                <select
+                  value={filterHealth}
+                  onChange={(e) => setFilterHealth(e.target.value)}
+                  aria-label={isRtl ? 'تصفية حسب حالة الفهرسة' : 'Filter by indexing status'}
+                  className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  <option value="all">{isRtl ? 'كافة الحالات' : 'All Statuses'}</option>
+                  <option value="indexed">{isRtl ? 'مفهرس' : 'Indexed'}</option>
+                  <option value="processing">{isRtl ? 'قيد المعالجة' : 'Processing'}</option>
+                  <option value="failed">{isRtl ? 'فشل الفهرسة' : 'Failed'}</option>
+                </select>
+
                 {/* Sort selector */}
                 <select
                   value={sortBy}
@@ -1066,12 +1162,13 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 {filteredDocuments.length} {isRtl ? 'مستند متطابق' : 'matching documents'}
               </span>
 
-              {(searchQuery || filterCollection !== 'all' || filterType !== 'all') && (
+              {(searchQuery || filterCollection !== 'all' || filterType !== 'all' || filterHealth !== 'all') && (
                 <button
                   onClick={() => {
                     setSearchQuery('');
                     setFilterCollection('all');
                     setFilterType('all');
+                    setFilterHealth('all');
                   }}
                   className="text-indigo-600 hover:underline text-[11px] font-bold"
                 >
@@ -1131,7 +1228,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   onInspectChunks={() => setInspectingDoc(doc)}
                   onViewHistory={() => setVersionHistoryDoc(doc)}
                   onReindex={() => handleReindexDocument(doc)}
-                  onDelete={() => handleDeleteDocument(doc.id)}
+                  onDelete={() => setPendingDeleteDoc(doc)}
                   isReindexing={reindexingDocId === doc.id}
                 />
               ))}
@@ -1199,8 +1296,9 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           <span>{isRtl ? 'معاينة' : 'Preview'}</span>
                         </button>
                         <button
-                          onClick={() => handleDeleteDocument(doc.id)}
+                          onClick={() => setPendingDeleteDoc(doc)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                          aria-label={isRtl ? `حذف المستند ${doc.title}` : `Delete document ${doc.title}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1357,18 +1455,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               </button>
 
               <button
-                onClick={() => {
-                  if (
-                    confirm(
-                      isRtl
-                        ? 'هل تريد مسح جميع نتائج الـ OCR المخزنة في الذاكرة المؤقتة؟'
-                        : 'Clear all cached Mistral OCR results?',
-                    )
-                  ) {
-                    clearAllOcrCache();
-                    refreshOcrCache();
-                  }
-                }}
+                onClick={() => setIsClearCacheConfirmOpen(true)}
                 disabled={ocrCacheEntries.length === 0}
                 className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
@@ -1510,10 +1597,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                         <button
                           onClick={() => {
                             navigator.clipboard.writeText(entry.extractedText);
-                            alert(isRtl ? 'تم نسخ النص المخزن للحافظة!' : 'Copied extracted text to clipboard!');
+                            toast({
+                              title: isRtl ? 'تم نسخ النص المخزن للحافظة' : 'Copied extracted text to clipboard',
+                              variant: 'success',
+                            });
                           }}
                           className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition cursor-pointer"
                           title={isRtl ? 'نسخ النص' : 'Copy Text'}
+                          aria-label={isRtl ? 'نسخ النص' : 'Copy Text'}
                         >
                           <Copy className="w-3.5 h-3.5 text-slate-600" />
                         </button>
@@ -1525,6 +1616,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           }}
                           className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition cursor-pointer"
                           title={isRtl ? 'حذف من الكاش' : 'Delete from cache'}
+                          aria-label={isRtl ? 'حذف من الكاش' : 'Delete from cache'}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1615,9 +1707,39 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           <Server className="w-5 h-5 text-violet-600" />
                         )}
                       </div>
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase font-mono">
-                        {src.status || 'HEALTHY'}
-                      </span>
+                      {/* Status pill now reflects the real connector state.
+                          Previously every connector rendered emerald/"HEALTHY"
+                          even when degraded, error, or paused. */}
+                      {(() => {
+                        const status = src.status || 'healthy';
+                        const style =
+                          status === 'healthy'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : status === 'syncing'
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : status === 'degraded'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : status === 'error'
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : 'bg-slate-100 text-slate-600 border-slate-200';
+                        const label =
+                          status === 'healthy'
+                            ? isRtl ? 'سليم' : 'HEALTHY'
+                            : status === 'syncing'
+                              ? isRtl ? 'يزامن' : 'SYNCING'
+                              : status === 'degraded'
+                                ? isRtl ? 'متدهور' : 'DEGRADED'
+                                : status === 'error'
+                                  ? isRtl ? 'خطأ' : 'ERROR'
+                                  : isRtl ? 'متوقف' : 'PAUSED';
+                        return (
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full border uppercase font-mono ${style}`}
+                          >
+                            {label}
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     <h4 className="text-sm font-extrabold text-slate-900 pt-1 truncate">{src.name}</h4>
@@ -1651,9 +1773,10 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                         <Settings className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => handleDeleteSource(src.id)}
+                        onClick={() => setPendingDeleteSource(src)}
                         className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
                         title={isRtl ? 'حذف' : 'Delete'}
+                        aria-label={isRtl ? `حذف الموصل ${src.name}` : `Delete connector ${src.name}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -1720,12 +1843,25 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div className="text-[10px] font-mono bg-slate-100 p-2 rounded text-slate-600">GEMINI_API_KEY</div>
             </div>
 
-            {/* Qdrant DB */}
+            {/* Qdrant DB — status reflects the real key/URL presence instead
+                of a hardcoded "Connected ✓" that lied when Qdrant was absent. */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-900">Qdrant Vector DB</span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  {isRtl ? 'متصل ✓' : 'Connected ✓'}
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    keysStatus?.qdrantActive
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}
+                >
+                  {keysStatus?.qdrantActive
+                    ? isRtl
+                      ? 'مهيأ ✓'
+                      : 'Configured ✓'
+                    : isRtl
+                      ? 'غير مهيأ ⚠'
+                      : 'Not configured ⚠'}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
@@ -1956,7 +2092,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(previewOcrEntry.extractedText);
-                    alert(isRtl ? 'تم نسخ النص المفرغ للحافظة!' : 'Copied text to clipboard!');
+                    toast({ title: isRtl ? 'تم نسخ النص المفرغ للحافظة' : 'Copied text to clipboard', variant: 'success' });
                   }}
                   className="px-3 py-1.5 bg-indigo-600 text-white font-bold rounded-xl text-xs hover:bg-indigo-700 transition flex items-center gap-1.5 cursor-pointer"
                 >
@@ -1975,6 +2111,59 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
           </div>
         </div>
       )}
+
+      {/* Confirmation dialogs (accessible replacements for native confirm()) */}
+      <ConfirmDialog
+        open={!!pendingDeleteDoc}
+        title={isRtl ? 'حذف المستند نهائياً' : 'Permanently delete document'}
+        message={
+          isRtl
+            ? `هل تود حذف "${pendingDeleteDoc?.title}" ومتجهاته نهائياً من Qdrant؟ لا يمكن التراجع عن هذا الإجراء.`
+            : `Permanently delete "${pendingDeleteDoc?.title}" and its Qdrant vectors? This cannot be undone.`
+        }
+        confirmLabel={isRtl ? 'حذف نهائي' : 'Delete permanently'}
+        cancelLabel={isRtl ? 'إلغاء' : 'Cancel'}
+        variant="danger"
+        loading={isDeleting}
+        onConfirm={confirmDeleteDocument}
+        onCancel={() => setPendingDeleteDoc(null)}
+      />
+
+      <ConfirmDialog
+        open={!!pendingDeleteSource}
+        title={isRtl ? 'حذف الموصل' : 'Delete connector'}
+        message={
+          isRtl
+            ? `هل أنت متأكد من حذف الموصل "${pendingDeleteSource?.name}" وإلغاء فهرسة مستنداته؟`
+            : `Are you sure you want to delete the "${pendingDeleteSource?.name}" connector and de-index its documents?`
+        }
+        confirmLabel={isRtl ? 'حذف' : 'Delete'}
+        cancelLabel={isRtl ? 'إلغاء' : 'Cancel'}
+        variant="danger"
+        loading={isDeleting}
+        onConfirm={confirmDeleteSource}
+        onCancel={() => setPendingDeleteSource(null)}
+      />
+
+      <ConfirmDialog
+        open={isClearCacheConfirmOpen}
+        title={isRtl ? 'مسح ذاكرة OCR المؤقتة' : 'Clear OCR cache'}
+        message={
+          isRtl
+            ? 'هل تريد مسح جميع نتائج الـ OCR المخزنة في الذاكرة المؤقتة؟ سيُعاد استخراج النصوص عند رفع نفس الملفات مجدداً.'
+            : 'Clear all cached Mistral OCR results? Text will be re-extracted if you upload the same files again.'
+        }
+        confirmLabel={isRtl ? 'مسح الكل' : 'Clear all'}
+        cancelLabel={isRtl ? 'إلغاء' : 'Cancel'}
+        variant="warning"
+        onConfirm={() => {
+          clearAllOcrCache();
+          refreshOcrCache();
+          setIsClearCacheConfirmOpen(false);
+          toast({ title: isRtl ? 'تم مسح ذاكرة OCR' : 'OCR cache cleared', variant: 'success' });
+        }}
+        onCancel={() => setIsClearCacheConfirmOpen(false)}
+      />
     </div>
   );
 }

@@ -12,6 +12,13 @@
   --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, sans-serif;
   --font-cairo: 'Cairo', 'IBM Plex Sans Arabic', system-ui, sans-serif;
   --font-tajawal: 'Tajawal', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+
+  /* Extra slate steps used across the UI (`border-slate-150`, `bg-slate-850`).
+     Tailwind v4 ships neither shade, so every usage previously generated NO
+     CSS and those borders/backgrounds silently rendered unstyled. Defining
+     them here fixes all ~28 call sites at once. */
+  --color-slate-150: #e9eef5;
+  --color-slate-850: #172033;
 }
 
 /* Tailwind v4 is CSS-first and has no tailwind.config.js by default, so the
@@ -783,6 +790,86 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
 }
 .animate-fadeIn {
   animation: fadeIn 0.18s ease-out both;
+}
+
+/* Toast notifications: slide up on enter, fade down on exit. */
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.toast-enter {
+  animation: toast-enter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes toast-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+.toast-exit {
+  animation: toast-exit 0.2s ease-in both;
+}
+
+/* Modal panels: gentle scale + fade so dialogs don't "pop" harshly. */
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.modal-enter {
+  animation: modal-enter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* tailwindcss-animate-compatible enter utilities. 13 components use
+   `animate-in fade-in zoom-in-95 duration-*` classes, but the plugin was never
+   installed, so every modal rendered WITHOUT its entrance animation. These
+   rules implement the same contract (enter opacity/scale/translate driven by
+   CSS variables) without adding a dependency. */
+@keyframes tw-enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translateY(var(--tw-enter-translate-y, 0)) scale(var(--tw-enter-scale, 1));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-in {
+  animation: tw-enter 150ms ease-out both;
+}
+.animate-in.duration-150 {
+  animation-duration: 150ms;
+}
+.animate-in.duration-200 {
+  animation-duration: 200ms;
+}
+.fade-in {
+  --tw-enter-opacity: 0;
+}
+.fade-in-50 {
+  --tw-enter-opacity: 0.5;
+}
+.zoom-in-95 {
+  --tw-enter-scale: 0.95;
+}
+.slide-in-from-top-3 {
+  --tw-enter-translate-y: -0.75rem;
 }
 
 /* Message appear animation */

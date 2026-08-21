@@ -17,6 +17,7 @@ import {
   Document,
   DocumentVersion,
   DocumentChunk,
+  ChunkIndexResult,
   Collection,
   Conversation,
   Message,
@@ -66,8 +67,13 @@ export interface IOmniRAGDatabase {
    * concurrency, the parent document's collectionIds are resolved once (not per
    * chunk), and Qdrant receives a single multi-point upsert. Preferred over
    * looping `addChunk` whenever the full chunk list is known up-front.
+   *
+   * Returns a structured result so callers can surface indexing failures
+   * instead of silently reporting success when embedding or the vector store
+   * failed. `indexed` counts chunks that reached the vector store; `failed`
+   * counts chunks that did not; `errors` carries human-readable reasons.
    */
-  addChunks(chunks: DocumentChunk[]): Promise<void>;
+  addChunks(chunks: DocumentChunk[]): Promise<ChunkIndexResult>;
 
   // Document versioning
   getDocumentVersions(documentId: string, tenantId: string): Promise<DocumentVersion[]>;
@@ -81,6 +87,15 @@ export interface IOmniRAGDatabase {
     targetVersionNumber: number,
     tenantId: string,
   ): Promise<{ document: Document; restoredVersion: DocumentVersion } | undefined>;
+  /**
+   * Rebuild a document's chunk grid and vector index from its current
+   * content. Recovery path for `failed` documents and the real handler behind
+   * the UI reindex action. Returns undefined when the document is missing.
+   */
+  reindexDocument(
+    documentId: string,
+    tenantId: string,
+  ): Promise<{ document: Document; result: ChunkIndexResult } | undefined>;
 
   // Collections
   getCollections(tenantId: string): Promise<Collection[]>;

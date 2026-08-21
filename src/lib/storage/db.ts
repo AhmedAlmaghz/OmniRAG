@@ -5,6 +5,7 @@ import {
   Document,
   DocumentVersion,
   DocumentChunk,
+  ChunkIndexResult,
   Collection,
   Conversation,
   Message,
@@ -15,7 +16,7 @@ import {
   SyncLogEntry,
   McpResourceItem,
 } from '../types/omnirag';
-import { chunkTextIntoList } from '../rag/textChunker';
+import { chunkDocument, estimateTokenCount } from '../rag/chunker';
 import { DEFAULT_AI_MODELS } from '../config/aiModels';
 import {
   ensurePostgresTables,
@@ -25,6 +26,7 @@ import {
   deletePostgresDocument,
   getPostgresChunks,
   insertPostgresChunk,
+  deletePostgresChunksByDocument,
   getPostgresSources,
   getPostgresSourceById,
   insertPostgresSource,
@@ -258,11 +260,16 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     this.chunks.push(chunk);
   }
 
-  async addChunks(chunks: DocumentChunk[]): Promise<void> {
-    if (chunks.length === 0) return;
+  async addChunks(chunks: DocumentChunk[]): Promise<ChunkIndexResult> {
+    if (chunks.length === 0) {
+      return { indexed: 0, failed: 0, total: 0, errors: [], success: true };
+    }
     const ids = new Set(chunks.map((c) => c.id));
     this.chunks = this.chunks.filter((c) => !ids.has(c.id));
     this.chunks.push(...chunks);
+    // In-memory store: every chunk is immediately searchable via the local
+    // fallback engine, so the batch is fully indexed by definition.
+    return { indexed: chunks.length, failed: 0, total: chunks.length, errors: [], success: true };
   }
 
   async getDocumentVersions(documentId: string, tenantId: string): Promise<DocumentVersion[]> {
@@ -310,6 +317,34 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     doc.version = targetVer.versionNumber;
     doc.updatedAt = new Date().toISOString();
     return { document: doc, restoredVersion: targetVer };
+  }
+
+  async reindexDocument(
+    documentId: string,
+    tenantId: string,
+  ): Promise<{ document: Document; result: ChunkIndexResult } | undefined> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    if (!doc || !doc.content) return undefined;
+
+    const chunkTextList = chunkDocument(doc.content, doc.metadata?.chunkingConfig);
+    this.chunks = this.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
+    const chunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+      id: `chunk-${doc.id}-re-${i + 1}`,
+      tenantId,
+      documentId: doc.id,
+      documentTitle: doc.title,
+      content: text,
+      chunkIndex: i,
+      pageNumber: 1,
+      language: doc.language === 'en' ? 'en' : 'ar',
+      metadata: { position: i, tokenCount: estimateTokenCount(text) },
+    }));
+    const result = await this.addChunks(chunks);
+
+    doc.status = result.success ? 'indexed' : 'failed';
+    doc.chunkCount = chunkTextList.length;
+    doc.updatedAt = new Date().toISOString();
+    return { document: doc, result };
   }
 
   async getCollections(tenantId: string): Promise<Collection[]> {
@@ -543,12 +578,39 @@ async function ensureSeeded(): Promise<void> {
 class OmniRAGDatabase implements IOmniRAGDatabase {
   private useMemory = false;
 
+  /**
+   * Postgres circuit-breaker state.
+   *
+   * The previous implementation flipped `useMemory = true` on the FIRST
+   * Postgres error and never recovered — one transient blip (network hiccup,
+   * pool exhaustion, brief restart) silently demoted the whole process to
+   * in-memory storage for its entire lifetime, losing durability without any
+   * operator notice.
+   *
+   * Now we only open the circuit after PG_ERROR_THRESHOLD errors within a
+   * sliding PG_ERROR_WINDOW_MS window, and we automatically half-open it after
+   * PG_FALLBACK_COOLDOWN_MS so the next operation retries Postgres. If Postgres
+   * is truly down the errors re-open the circuit; if it recovered, the counter
+   * ages out and we silently resume durable writes.
+   */
+  private static readonly PG_ERROR_THRESHOLD = 3;
+  private static readonly PG_ERROR_WINDOW_MS = 60_000;
+  private static readonly PG_FALLBACK_COOLDOWN_MS = 30_000;
+  private pgErrorTimestamps: number[] = [];
+  private pgRetryTimer: NodeJS.Timeout | null = null;
+
   enableMemoryFallback() {
     this.useMemory = true;
+    this.schedulePostgresRetry('manual enableMemoryFallback');
   }
 
   disableMemoryFallback() {
     this.useMemory = false;
+    this.pgErrorTimestamps = [];
+    if (this.pgRetryTimer) {
+      clearTimeout(this.pgRetryTimer);
+      this.pgRetryTimer = null;
+    }
   }
 
   isMemoryEnabled(): boolean {
@@ -557,16 +619,64 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
   resetDatabaseState() {
     this.useMemory = false;
+    this.pgErrorTimestamps = [];
+    if (this.pgRetryTimer) {
+      clearTimeout(this.pgRetryTimer);
+      this.pgRetryTimer = null;
+    }
     resetPostgresPool();
     isSeeded = false;
     seedingPromise = null;
   }
 
+  /**
+   * Schedule an automatic retry of the Postgres connection after the cooldown.
+   * When it fires we close the circuit (useMemory = false) and clear the seed
+   * flag so the next operation re-runs table provisioning against a hopefully
+   * recovered database. `unref()` keeps the timer from holding the process
+   * open during shutdown.
+   */
+  private schedulePostgresRetry(reason: string) {
+    if (this.pgRetryTimer) return; // one pending retry is enough
+    this.pgRetryTimer = setTimeout(() => {
+      this.pgRetryTimer = null;
+      this.useMemory = false;
+      this.pgErrorTimestamps = [];
+      isSeeded = false;
+      seedingPromise = null;
+      console.info('[OmniRAG Storage] Postgres circuit breaker HALF-OPEN: retrying durable storage on next operation.');
+    }, OmniRAGDatabase.PG_FALLBACK_COOLDOWN_MS);
+    this.pgRetryTimer.unref?.();
+    console.info(
+      `[OmniRAG Storage] Will retry Postgres in ${OmniRAGDatabase.PG_FALLBACK_COOLDOWN_MS / 1000}s (${reason}).`,
+    );
+  }
+
   private handleDatabaseError(error: any, actionName: string) {
-    if (!this.useMemory) {
+    const now = Date.now();
+    // Keep only errors inside the sliding window so sporadic failures spread
+    // over hours never accumulate into a false circuit break.
+    this.pgErrorTimestamps = this.pgErrorTimestamps.filter((t) => now - t < OmniRAGDatabase.PG_ERROR_WINDOW_MS);
+    this.pgErrorTimestamps.push(now);
+
+    const errMsg = (error as Error)?.message || String(error);
+
+    if (this.useMemory) return; // circuit already open
+
+    if (this.pgErrorTimestamps.length >= OmniRAGDatabase.PG_ERROR_THRESHOLD) {
       this.useMemory = true;
-      const errMsg = (error as Error)?.message || String(error);
-      console.info(`[OmniRAG Storage] Postgres fallback activated (${actionName}): ${errMsg}`);
+      console.error(
+        `[OmniRAG Storage] Postgres circuit breaker OPEN after ${this.pgErrorTimestamps.length} errors within ${
+          OmniRAGDatabase.PG_ERROR_WINDOW_MS / 1000
+        }s (last in ${actionName}): ${errMsg}. Falling back to in-memory storage temporarily.`,
+      );
+      this.schedulePostgresRetry(`circuit break in ${actionName}`);
+    } else {
+      // Transient error: this single call still falls back to memory (the
+      // caller handles that), but the NEXT operation retries Postgres.
+      console.warn(
+        `[OmniRAG Storage] Transient Postgres error in ${actionName} (${this.pgErrorTimestamps.length}/${OmniRAGDatabase.PG_ERROR_THRESHOLD} in window): ${errMsg}`,
+      );
     }
   }
 
@@ -708,20 +818,18 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     id: string,
     tenantId: string,
   ): Promise<{ success: boolean; itemsProcessed: number; durationMs: number }> {
+    // Measure the REAL sync duration end-to-end. The previous implementation
+    // reported a hardcoded 2400ms regardless of what actually happened.
+    const startedAt = Date.now();
     try {
       const source = await this.getSourceById(id, tenantId);
-      if (!source) return { success: false, itemsProcessed: 0, durationMs: 0 };
+      if (!source) return { success: false, itemsProcessed: 0, durationMs: Date.now() - startedAt };
 
       // Decrypt connector credentials for the trusted sync path only.
       const decryptedConfig = source.config ? decryptSourceConfig(source.config) : source.config;
-      const duration = 2400;
       const items = 1;
 
-      source.status = 'healthy';
-      source.lastSyncAt = new Date().toISOString();
-      source.documentCount = (source.documentCount || 0) + items;
-      source.lastError = undefined;
-
+      source.status = 'syncing';
       await memoryDb.updateSource(id, source, tenantId);
       if (!this.useMemory) {
         try {
@@ -736,16 +844,17 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       let newDocContent = `تحديث بيانات من الموصل (${source.name}):\nتم جلب واستخراج ${items} سجل جديد وحفظها بتشفير عالي ومعالجة متجهات Qdrant بضمان عزْل المستأجر ${tenantId}.`;
 
       if (source.type === 'youtube') {
-        const ytUrl =
-          decryptedConfig?.playlistUrl || decryptedConfig?.url || 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-        try {
-          const ytData = await processYoutubeTranscript(ytUrl, 'ar');
-          if (ytData && ytData.success && ytData.transcript) {
-            newDocTitle = ytData.title ? `[تفريغ فيديو يوتيوب] ${ytData.title}` : newDocTitle;
-            newDocContent = ytData.transcript;
+        const ytUrl = decryptedConfig?.playlistUrl || decryptedConfig?.url;
+        if (ytUrl && typeof ytUrl === 'string' && ytUrl.trim()) {
+          try {
+            const ytData = await processYoutubeTranscript(ytUrl, 'ar');
+            if (ytData && ytData.success && ytData.transcript) {
+              newDocTitle = ytData.title ? `[تفريغ فيديو يوتيوب] ${ytData.title}` : newDocTitle;
+              newDocContent = ytData.transcript;
+            }
+          } catch (ytErr) {
+            console.log('YouTube sync transcript failed, fallback to structured summary:', (ytErr as Error)?.message);
           }
-        } catch (ytErr) {
-          console.log('YouTube sync transcript failed, fallback to structured summary:', (ytErr as Error)?.message);
         }
       } else if (source.type === 'file') {
         const fileData = decryptedConfig?.fileData || decryptedConfig?.base64;
@@ -776,17 +885,15 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         content: newDocContent,
         sourceType: source.type === 'file' ? 'file' : 'integration',
         language: 'ar',
-        status: 'indexed',
+        status: 'processing',
         chunkCount: 0,
         createdAt: new Date().toISOString(),
         metadata: { sourceId: source.id, connectorType: source.type },
         collectionIds: source.collectionIds,
       };
 
-      // Phase 7: route memory chunking through the shared chunker so the chunk
-      // grid matches createDocumentVersion / revertDocumentVersion (overlap
-      // preserved). Previously this path used step == size with no overlap.
-      const chunkTextList = chunkTextIntoList(newDocContent);
+      // Unified chunker: every ingestion path produces the same chunk grid.
+      const chunkTextList = chunkDocument(newDocContent);
 
       newDoc.chunkCount = chunkTextList.length;
       await this.addDocument(newDoc);
@@ -802,29 +909,67 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
             chunkIndex: index,
             pageNumber: 1,
             language: 'ar',
-            metadata: { sourceId: source.id, position: index },
+            metadata: { sourceId: source.id, position: index, tokenCount: estimateTokenCount(text) },
           }) as DocumentChunk,
       );
-      await this.addChunks(chunks);
+      const indexResult = await this.addChunks(chunks);
 
+      // Document status lifecycle: processing → indexed | failed.
+      const finalStatus: Document['status'] = indexResult.success ? 'indexed' : 'failed';
+      newDoc.status = finalStatus;
+      newDoc.metadata = {
+        ...newDoc.metadata,
+        indexedAt: new Date().toISOString(),
+        indexErrors: indexResult.errors.length > 0 ? indexResult.errors : undefined,
+      };
+      await this.updateDocument(newDocId, { status: finalStatus, metadata: newDoc.metadata }, tenantId);
+
+      // Mark the connector healthy/degraded based on the real outcome.
+      source.status = indexResult.success ? 'healthy' : 'degraded';
+      source.lastSyncAt = new Date().toISOString();
+      source.documentCount = (source.documentCount || 0) + items;
+      source.lastError = indexResult.success ? undefined : indexResult.errors.join('؛ ');
+      await memoryDb.updateSource(id, source, tenantId);
+      if (!this.useMemory) {
+        try {
+          await insertPostgresSource(source);
+        } catch (e) {
+          this.handleDatabaseError(e, 'syncSource-finalStatus');
+        }
+      }
+
+      const durationMs = Date.now() - startedAt;
       await this.addSyncLog({
         id: `log-${Date.now()}`,
         tenantId,
         sourceId: source.id,
         sourceName: source.name,
-        status: 'success',
+        status: indexResult.success ? 'success' : 'failed',
         itemsProcessed: items,
-        durationMs: duration,
-        message: `تمت المزمنة بنجاح: جلب وتفريغ وتجزيئه إلى ${chunkTextList.length} مقطع دلالي وقواعد متجهات.`,
+        durationMs,
+        message: indexResult.success
+          ? `تمت المزامنة بنجاح: جلب وتفريغ وتجزيء إلى ${chunkTextList.length} مقطع دلالي وفهرستها في قواعد المتجهات.`
+          : `اكتملت المزامنة مع فشل الفهرسة المتجهية: ${indexResult.errors.join('؛ ')}`,
         timestamp: new Date().toISOString(),
       });
 
-      return { success: true, itemsProcessed: items, durationMs: duration };
+      return { success: indexResult.success, itemsProcessed: items, durationMs };
     } catch (err) {
       this.handleDatabaseError(err, 'syncSource');
+      const durationMs = Date.now() - startedAt;
+      try {
+        const source = await memoryDb.getSourceById(id, tenantId);
+        if (source) {
+          source.status = 'error';
+          source.lastError = (err as Error)?.message || String(err);
+          await memoryDb.updateSource(id, source, tenantId);
+        }
+      } catch {
+        /* best effort */
+      }
       return (await memoryDb.getSourceById(id, tenantId))
-        ? { success: true, itemsProcessed: 1, durationMs: 1200 }
-        : { success: false, itemsProcessed: 0, durationMs: 0 };
+        ? { success: false, itemsProcessed: 0, durationMs }
+        : { success: false, itemsProcessed: 0, durationMs };
     }
   }
 
@@ -1052,10 +1197,10 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     const newTitle = params.title?.trim() || doc.title;
     const newContent = params.content;
     const nowIso = new Date().toISOString();
+    const startedAt = Date.now();
 
-    // Re-chunk content (Phase 7: uses the shared chunker geometry so all
-    // ingestion paths produce the same chunk grid).
-    const chunkTextList = chunkTextIntoList(newContent);
+    // Unified chunker: all ingestion paths produce the same chunk grid.
+    const chunkTextList = chunkDocument(newContent);
 
     const newVersion: DocumentVersion = {
       id: `ver-${doc.id}-v${nextVerNumber}`,
@@ -1083,8 +1228,14 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
     await this.addDocument(updatedDoc);
 
-    // Update chunks
+    // Replace chunks: purge the OLD chunk grid from every store first. The
+    // previous implementation only filtered the in-memory array, so stale
+    // vectors from earlier versions kept living in Qdrant and Postgres and
+    // polluted retrieval with outdated content.
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
+    await deleteQdrantDocument(documentId, tenantId);
+    await deletePostgresChunksByDocument(documentId, tenantId);
+
     const versionChunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
       id: `chunk-${doc.id}-v${nextVerNumber}-${i + 1}`,
       tenantId,
@@ -1097,19 +1248,38 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       metadata: {
         version: nextVerNumber,
         position: i,
+        tokenCount: estimateTokenCount(text),
       },
     }));
-    await this.addChunks(versionChunks);
+    const indexResult = await this.addChunks(versionChunks);
+
+    // Reflect the real indexing outcome on the document status.
+    const finalStatus: Document['status'] = indexResult.success ? 'indexed' : 'failed';
+    updatedDoc.status = finalStatus;
+    await this.updateDocument(
+      documentId,
+      {
+        status: finalStatus,
+        metadata: {
+          ...updatedDoc.metadata,
+          indexedAt: new Date().toISOString(),
+          indexErrors: indexResult.errors.length > 0 ? indexResult.errors : undefined,
+        },
+      },
+      tenantId,
+    );
 
     await this.addSyncLog({
       id: `log-ver-${Date.now()}`,
       tenantId,
       sourceId: doc.metadata?.sourceId || doc.id,
       sourceName: doc.title,
-      status: 'success',
+      status: indexResult.success ? 'success' : 'failed',
       itemsProcessed: chunkTextList.length,
-      durationMs: 850,
-      message: `تم إنشاء وحفظ الإصدار v${nextVerNumber} للمستند "${newTitle}" وتحديث فهرسة المتجهات`,
+      durationMs: Date.now() - startedAt,
+      message: indexResult.success
+        ? `تم إنشاء وحفظ الإصدار v${nextVerNumber} للمستند "${newTitle}" وتحديث فهرسة المتجهات`
+        : `تم حفظ الإصدار v${nextVerNumber} مع فشل الفهرسة: ${indexResult.errors.join('؛ ')}`,
       timestamp: nowIso,
     });
 
@@ -1129,10 +1299,11 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     if (!targetVer) return undefined;
 
     const nowIso = new Date().toISOString();
+    const startedAt = Date.now();
 
-    // Phase 7: shared chunker keeps the restored chunk grid identical to the
-    // one createDocumentVersion would produce for the same content.
-    const chunkTextList = chunkTextIntoList(targetVer.content);
+    // Unified chunker: the restored chunk grid is identical to the one
+    // createDocumentVersion would produce for the same content.
+    const chunkTextList = chunkDocument(targetVer.content);
 
     const updatedDoc: Document = {
       ...doc,
@@ -1145,8 +1316,12 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
     await this.addDocument(updatedDoc);
 
-    // Update chunks
+    // Replace chunks across ALL stores (memory + Qdrant + Postgres) so no
+    // stale vectors from the superseded version remain searchable.
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
+    await deleteQdrantDocument(documentId, tenantId);
+    await deletePostgresChunksByDocument(documentId, tenantId);
+
     const revertChunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
       id: `chunk-${doc.id}-rev-v${targetVer.versionNumber}-${i + 1}`,
       tenantId,
@@ -1159,23 +1334,124 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       metadata: {
         restoredFromVersion: targetVer.versionNumber,
         position: i,
+        tokenCount: estimateTokenCount(text),
       },
     }));
-    await this.addChunks(revertChunks);
+    const indexResult = await this.addChunks(revertChunks);
+
+    const finalStatus: Document['status'] = indexResult.success ? 'indexed' : 'failed';
+    updatedDoc.status = finalStatus;
+    await this.updateDocument(
+      documentId,
+      {
+        status: finalStatus,
+        metadata: {
+          ...updatedDoc.metadata,
+          indexedAt: new Date().toISOString(),
+          indexErrors: indexResult.errors.length > 0 ? indexResult.errors : undefined,
+        },
+      },
+      tenantId,
+    );
 
     await this.addSyncLog({
       id: `log-revert-${Date.now()}`,
       tenantId,
       sourceId: doc.metadata?.sourceId || doc.id,
       sourceName: targetVer.title,
-      status: 'success',
+      status: indexResult.success ? 'success' : 'failed',
       itemsProcessed: chunkTextList.length,
-      durationMs: 920,
-      message: `تم استرجاع المستند "${targetVer.title}" إلى الإصدار v${targetVer.versionNumber} بنجاح وإعادة الفهرسة`,
+      durationMs: Date.now() - startedAt,
+      message: indexResult.success
+        ? `تم استرجاع المستند "${targetVer.title}" إلى الإصدار v${targetVer.versionNumber} بنجاح وإعادة الفهرسة`
+        : `تم استرجاع الإصدار v${targetVer.versionNumber} مع فشل الفهرسة: ${indexResult.errors.join('؛ ')}`,
       timestamp: nowIso,
     });
 
     return { document: updatedDoc, restoredVersion: targetVer };
+  }
+
+  /**
+   * Re-index an existing document: re-chunk its current content with the
+   * unified chunker, purge the old chunk grid from every store, and rebuild
+   * embeddings + Qdrant points + Postgres rows from scratch.
+   *
+   * This is the REAL implementation behind the UI's "reindex" button, which
+   * previously ran a 1-second setTimeout and did nothing. It is also the
+   * recovery path for documents stuck in `failed` after a vector-store outage.
+   *
+   * Returns undefined when the document does not exist; otherwise returns the
+   * updated document and the indexing result so the caller can report the
+   * outcome honestly.
+   */
+  async reindexDocument(
+    documentId: string,
+    tenantId: string,
+  ): Promise<{ document: Document; result: ChunkIndexResult } | undefined> {
+    const doc = await this.getDocumentById(documentId, tenantId);
+    if (!doc || !doc.content) return undefined;
+
+    const startedAt = Date.now();
+    await this.updateDocument(documentId, { status: 'processing' }, tenantId);
+
+    // Unified chunker — reuse the document's stored chunking config when it
+    // has one so a reindex reproduces the original geometry.
+    const chunkTextList = chunkDocument(doc.content, doc.metadata?.chunkingConfig);
+
+    // Purge the stale grid from all stores before rebuilding.
+    memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
+    await deleteQdrantDocument(documentId, tenantId);
+    await deletePostgresChunksByDocument(documentId, tenantId);
+
+    const chunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+      id: `chunk-${doc.id}-re-${Date.now().toString(36)}-${i + 1}`,
+      tenantId,
+      documentId: doc.id,
+      documentTitle: doc.title,
+      content: text,
+      chunkIndex: i,
+      pageNumber: 1,
+      language: doc.language === 'en' ? 'en' : 'ar',
+      metadata: {
+        sourceId: doc.metadata?.sourceId,
+        position: i,
+        reindexedAt: new Date().toISOString(),
+        tokenCount: estimateTokenCount(text),
+      },
+    }));
+
+    const result = await this.addChunks(chunks);
+
+    const finalStatus: Document['status'] = result.success ? 'indexed' : 'failed';
+    const updated = await this.updateDocument(
+      documentId,
+      {
+        status: finalStatus,
+        chunkCount: chunkTextList.length,
+        metadata: {
+          ...doc.metadata,
+          indexedAt: new Date().toISOString(),
+          indexErrors: result.errors.length > 0 ? result.errors : undefined,
+        },
+      },
+      tenantId,
+    );
+
+    await this.addSyncLog({
+      id: `log-reindex-${Date.now()}`,
+      tenantId,
+      sourceId: doc.metadata?.sourceId || doc.id,
+      sourceName: doc.title,
+      status: result.success ? 'success' : 'failed',
+      itemsProcessed: chunkTextList.length,
+      durationMs: Date.now() - startedAt,
+      message: result.success
+        ? `تمت إعادة فهرسة المستند "${doc.title}" إلى ${chunkTextList.length} مقطع دلالي بنجاح`
+        : `فشلت إعادة فهرسة "${doc.title}": ${result.errors.join('؛ ')}`,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { document: updated || { ...doc, status: finalStatus, chunkCount: chunkTextList.length }, result };
   }
 
   // Chunks
@@ -1274,15 +1550,41 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
    *   3. resolve each unique parent document's collectionIds ONCE (not per chunk);
    *   4. insert all Postgres rows in parallel;
    *   5. push all vectors to Qdrant in a single multi-point upsert.
+   *
+   * Returns a structured {@link ChunkIndexResult} instead of swallowing
+   * failures: previously a Qdrant outage still produced a "success" API
+   * response while zero vectors were stored, leaving documents marked
+   * "indexed" but unsearchable. Callers now flip the document status to
+   * `failed` (or surface a partial-indexing warning) based on this result.
    */
-  async addChunks(chunks: DocumentChunk[]): Promise<void> {
-    if (chunks.length === 0) return;
+  async addChunks(chunks: DocumentChunk[]): Promise<ChunkIndexResult> {
+    const result: ChunkIndexResult = {
+      indexed: 0,
+      failed: 0,
+      total: chunks.length,
+      errors: [],
+      success: false,
+    };
+    if (chunks.length === 0) {
+      result.success = true;
+      return result;
+    }
     await memoryDb.addChunks(chunks);
-    if (this.useMemory) return;
+    if (this.useMemory) {
+      // Memory-only mode: chunks are stored in-process and searchable via the
+      // local fallback engine, so we report them as indexed.
+      result.indexed = chunks.length;
+      result.success = true;
+      return result;
+    }
 
     try {
       await ensureSeeded();
-      if (this.useMemory) return;
+      if (this.useMemory) {
+        result.indexed = chunks.length;
+        result.success = true;
+        return result;
+      }
 
       // 1. Generate all embeddings in one bounded-concurrency wave.
       const vectors = await embedBatch(chunks.map((c) => c.content));
@@ -1299,6 +1601,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       }
 
       // 3. Insert all Postgres rows in parallel (cheap local writes).
+      let lexicalFailures = 0;
       await Promise.all(
         chunks.map((chunk) =>
           insertPostgresChunk({
@@ -1313,9 +1616,13 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
             metadata: chunk.metadata || {},
           }).catch(() => {
             /* a single failed lexical row must not abort the batch */
+            lexicalFailures++;
           }),
         ),
       );
+      if (lexicalFailures > 0) {
+        result.errors.push(`تعذر حفظ ${lexicalFailures} مقطع في فهرس Postgres اللفظي`);
+      }
 
       // 4. One multi-point Qdrant upsert for the whole batch.
       const points = chunks
@@ -1336,10 +1643,32 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         }))
         .filter((p) => Array.isArray(p.vector) && p.vector.length > 0);
 
-      await upsertQdrantChunks(points);
+      const embedFailed = chunks.length - points.length;
+      if (embedFailed > 0) {
+        result.errors.push(`فشل توليد التضمين المتجهي لـ ${embedFailed} مقطع`);
+      }
+
+      const qdrantOk = await upsertQdrantChunks(points);
+      if (qdrantOk) {
+        result.indexed = points.length;
+        result.failed = embedFailed;
+      } else {
+        // Qdrant unreachable or rejected the batch: nothing is semantically
+        // searchable yet. Report the whole batch as failed so the caller can
+        // mark the document `failed` and offer a reindex.
+        result.indexed = 0;
+        result.failed = chunks.length;
+        result.errors.push('تعذر الرفع إلى محرك المتجهات Qdrant — المستند غير قابل للبحث الدلالي بعد');
+      }
     } catch (vecErr) {
       console.error('Batch vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
+      result.indexed = 0;
+      result.failed = chunks.length;
+      result.errors.push((vecErr as Error)?.message || 'خطأ غير معروف أثناء الفهرسة المتجهية');
     }
+
+    result.success = result.failed === 0 && result.errors.length === 0;
+    return result;
   }
 
   async getCollections(tenantId: string): Promise<Collection[]> {

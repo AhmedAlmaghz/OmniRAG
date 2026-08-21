@@ -2,6 +2,7 @@
 
 import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
 import React, { useState, useEffect } from 'react';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import {
   Plug,
   Shield,
@@ -57,6 +58,8 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   const [servers, setServers] = useState<MCPServerConfig[]>([]);
   const [isTesting, setIsTesting] = useState<string | null>(null);
   const [pingNotice, setPingNotice] = useState<string | null>(null);
+  const [pendingDeleteServerId, setPendingDeleteServerId] = useState<string | null>(null);
+  const [isDeletingServer, setIsDeletingServer] = useState<boolean>(false);
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -397,13 +400,12 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     }
   };
 
-  const handleDeleteServer = async (serverId: string) => {
-    const confirmMsg =
-      lang === 'ar'
-        ? 'هل أنت متأكد من رغبتك في إلغاء تسجيل وحذف خادم الـ MCP هذا؟ ستفقد القدرة على تشغيل أدواته.'
-        : 'Are you sure you want to delete this MCP server?';
-    if (!window.confirm(confirmMsg)) return;
+  const handleDeleteServer = (serverId: string) => {
+    setPendingDeleteServerId(serverId);
+  };
 
+  const confirmDeleteServer = async (serverId: string) => {
+    setIsDeletingServer(true);
     try {
       const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
@@ -417,6 +419,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsDeletingServer(false);
+      setPendingDeleteServerId(null);
     }
   };
 
@@ -1519,6 +1524,22 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteServerId !== null}
+        title={lang === 'ar' ? 'حذف خادم MCP' : 'Delete MCP server'}
+        message={
+          lang === 'ar'
+            ? 'هل أنت متأكد من رغبتك في إلغاء تسجيل وحذف خادم الـ MCP هذا؟ ستفقد القدرة على تشغيل أدواته.'
+            : 'Are you sure you want to delete this MCP server?'
+        }
+        confirmLabel={lang === 'ar' ? 'حذف' : 'Delete'}
+        cancelLabel={lang === 'ar' ? 'إلغاء' : 'Cancel'}
+        variant="danger"
+        loading={isDeletingServer}
+        onConfirm={() => pendingDeleteServerId && confirmDeleteServer(pendingDeleteServerId)}
+        onCancel={() => setPendingDeleteServerId(null)}
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Document, DocumentVersion } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import {
   History,
   GitBranch,
@@ -50,6 +51,7 @@ export function DocumentVersionHistoryModal({
   const [viewMode, setViewMode] = useState<'diff' | 'content' | 'new_version'>('diff');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isReverting, setIsReverting] = useState<boolean>(false);
+  const [pendingRevertVersion, setPendingRevertVersion] = useState<DocumentVersion | null>(null);
   const [isSavingNewVer, setIsSavingNewVer] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -112,16 +114,14 @@ export function DocumentVersionHistoryModal({
   const currentActiveVersion = versions.find((v) => v.versionNumber === (doc.version || 1)) || versions[0];
   const isSelectedCurrent = selectedVersion?.versionNumber === (doc.version || 1);
 
-  // Handle Revert
-  const handleRevert = async (targetVer: DocumentVersion) => {
+  // Handle Revert — the ConfirmDialog gates the destructive action; the
+  // actual API call happens in performRevert after the user confirms.
+  const requestRevert = (targetVer: DocumentVersion) => {
     if (!targetVer || targetVer.versionNumber === doc.version) return;
+    setPendingRevertVersion(targetVer);
+  };
 
-    const confirmText = isRtl
-      ? `هل أنت متأكد من استرجاع المستند إلى الإصدار v${targetVer.versionNumber}؟ سيتم تحديث الفهارس والمتجهات في Qdrant.`
-      : `Are you sure you want to revert this document to version v${targetVer.versionNumber}? Vector indexes will be updated in Qdrant.`;
-
-    if (!window.confirm(confirmText)) return;
-
+  const performRevert = async (targetVer: DocumentVersion) => {
     setIsReverting(true);
     setStatusMessage(null);
 
@@ -166,6 +166,7 @@ export function DocumentVersionHistoryModal({
       });
     } finally {
       setIsReverting(false);
+      setPendingRevertVersion(null);
     }
   };
 
@@ -534,7 +535,7 @@ export function DocumentVersionHistoryModal({
               {/* Version Revert Action Header Button */}
               {selectedVersion && !isSelectedCurrent && viewMode !== 'new_version' && (
                 <button
-                  onClick={() => handleRevert(selectedVersion)}
+                  onClick={() => requestRevert(selectedVersion)}
                   disabled={isReverting}
                   className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
                 >
@@ -817,6 +818,24 @@ export function DocumentVersionHistoryModal({
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pendingRevertVersion !== null}
+        title={isRtl ? 'استرجاع إصدار سابق' : 'Revert to previous version'}
+        message={
+          pendingRevertVersion
+            ? isRtl
+              ? `هل أنت متأكد من استرجاع المستند إلى الإصدار v${pendingRevertVersion.versionNumber}؟ سيتم تحديث الفهارس والمتجهات في Qdrant.`
+              : `Are you sure you want to revert this document to version v${pendingRevertVersion.versionNumber}? Vector indexes will be updated in Qdrant.`
+            : ''
+        }
+        confirmLabel={isRtl ? 'استرجاع' : 'Revert'}
+        cancelLabel={isRtl ? 'إلغاء' : 'Cancel'}
+        variant="warning"
+        loading={isReverting}
+        onConfirm={() => pendingRevertVersion && performRevert(pendingRevertVersion)}
+        onCancel={() => setPendingRevertVersion(null)}
+      />
     </div>
   );
 }

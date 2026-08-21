@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Collection, SourceType } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { useToast } from '../ui/Toast';
 import {
   FileText,
   Globe,
@@ -42,6 +43,7 @@ interface AddSourceWizardProps {
 }
 
 export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCancel }: AddSourceWizardProps) {
+  const { toast } = useToast();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [sourceTypes, setSourceTypes] = useState<any[]>([]);
   const [selectedType, setSelectedType] = useState<SourceType | null>(null);
@@ -232,11 +234,18 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
       if (res.ok) {
         onCompleted();
       } else {
-        const err = await res.json();
-        alert(err.error || 'Failed to create source');
+        const err = await res.json().catch(() => ({}));
+        toast({
+          title: err.error || (lang === 'ar' ? 'فشل إنشاء المصدر' : 'Failed to create source'),
+          variant: 'error',
+        });
       }
     } catch (error) {
       console.error('Error creating source:', error);
+      toast({
+        title: lang === 'ar' ? 'حدث خطأ غير متوقع أثناء إنشاء المصدر' : 'An unexpected error occurred while creating the source',
+        variant: 'error',
+      });
     } finally {
       setIsSubmitting(false);
     }

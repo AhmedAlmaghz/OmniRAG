@@ -31,6 +31,7 @@ import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { printChatTranscript, exportChatAsPdf, buildTranscriptText } from '@/lib/chat/chatExport';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { ChatMain } from '@/components/chat/ChatMain';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 interface ChatStudioProps {
   tenantId: string;
@@ -47,6 +48,8 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
     return localStorage.getItem('omnirag-chat-sidebar-open') !== 'false';
   });
   const [isLoadingConversations, setIsLoadingConversations] = useState<boolean>(true);
+  const [pendingDeleteConversationId, setPendingDeleteConversationId] = useState<string | null>(null);
+  const [isDeletingConversation, setIsDeletingConversation] = useState<boolean>(false);
 
   // Resizable / fullscreen workspace states
   const sidebarPanelRef = usePanelRef();
@@ -347,16 +350,13 @@ Supported features:
     }
   };
 
-  const handleDeleteConversation = async (convId: string, e: React.MouseEvent) => {
+  const handleDeleteConversation = (convId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (
-      !confirm(
-        lang === 'ar'
-          ? 'هل أنت تأكد من حذف هذه المحادثة بالكامل من قاعدة البيانات؟'
-          : 'Are you sure you want to delete this chat session?',
-      )
-    )
-      return;
+    setPendingDeleteConversationId(convId);
+  };
+
+  const confirmDeleteConversation = async (convId: string) => {
+    setIsDeletingConversation(true);
     try {
       const res = await fetchWithAuth('/api/v1/conversations', {
         method: 'POST',
@@ -383,6 +383,9 @@ Supported features:
       }
     } catch (err) {
       console.error('Error deleting conversation:', err);
+    } finally {
+      setIsDeletingConversation(false);
+      setPendingDeleteConversationId(null);
     }
   };
 
@@ -1355,6 +1358,22 @@ Supported features:
           </>
         )}
       </Group>
+
+      <ConfirmDialog
+        open={pendingDeleteConversationId !== null}
+        title={lang === 'ar' ? 'حذف المحادثة' : 'Delete conversation'}
+        message={
+          lang === 'ar'
+            ? 'هل أنت متأكد من حذف هذه المحادثة بالكامل من قاعدة البيانات؟'
+            : 'Are you sure you want to delete this chat session?'
+        }
+        confirmLabel={lang === 'ar' ? 'حذف' : 'Delete'}
+        cancelLabel={lang === 'ar' ? 'إلغاء' : 'Cancel'}
+        variant="danger"
+        loading={isDeletingConversation}
+        onConfirm={() => pendingDeleteConversationId && confirmDeleteConversation(pendingDeleteConversationId)}
+        onCancel={() => setPendingDeleteConversationId(null)}
+      />
     </div>
   );
 }

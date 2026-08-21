@@ -2,6 +2,7 @@
 
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import React, { useState, useEffect } from 'react';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import {
   Cpu,
   BrainCircuit,
@@ -37,6 +38,7 @@ import {
 export default function ModelSettingsView() {
   const [config, setConfig] = useState<AIModelConfig>(getAiModelConfig());
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [customInputMode, setCustomInputMode] = useState<Record<string, boolean>>({});
   const [customModelNames, setCustomModelNames] = useState<Record<string, string>>({});
 
@@ -99,14 +101,17 @@ export default function ModelSettingsView() {
   };
 
   const handleReset = () => {
-    if (confirm('هل أنت تأكد من إعادة ضبط كافة أسماء نماذج الذكاء الاصطناعي إلى الإعدادات الافتراضية؟')) {
-      const reset = resetAiModelConfig();
-      setConfig(reset);
-      setCustomInputMode({});
-      setCustomModelNames({});
-      setSavedSuccess(true);
-      setTimeout(() => setSavedSuccess(false), 3500);
-    }
+    setIsResetConfirmOpen(true);
+  };
+
+  const performReset = () => {
+    const reset = resetAiModelConfig();
+    setConfig(reset);
+    setCustomInputMode({});
+    setCustomModelNames({});
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 3500);
+    setIsResetConfirmOpen(false);
   };
 
   const runTestModel = async () => {
@@ -498,6 +503,17 @@ export default function ModelSettingsView() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={isResetConfirmOpen}
+        title="إعادة ضبط الإعدادات"
+        message="هل أنت متأكد من إعادة ضبط كافة أسماء نماذج الذكاء الاصطناعي إلى الإعدادات الافتراضية؟"
+        confirmLabel="إعادة الضبط"
+        cancelLabel="إلغاء"
+        variant="warning"
+        onConfirm={performReset}
+        onCancel={() => setIsResetConfirmOpen(false)}
+      />
     </div>
   );
 }

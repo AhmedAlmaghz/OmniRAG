@@ -1,11 +1,42 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { db } from '@/lib/storage/db';
-import { SourceConnector } from '@/lib/types/omnirag';
+import { SourceConnector, SourceType } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { encryptSourceConfig, redactSourceConfig } from '@/lib/storage/sourceConfigCrypto';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Source connector creation payload. `type` was previously accepted as any
+ * string, so a typo'd type produced a connector that no sync handler
+ * understands. It is now restricted to the SourceType union.
+ */
+const SOURCE_TYPES: SourceType[] = [
+  'file',
+  'url',
+  'rss',
+  'youtube',
+  'github',
+  'notion',
+  'gdrive',
+  'confluence',
+  'slack',
+  'email',
+  'database',
+  'api',
+];
+
+const createSourceSchema = z.object({
+  name: z.string().trim().min(1, 'اسم الموصل مطلوب').max(300, 'اسم الموصل طويل جدا'),
+  type: z.enum(SOURCE_TYPES as [SourceType, ...SourceType[]], {
+    message: 'نوع الموصل غير مدعوم',
+  }),
+  config: z.record(z.string(), z.any()).default({}),
+  syncSchedule: z.string().trim().max(100).default('manual'),
+  collectionIds: z.array(z.string().min(1)).max(50).default([]),
+});
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   // Load client-supplied dynamic environment keys from headers into process.env / global store
@@ -74,13 +105,18 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   try {
     const body = await req.json();
-    const { name, type, config = {}, syncSchedule = 'manual', collectionIds = [] } = body;
     // Tenant identity is derived exclusively from the verified auth context
     const tenantId = authCtx.tenantId;
 
-    if (!name || !type) {
-      return NextResponse.json({ error: 'Name and type are required fields' }, { status: 400 });
+    const parsed = createSourceSchema.safeParse(body);
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0];
+      return NextResponse.json(
+        { error: firstIssue?.message || 'بيانات الموصل غير صالحة', code: 'VALIDATION_ERROR' },
+        { status: 400 },
+      );
     }
+    const { name, type, config, syncSchedule, collectionIds } = parsed.data;
 
     const id = `src-${type}-${Date.now().toString().slice(-6)}`;
     // Encrypt any credential-bearing fields before persistence.
@@ -103,11 +139,14 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     await db.addSource(newSource);
 
     // Also trigger initial ingestion for this source to populate documents
-    await db.syncSource(id, tenantId);
+    const syncResult = await db.syncSource(id, tenantId);
 
     return NextResponse.json(
       {
-        message: 'Source connector registered and indexed successfully',
+        message: syncResult.success
+          ? 'Source connector registered and indexed successfully'
+          : 'Source connector registered, but initial indexing reported errors',
+        syncResult,
         source: {
           ...(await db.getSourceById(id, tenantId)),
           config: redactSourceConfig((await db.getSourceById(id, tenantId))?.config || {}),

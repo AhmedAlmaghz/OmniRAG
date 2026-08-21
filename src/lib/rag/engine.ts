@@ -114,11 +114,41 @@ const MCP_TOOL_DEFINITIONS: Record<string, { description: string; properties: an
 };
 
 /**
- * Execute MCP Tool in a simulated/secure manner and log to Audit Logs
+ * Build the numbered citation list from retrieved context chunks.
+ *
+ * This exact mapping was previously copy-pasted in THREE places (tool-call
+ * response, normal response, and the deterministic fallback), so any change to
+ * citation shape had to be made three times. Single source of truth now.
+ */
+function buildCitations(contextChunks: DocumentChunk[]): Citation[] {
+  return contextChunks.map((chunk, idx) => ({
+    index: idx + 1,
+    chunkId: chunk.id,
+    documentId: chunk.documentId,
+    documentTitle: chunk.documentTitle,
+    pageNumber: chunk.pageNumber,
+    score: chunk.score || 0.85,
+    snippet: chunk.content.substring(0, 120) + '...',
+    sourceUrl: getCitationSourceUrl(chunk),
+  }));
+}
+
+/**
+ * Execute MCP Tool in a simulated/secure manner and log to Audit Logs.
+ *
+ * IMPORTANT — SIMULATION NOTICE: every branch below returns CANNED demo data,
+ * not live integrations. There is no real Slack/GitHub/web/Postgres call
+ * behind these tools yet. Each result is therefore stamped with
+ * `__simulated: true` so downstream consumers (and the UI) can distinguish a
+ * simulated outcome from a real one, and the audit log records the execution
+ * as simulated. Replacing these branches with real MCP client calls is the
+ * intended next step; until then, honesty about the simulation is enforced at
+ * the data level.
  */
 async function executeMcpTool(tenantId: string, toolName: string, args: any): Promise<any> {
   let result: any;
   let success = true;
+  const startedAt = Date.now();
 
   try {
     switch (toolName) {
@@ -251,16 +281,27 @@ async function executeMcpTool(tenantId: string, toolName: string, args: any): Pr
     result = { error: error.message || 'Failed to execute tool' };
   }
 
-  // Log in Audit Logs
+  // Stamp every outcome as simulated until real MCP client wiring replaces the
+  // canned branches above. This makes the simulation visible to the UI and to
+  // anyone reading tool-call records, instead of presenting demo data as live.
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    result.__simulated = true;
+  } else if (Array.isArray(result)) {
+    result = { __simulated: true, items: result };
+  } else {
+    result = { __simulated: true, value: result };
+  }
+
+  // Log in Audit Logs — explicitly marked as a simulated execution.
   await db.addAuditLog({
     id: `audit-${randomUUID()}`,
     tenantId,
     actorId: 'mcp_gateway_agent',
-    action: 'MCP_TOOL_EXECUTED',
+    action: 'MCP_TOOL_EXECUTED_SIMULATED',
     resourceType: 'mcp_tool',
     resourceId: toolName,
     status: success ? 'success' : 'error',
-    details: `تم تنفيذ الأداة (${toolName}) بنجاح. المدخلات: ${JSON.stringify(args)}.`,
+    details: `تنفيذ محاكى للأداة (${toolName}) — البيانات المعادة تجريبية وليست تكاملا حيا. المدخلات: ${JSON.stringify(args)}. المدة: ${Date.now() - startedAt}ms`,
     timestamp: new Date().toISOString(),
   });
 
@@ -492,6 +533,19 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       chunks = chunks.filter((c) => validDocIds.has(c.documentId));
     }
 
+    // Defensive bound on the keyword-fallback candidate pool. This degraded
+    // path scores chunks in-process, so an unbounded tenant corpus would load
+    // every chunk into memory and burn CPU on keyword matching. Beyond this
+    // pool size a naive keyword fallback is not meaningful anyway — the proper
+    // fix is restoring the Qdrant/Postgres backends.
+    const FALLBACK_SCAN_CAP = 2000;
+    if (chunks.length > FALLBACK_SCAN_CAP) {
+      console.warn(
+        `[Search fallback] Tenant corpus has ${chunks.length} chunks; capping keyword fallback scan at ${FALLBACK_SCAN_CAP}.`,
+      );
+      chunks = chunks.slice(0, FALLBACK_SCAN_CAP);
+    }
+
     const queryTerms = lexicalSearchContent
       .toLowerCase()
       .split(/\s+/)
@@ -653,6 +707,7 @@ export async function generateRagCompletion(params: {
   const alreadyExecutedToolCalls: MCPToolCall[] = [];
 
   if (approvedToolCall) {
+    const approvedStartedAt = Date.now();
     const executedResult = await executeMcpTool(
       tenantId,
       approvedToolCall.scopedToolName,
@@ -662,7 +717,7 @@ export async function generateRagCompletion(params: {
       ...approvedToolCall,
       status: 'completed',
       outputResult: executedResult,
-      latencyMs: 35,
+      latencyMs: Date.now() - approvedStartedAt,
       timestamp: new Date().toISOString(),
     });
 
@@ -711,7 +766,7 @@ export async function generateRagCompletion(params: {
 
 توجيهات واستخدام أدوات الـ MCP:
 1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، فيجب عليك فوراً استدعاء الأداة المناسبة عبر Function Call.
-2. لا تعتذر أو تقل "لا أستطيع الاتصال بالويب أو الخدمات الخارجية"، لأن الأدوات مفعلة ومربوطة ببروتوكول MCP بالفعل.
+2. ملاحظة مهمة: هذه الأدوات تعمل حاليا في وضع المحاكاة التجريبي (Sandbox Simulation) — النتائج المعادة منها بيانات توضيحية وليست تكاملا حيا مع الخدمات الخارجية. إذا ظهرت في النتيجة علامة "__simulated"، وضح للمستخدم بلطف أن البيانات المعادة تجريبية.
 3. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمان طلب الموافقة البشرية قبل التنفيذ تلقائياً.
 
 قواعد الإسناد والاستشهاد المضمن:
@@ -780,7 +835,9 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             pendingToolCall: pendingCall,
           };
         } else {
+          const toolCallStartedAt = Date.now();
           const toolResult = await executeMcpTool(tenantId, toolName, args);
+          const toolCallLatencyMs = Date.now() - toolCallStartedAt;
 
           const secondPrompt = `${promptText}\n\n[أداة الـ MCP المنفذة تلقائياً]: تم تنفيذ الأداة (${toolName}) بنجاح وإرجاع المخرجات التالية:\n${JSON.stringify(toolResult, null, 2)}\n\nيرجى صياغة الاستجابة النهائية للمستخدم بناءً على هذه المخرجات والمستندات المتاحة.`;
 
@@ -793,16 +850,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             },
           });
 
-          const citations: Citation[] = contextChunks.map((chunk, idx) => ({
-            index: idx + 1,
-            chunkId: chunk.id,
-            documentId: chunk.documentId,
-            documentTitle: chunk.documentTitle,
-            pageNumber: chunk.pageNumber,
-            score: chunk.score || 0.85,
-            snippet: chunk.content.substring(0, 120) + '...',
-            sourceUrl: getCitationSourceUrl(chunk),
-          }));
+          const citations: Citation[] = buildCitations(contextChunks);
 
           return {
             text: secondResponse.text || 'تم استدعاء الأداة بنجاح ولكن لم يتم توليد رد نهائي.',
@@ -819,7 +867,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
                 scopedToolName: toolName,
                 inputParams: args,
                 outputResult: toolResult,
-                latencyMs: 25,
+                latencyMs: toolCallLatencyMs,
                 status: 'completed',
                 hasSideEffect: false,
                 timestamp: new Date().toISOString(),
@@ -829,16 +877,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         }
       }
 
-      const citations: Citation[] = contextChunks.map((chunk, idx) => ({
-        index: idx + 1,
-        chunkId: chunk.id,
-        documentId: chunk.documentId,
-        documentTitle: chunk.documentTitle,
-        pageNumber: chunk.pageNumber,
-        score: chunk.score || 0.85,
-        snippet: chunk.content.substring(0, 120) + '...',
-        sourceUrl: getCitationSourceUrl(chunk),
-      }));
+      const citations: Citation[] = buildCitations(contextChunks);
 
       // AI-powered contextual follow-up suggestions
       let suggestions: string[] | undefined;
@@ -881,16 +920,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
     }
   }
 
-  const fallbackCitations: Citation[] = contextChunks.map((chunk, idx) => ({
-    index: idx + 1,
-    chunkId: chunk.id,
-    documentId: chunk.documentId,
-    documentTitle: chunk.documentTitle,
-    pageNumber: chunk.pageNumber,
-    score: chunk.score || 0.85,
-    snippet: chunk.content.substring(0, 120) + '...',
-    sourceUrl: getCitationSourceUrl(chunk),
-  }));
+  const fallbackCitations: Citation[] = buildCitations(contextChunks);
 
   return {
     text: `بناءً على المستندات المسترجعة من النظام (${contextChunks.length} قطعة):\n\n${

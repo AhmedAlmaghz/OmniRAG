@@ -249,7 +249,10 @@ export function DocumentCard({
       case 'failed':
       case 'error':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-rose-50 text-rose-700 border border-rose-200/60 shadow-3xs uppercase tracking-wide">
+          <span
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-rose-50 text-rose-700 border border-rose-200/60 shadow-3xs uppercase tracking-wide"
+            title={indexErrors?.join('؛ ')}
+          >
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
             {isRtl ? 'فشل' : 'Failed'}
           </span>
@@ -264,7 +267,14 @@ export function DocumentCard({
   };
 
   const estimatedTokens = Math.round((document.content?.length || 0) / 4);
-  const sizeEstimate = document.content ? (new Blob([document.content]).size / 1024).toFixed(1) + ' KB' : '24 KB';
+  // Only show a size when we actually have content to measure — the previous
+  // fallback rendered a fabricated "24 KB" for every content-less document.
+  const sizeEstimate = document.content ? (new Blob([document.content]).size / 1024).toFixed(1) + ' KB' : null;
+  // Indexing failure reasons (persisted by the ingestion pipeline) surfaced as
+  // a tooltip on the failed badge so users know WHY and can reindex.
+  const indexErrors: string[] | undefined = Array.isArray(document.metadata?.indexErrors)
+    ? document.metadata.indexErrors
+    : undefined;
 
   return (
     <div
@@ -333,14 +343,18 @@ export function DocumentCard({
             <Sparkles className="w-3 h-3 text-amber-500" />
             <span>~{estimatedTokens} tok</span>
           </span>
-          <span className="flex items-center gap-1 text-slate-400">
-            <HardDrive className="w-3 h-3 text-slate-400" />
-            <span>{sizeEstimate}</span>
-          </span>
+          {sizeEstimate && (
+            <span className="flex items-center gap-1 text-slate-400">
+              <HardDrive className="w-3 h-3 text-slate-400" />
+              <span>{sizeEstimate}</span>
+            </span>
+          )}
         </div>
 
         <span className="text-slate-400 font-sans text-[9px] shrink-0">
-          {new Date(document.createdAt).toLocaleDateString(isRtl ? 'ar-SA' : 'en-US', {
+          {/* ar-EG (Gregorian) instead of ar-SA, which renders Hijri-calendar
+              dates in several browsers and confused the document timeline. */}
+          {new Date(document.createdAt).toLocaleDateString(isRtl ? 'ar-EG' : 'en-US', {
             month: 'short',
             day: 'numeric',
           })}
@@ -403,6 +417,7 @@ export function DocumentCard({
               disabled={isReindexing}
               className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
               title={isRtl ? 'إعادة الفهرسة والتضمين' : 'Re-index Document'}
+              aria-label={isRtl ? `إعادة فهرسة ${document.title}` : `Re-index ${document.title}`}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isReindexing ? 'animate-spin text-indigo-600' : ''}`} />
             </button>
@@ -415,7 +430,8 @@ export function DocumentCard({
                 onDelete();
               }}
               className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-              title={isRtl ? 'حذف المستند نهائياً' : 'Delete Document'}
+              title={isRtl ? 'حذف المستند نهائيا' : 'Delete Document'}
+              aria-label={isRtl ? `حذف ${document.title}` : `Delete ${document.title}`}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>

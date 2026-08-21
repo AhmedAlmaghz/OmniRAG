@@ -6,6 +6,7 @@ import type { PluggableList } from 'unified';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import { useToast } from '../ui/Toast';
 import {
   Copy,
   Check,
@@ -310,6 +311,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [fontSizeClass, setFontSizeClass] = useState<'text-xs' | 'text-sm' | 'text-base'>('text-sm');
+  const { toast } = useToast();
 
   // Global user preferences (math engine, numerals) — applied automatically,
   // no per-message toggles. Managed in Settings → Appearance.
@@ -374,7 +376,10 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
 
   const handleToggleSpeak = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      alert(lang === 'ar' ? 'متصفحك لا يدعم قراءة النصوص صوتياً' : 'Text-to-Speech not supported in browser');
+      toast({
+        title: lang === 'ar' ? 'متصفحك لا يدعم قراءة النصوص صوتياً' : 'Text-to-Speech not supported in browser',
+        variant: 'warning',
+      });
       return;
     }
     if (isSpeaking) {
@@ -394,7 +399,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
     setIsSpeaking(true);
-  }, [content, isSpeaking, lang]);
+  }, [content, isSpeaking, lang, toast]);
 
   const handleExportMarkdown = useCallback(() => {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
