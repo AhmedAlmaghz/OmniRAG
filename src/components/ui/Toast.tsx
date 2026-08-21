@@ -125,7 +125,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${style.iconColor}`} aria-hidden="true" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-snug">{t.title}</p>
-                {t.message && <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">{t.message}</p>}
+                {t.message && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">{t.message}</p>
+                )}
               </div>
               <button
                 type="button"

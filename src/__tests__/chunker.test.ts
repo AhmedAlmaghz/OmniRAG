@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  chunkDocument,
-  resolveChunkGeometry,
-  estimateTokenCount,
-  CHARS_PER_TOKEN,
-} from '../lib/rag/chunker';
+import { chunkDocument, resolveChunkGeometry, estimateTokenCount, CHARS_PER_TOKEN } from '../lib/rag/chunker';
 
 /**
  * Phase 8 regression guard: the unified chunker is the SINGLE source of truth

@@ -1,6 +1,6 @@
 'use client';
 
-import { fetchWithAuth } from "@/lib/auth/fetchWithAuth";
+import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import React, { useState, useEffect } from 'react';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import {
@@ -141,7 +141,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
         setPingNotice(
           lang === 'ar'
             ? `تم ${newStatus === 'healthy' ? 'تفعيل' : 'تعطيل'} موصل MCP (${server.name}) بنجاح.`
-            : `MCP connector ${server.name} set to ${newStatus === 'healthy' ? 'Active' : 'Inactive'}.`
+            : `MCP connector ${server.name} set to ${newStatus === 'healthy' ? 'Active' : 'Inactive'}.`,
         );
         fetchServers();
         setTimeout(() => setPingNotice(null), 3500);
@@ -222,7 +222,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
       setPingNotice(
         lang === 'ar'
           ? `تم اعتماد وتخزين الأداة الذكية (${generatedToolSchema.toolName}) على الخادم بنجاح!`
-          : `Tool ${generatedToolSchema.toolName} created & saved successfully!`
+          : `Tool ${generatedToolSchema.toolName} created & saved successfully!`,
       );
       setShowToolBuilderModal(false);
       setBuilderPrompt('');
@@ -286,7 +286,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
         setPingNotice(
           lang === 'ar'
             ? `تم تعديل وتحديث بيانات خادم MCP (${editServerName}) وترويسات الأمان بنجاح!`
-            : `MCP Server ${editServerName} & security headers updated successfully!`
+            : `MCP Server ${editServerName} & security headers updated successfully!`,
         );
         setTimeout(() => setPingNotice(null), 4000);
       }
@@ -327,7 +327,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
         setAddHeaders([]);
         setShowAddServerModal(false);
         fetchServers();
-        setPingNotice(lang === 'ar' ? 'تم تسجيل خادم MCP الجديد وفحصه بنجاح!' : 'New MCP Server registered successfully!');
+        setPingNotice(
+          lang === 'ar' ? 'تم تسجيل خادم MCP الجديد وفحصه بنجاح!' : 'New MCP Server registered successfully!',
+        );
         setTimeout(() => setPingNotice(null), 4000);
       }
     } catch (err) {
@@ -362,7 +364,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
     setCustomToolInputs((prev) => ({ ...prev, [serverId]: '' }));
     fetchServers();
-    setPingNotice(lang === 'ar' ? `تم تسجيل وتفعيل الأداة المخصصة (${toolName})` : `Custom tool ${toolName} registered!`);
+    setPingNotice(
+      lang === 'ar' ? `تم تسجيل وتفعيل الأداة المخصصة (${toolName})` : `Custom tool ${toolName} registered!`,
+    );
     setTimeout(() => setPingNotice(null), 3000);
   };
 
@@ -381,14 +385,14 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             ? `تم فحص الاتصال الخادم بنجاح! زمن الاستجابة: ${data.latencyMs}ms، الحالة: ${
                 data.status === 'healthy' ? 'نشط وآمن (Healthy)' : 'مستجيب مع قيود'
               }`
-            : `Ping succeeded! Latency: ${data.latencyMs}ms, Status: ${data.status}`
+            : `Ping succeeded! Latency: ${data.latencyMs}ms, Status: ${data.status}`,
         );
         fetchServers();
       } else {
         setPingNotice(
           lang === 'ar'
             ? `فشل فحص الاتصال بالخادم: ${data.error || 'غير مستجيب'}`
-            : `Ping failed: ${data.error || 'Server unreachable'}`
+            : `Ping failed: ${data.error || 'Server unreachable'}`,
         );
       }
     } catch (e) {
@@ -427,10 +431,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
   const getToolsForServer = (server: MCPServerConfig) => {
     // Unique union set of all tools
-    const toolsSet = new Set<string>([
-      ...(server.enabledTools || []),
-      ...(server.requireConfirmationTools || []),
-    ]);
+    const toolsSet = new Set<string>([...(server.enabledTools || []), ...(server.requireConfirmationTools || [])]);
 
     // Populate standard tools depending on category just for ease of demo/use
     const nameLower = server.name.toLowerCase();
@@ -442,10 +443,20 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
       toolsSet.add('github_search_code');
       toolsSet.add('github_create_issue');
       toolsSet.add('github_read_repo');
-    } else if (nameLower.includes('search') || nameLower.includes('web') || nameLower.includes('بحث') || nameLower.includes('ويب')) {
+    } else if (
+      nameLower.includes('search') ||
+      nameLower.includes('web') ||
+      nameLower.includes('بحث') ||
+      nameLower.includes('ويب')
+    ) {
       toolsSet.add('web_live_search');
       toolsSet.add('fetch_url_content');
-    } else if (nameLower.includes('postgres') || nameLower.includes('sql') || nameLower.includes('db') || nameLower.includes('قاعدة')) {
+    } else if (
+      nameLower.includes('postgres') ||
+      nameLower.includes('sql') ||
+      nameLower.includes('db') ||
+      nameLower.includes('قاعدة')
+    ) {
       toolsSet.add('external_postgres_query');
       toolsSet.add('get_table_schema');
     } else {
@@ -478,10 +489,14 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
         <div>
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Plug className="w-5 h-5 text-indigo-600" />
-            <span>{lang === 'ar' ? 'بوابة خوادم بروتوكول سياق النموذج (MCP Gateway)' : 'MCP Server & Tool Gateway'}</span>
+            <span>
+              {lang === 'ar' ? 'بوابة خوادم بروتوكول سياق النموذج (MCP Gateway)' : 'MCP Server & Tool Gateway'}
+            </span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            {lang === 'ar' ? 'مواصفة 2026-07-28 عديمة الحالة | تحكّم دقيق بتصاريح الأدوات ومستويات Sandbox' : 'Stateless MCP 2026-07-28 specification | Granular tool Sandbox policies'}
+            {lang === 'ar'
+              ? 'مواصفة 2026-07-28 عديمة الحالة | تحكّم دقيق بتصاريح الأدوات ومستويات Sandbox'
+              : 'Stateless MCP 2026-07-28 specification | Granular tool Sandbox policies'}
           </p>
         </div>
 
@@ -620,7 +635,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           <div className="relative z-10">
             <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-slate-900 border-2 border-slate-800 shadow-xl flex items-center justify-center relative mx-auto group transition-transform duration-300 hover:scale-105">
               <div className="absolute inset-0 rounded-3xl bg-gradient-to-tr from-indigo-500/20 via-amber-500/20 to-sky-500/20 blur-md" />
-              
+
               {/* Animated decorative rings */}
               <div className="absolute -inset-3 rounded-full border border-dashed border-indigo-200 animate-[spin_20s_linear_infinite] opacity-60" />
               <div className="absolute -inset-6 rounded-full border border-slate-200/50 opacity-40" />
@@ -642,8 +657,8 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   ? 'لم يتم اكتشاف أي موصلات MCP مسجلة'
                   : 'No MCP Connectors Detected'
                 : lang === 'ar'
-                ? 'لا توجد نتائج مطابقة لتصفية البحث'
-                : 'No Connectors Match Your Filter'}
+                  ? 'لا توجد نتائج مطابقة لتصفية البحث'
+                  : 'No Connectors Match Your Filter'}
             </h3>
             <p className="text-xs text-slate-500 leading-relaxed">
               {servers.length === 0
@@ -651,8 +666,8 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   ? 'قم بربط وتفعيل خوادم بروتوكول MCP لتمكين نموذج الذكاء الاصطناعي من تنفيذ الأدوات، استعلام قواعد البيانات، واسترجاع البيانات المباشرة.'
                   : 'Connect and register MCP protocol servers to empower AI models with live tools, database queries, and custom external integrations.'
                 : lang === 'ar'
-                ? 'جرب ضبط عبارة البحث أو إعادة ضبط تصفية الحالة ("نشط" / "غير نشط") لعرض الموصلات المطلوبة.'
-                : 'Try adjusting your search terms or clearing status filters to view the registered connectors.'}
+                  ? 'جرب ضبط عبارة البحث أو إعادة ضبط تصفية الحالة ("نشط" / "غير نشط") لعرض الموصلات المطلوبة.'
+                  : 'Try adjusting your search terms or clearing status filters to view the registered connectors.'}
             </p>
           </div>
 
@@ -722,17 +737,27 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-slate-900 text-indigo-400 flex items-center justify-center font-bold relative">
-                        {server.name.toLowerCase().includes('slack') && <MessageSquare className="w-5 h-5 text-indigo-400" />}
-                        {server.name.toLowerCase().includes('github') && <GitBranch className="w-5 h-5 text-emerald-400" />}
+                        {server.name.toLowerCase().includes('slack') && (
+                          <MessageSquare className="w-5 h-5 text-indigo-400" />
+                        )}
+                        {server.name.toLowerCase().includes('github') && (
+                          <GitBranch className="w-5 h-5 text-emerald-400" />
+                        )}
                         {server.name.toLowerCase().includes('search') && <Globe className="w-5 h-5 text-sky-400" />}
-                        {server.name.toLowerCase().includes('postgres') && <Database className="w-5 h-5 text-amber-400" />}
+                        {server.name.toLowerCase().includes('postgres') && (
+                          <Database className="w-5 h-5 text-amber-400" />
+                        )}
                         {!server.name.toLowerCase().includes('slack') &&
                           !server.name.toLowerCase().includes('github') &&
                           !server.name.toLowerCase().includes('search') &&
-                          !server.name.toLowerCase().includes('postgres') && <Plug className="w-5 h-5 text-indigo-400" />}
-                        
+                          !server.name.toLowerCase().includes('postgres') && (
+                            <Plug className="w-5 h-5 text-indigo-400" />
+                          )}
+
                         {/* Live status dot */}
-                        <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full ring-4 ${statusIndicators[server.status || 'healthy']}`} />
+                        <span
+                          className={`absolute -top-1 -right-1 w-3 h-3 rounded-full ring-4 ${statusIndicators[server.status || 'healthy']}`}
+                        />
                       </div>
 
                       <div>
@@ -752,25 +777,27 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                           isActive
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             : isDegraded
-                            ? 'bg-amber-50 text-amber-800 border-amber-200'
-                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
                         }`}
                       >
                         <span
                           className={`w-2 h-2 rounded-full ${
-                            isActive
-                              ? 'bg-emerald-500 animate-pulse'
-                              : isDegraded
-                              ? 'bg-amber-500'
-                              : 'bg-slate-400'
+                            isActive ? 'bg-emerald-500 animate-pulse' : isDegraded ? 'bg-amber-500' : 'bg-slate-400'
                           }`}
                         />
                         <span>
                           {isActive
-                            ? lang === 'ar' ? 'نشط (Active)' : 'Active'
+                            ? lang === 'ar'
+                              ? 'نشط (Active)'
+                              : 'Active'
                             : isDegraded
-                            ? lang === 'ar' ? 'مستجيب مع قيود' : 'Degraded'
-                            : lang === 'ar' ? 'غير نشط (Inactive)' : 'Inactive'}
+                              ? lang === 'ar'
+                                ? 'مستجيب مع قيود'
+                                : 'Degraded'
+                              : lang === 'ar'
+                                ? 'غير نشط (Inactive)'
+                                : 'Inactive'}
                         </span>
                       </span>
 
@@ -785,15 +812,17 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                         }`}
                         title={
                           isActive
-                            ? lang === 'ar' ? 'انقر لتعطيل الموصل' : 'Click to deactivate connector'
-                            : lang === 'ar' ? 'انقر لتفعيل الموصل' : 'Click to activate connector'
+                            ? lang === 'ar'
+                              ? 'انقر لتعطيل الموصل'
+                              : 'Click to deactivate connector'
+                            : lang === 'ar'
+                              ? 'انقر لتفعيل الموصل'
+                              : 'Click to activate connector'
                         }
                       >
                         <Power className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
                         <span>
-                          {isActive
-                            ? lang === 'ar' ? 'تعطيل' : 'Deactivate'
-                            : lang === 'ar' ? 'تفعيل' : 'Activate'}
+                          {isActive ? (lang === 'ar' ? 'تعطيل' : 'Deactivate') : lang === 'ar' ? 'تفعيل' : 'Activate'}
                         </span>
                       </button>
                     </div>
@@ -846,7 +875,11 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     <div className="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-200/60 text-[11px] text-slate-400">
                       <span className="flex items-center gap-1.5">
                         <KeyRound className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{lang === 'ar' ? 'لا توجد ترويسات أمان أو مفاتيح API_KEY مخصصة' : 'No custom security headers attached'}</span>
+                        <span>
+                          {lang === 'ar'
+                            ? 'لا توجد ترويسات أمان أو مفاتيح API_KEY مخصصة'
+                            : 'No custom security headers attached'}
+                        </span>
                       </span>
                       <button
                         type="button"
@@ -891,7 +924,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                                   : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                               }`}
                             >
-                              {isEnabled ? (lang === 'ar' ? 'مفعّل' : 'Enabled') : (lang === 'ar' ? 'معطل' : 'Disabled')}
+                              {isEnabled ? (lang === 'ar' ? 'مفعّل' : 'Enabled') : lang === 'ar' ? 'معطل' : 'Disabled'}
                             </button>
                           </div>
                         );
@@ -926,7 +959,15 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     <Activity className="w-3.5 h-3.5 text-emerald-500" />
                     <span>Latency: {server.latencyMs}ms</span>
                     <span className="text-slate-300">|</span>
-                    <span>Checked: {server.lastChecked ? new Date(server.lastChecked).toLocaleTimeString(lang === 'ar' ? 'ar-SA' : 'en-US', {hour: '2-digit', minute: '2-digit'}) : 'Never'}</span>
+                    <span>
+                      Checked:{' '}
+                      {server.lastChecked
+                        ? new Date(server.lastChecked).toLocaleTimeString(lang === 'ar' ? 'ar-SA' : 'en-US', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : 'Never'}
+                    </span>
                   </div>
 
                   <button
@@ -935,7 +976,15 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
                   >
                     <Play className="w-3 h-3 text-indigo-600" />
-                    <span>{isTesting === server.id ? (lang === 'ar' ? 'جاري الفحص...' : 'Checking...') : (lang === 'ar' ? 'فحص الاتصال والنشاط' : 'Ping Server')}</span>
+                    <span>
+                      {isTesting === server.id
+                        ? lang === 'ar'
+                          ? 'جاري الفحص...'
+                          : 'Checking...'
+                        : lang === 'ar'
+                          ? 'فحص الاتصال والنشاط'
+                          : 'Ping Server'}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -1016,7 +1065,11 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <KeyRound className="w-4 h-4 text-amber-600" />
-                    <span>{lang === 'ar' ? 'ترويسات الأمان ومفاتيح الـ API (Headers / Auth Tokens):' : 'Security Headers & API Keys:'}</span>
+                    <span>
+                      {lang === 'ar'
+                        ? 'ترويسات الأمان ومفاتيح الـ API (Headers / Auth Tokens):'
+                        : 'Security Headers & API Keys:'}
+                    </span>
                   </label>
                   <div className="flex gap-1">
                     <button
@@ -1185,7 +1238,11 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <KeyRound className="w-4 h-4 text-amber-600" />
-                    <span>{lang === 'ar' ? 'ترويسات الأمان ومفاتيح الـ API (Headers / Auth Tokens):' : 'Security Headers & API Keys:'}</span>
+                    <span>
+                      {lang === 'ar'
+                        ? 'ترويسات الأمان ومفاتيح الـ API (Headers / Auth Tokens):'
+                        : 'Security Headers & API Keys:'}
+                    </span>
                   </label>
                   <div className="flex gap-1">
                     <button
@@ -1295,7 +1352,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span>{lang === 'ar' ? 'منشئ الأدوات بالذكاء الاصطناعي (AI Tool Builder)' : 'AI Tool Schema Builder'}</span>
+                    <span>
+                      {lang === 'ar' ? 'منشئ الأدوات بالذكاء الاصطناعي (AI Tool Builder)' : 'AI Tool Schema Builder'}
+                    </span>
                     <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
                       MCP 2026-07-28
                     </span>
@@ -1346,7 +1405,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-bold text-slate-700 block">
-                    {lang === 'ar' ? 'الوصف النصي المطلوب للأداة (باللغة العربية أو الإنجليزية):' : 'Tool Natural Language Requirement:'}
+                    {lang === 'ar'
+                      ? 'الوصف النصي المطلوب للأداة (باللغة العربية أو الإنجليزية):'
+                      : 'Tool Natural Language Requirement:'}
                   </label>
                   <span className="text-[10px] text-indigo-600 font-semibold flex items-center gap-1">
                     <Sparkles className="w-3 h-3 text-amber-500" />
@@ -1431,9 +1492,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     <input
                       type="text"
                       value={generatedToolSchema.toolName}
-                      onChange={(e) =>
-                        setGeneratedToolSchema({ ...generatedToolSchema, toolName: e.target.value })
-                      }
+                      onChange={(e) => setGeneratedToolSchema({ ...generatedToolSchema, toolName: e.target.value })}
                       className="w-full px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 font-mono text-xs text-amber-300 focus:outline-none focus:border-amber-400"
                     />
                   </div>
@@ -1445,9 +1504,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     <input
                       type="text"
                       value={generatedToolSchema.description}
-                      onChange={(e) =>
-                        setGeneratedToolSchema({ ...generatedToolSchema, description: e.target.value })
-                      }
+                      onChange={(e) => setGeneratedToolSchema({ ...generatedToolSchema, description: e.target.value })}
                       className="w-full px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-400"
                     />
                   </div>

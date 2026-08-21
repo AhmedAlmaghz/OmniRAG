@@ -163,7 +163,9 @@ export function HealthDiagnosticsModal({
     const ServiceIcon = icon;
 
     return (
-      <div className={`p-4 rounded-2xl border transition-all duration-200 flex items-start justify-between gap-4 ${cfg.wrap}`}>
+      <div
+        className={`p-4 rounded-2xl border transition-all duration-200 flex items-start justify-between gap-4 ${cfg.wrap}`}
+      >
         <div className="space-y-1 min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <ServiceIcon className={`w-4 h-4 ${cfg.iconColor}`} aria-hidden="true" />

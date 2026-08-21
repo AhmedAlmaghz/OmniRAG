@@ -30,12 +30,7 @@ describe('Qdrant point id derivation', () => {
     // This is the exact invariant the old code violated. Since both upsert and
     // delete now call toQdrantPointId, asserting the function is stable across
     // repeated calls for realistic chunk ids guards the contract.
-    const ids = [
-      'chunk-doc-1712345678901-1',
-      'chunk-doc-sync-4821-3',
-      'chunk-doc-999-v2-17',
-      'chunk-doc-abc-re-m1-5',
-    ];
+    const ids = ['chunk-doc-1712345678901-1', 'chunk-doc-sync-4821-3', 'chunk-doc-999-v2-17', 'chunk-doc-abc-re-m1-5'];
     for (const id of ids) {
       const a = toQdrantPointId(id);
       const b = toQdrantPointId(id);

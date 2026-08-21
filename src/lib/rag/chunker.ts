@@ -179,7 +179,10 @@ function splitRecursive(text: string, size: number, overlap: number): string[] {
         separator = nextSep;
       } else {
         // Start a new chunk, optionally seeded with overlap from the previous.
-        current = overlap > 0 && results.length > 0 ? `${results[results.length - 1].slice(-overlap)}${separator}${piece}` : piece;
+        current =
+          overlap > 0 && results.length > 0
+            ? `${results[results.length - 1].slice(-overlap)}${separator}${piece}`
+            : piece;
         if (current.length > size) {
           // Overlap pushed us over budget; drop the overlap seed.
           current = piece;

@@ -243,7 +243,10 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     } catch (error) {
       console.error('Error creating source:', error);
       toast({
-        title: lang === 'ar' ? 'حدث خطأ غير متوقع أثناء إنشاء المصدر' : 'An unexpected error occurred while creating the source',
+        title:
+          lang === 'ar'
+            ? 'حدث خطأ غير متوقع أثناء إنشاء المصدر'
+            : 'An unexpected error occurred while creating the source',
         variant: 'error',
       });
     } finally {

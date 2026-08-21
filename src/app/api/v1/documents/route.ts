@@ -116,8 +116,16 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       );
     }
 
-    const { title, content, sourceType, sourceId: providedSourceId, language, collectionIds, chunkingConfig, sourceConfig } =
-      parsed.data;
+    const {
+      title,
+      content,
+      sourceType,
+      sourceId: providedSourceId,
+      language,
+      collectionIds,
+      chunkingConfig,
+      sourceConfig,
+    } = parsed.data;
 
     // Verify referenced collections actually exist for this tenant instead of
     // silently accepting dangling ids that would later filter out every chunk.

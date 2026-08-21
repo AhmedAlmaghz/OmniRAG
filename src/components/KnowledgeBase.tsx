@@ -211,7 +211,9 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       }
     } catch (error) {
       console.error('Failed to load knowledge base data:', error);
-      setLoadError(isRtl ? 'حدث خطأ غير متوقع أثناء تحميل البيانات' : 'An unexpected error occurred while loading data');
+      setLoadError(
+        isRtl ? 'حدث خطأ غير متوقع أثناء تحميل البيانات' : 'An unexpected error occurred while loading data',
+      );
     } finally {
       setIsLoading(false);
     }
@@ -593,11 +595,37 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         {(
           [
             { id: 'dashboard', icon: BarChart3, label: isRtl ? 'لوحة التحكم والصحة' : 'Overview & Health' },
-            { id: 'documents', icon: Layers, label: isRtl ? 'بطاقات المستندات' : 'Document Cards', count: documents.length },
-            { id: 'collections', icon: Folder, label: isRtl ? 'المجموعات المعرفية' : 'Collections Map', count: collections.length },
-            { id: 'upload', icon: Upload, label: isRtl ? 'استوديو الرفع والتجزئة' : 'Ingestion Studio', badge: 'OCR 50p' },
-            { id: 'ocr_cache', icon: Zap, label: isRtl ? 'ذاكرة OCR المؤقتة' : 'Mistral OCR Cache', count: ocrCacheEntries.length, amber: true },
-            { id: 'connectors', icon: Database, label: isRtl ? 'الموصلات الآلية' : 'Connectors', count: sources.length },
+            {
+              id: 'documents',
+              icon: Layers,
+              label: isRtl ? 'بطاقات المستندات' : 'Document Cards',
+              count: documents.length,
+            },
+            {
+              id: 'collections',
+              icon: Folder,
+              label: isRtl ? 'المجموعات المعرفية' : 'Collections Map',
+              count: collections.length,
+            },
+            {
+              id: 'upload',
+              icon: Upload,
+              label: isRtl ? 'استوديو الرفع والتجزئة' : 'Ingestion Studio',
+              badge: 'OCR 50p',
+            },
+            {
+              id: 'ocr_cache',
+              icon: Zap,
+              label: isRtl ? 'ذاكرة OCR المؤقتة' : 'Mistral OCR Cache',
+              count: ocrCacheEntries.length,
+              amber: true,
+            },
+            {
+              id: 'connectors',
+              icon: Database,
+              label: isRtl ? 'الموصلات الآلية' : 'Connectors',
+              count: sources.length,
+            },
             { id: 'youtube', icon: MonitorPlay, label: isRtl ? 'مفرغ يوتيوب الذكي' : 'YouTube Transcriber' },
             { id: 'keys', icon: Key, label: isRtl ? 'مفاتيح الخدمات' : 'API Integrations' },
             { id: 'mcp', icon: Zap, label: isRtl ? 'سياق MCP' : 'MCP Context' },
@@ -1724,14 +1752,24 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                                   : 'bg-slate-100 text-slate-600 border-slate-200';
                         const label =
                           status === 'healthy'
-                            ? isRtl ? 'سليم' : 'HEALTHY'
+                            ? isRtl
+                              ? 'سليم'
+                              : 'HEALTHY'
                             : status === 'syncing'
-                              ? isRtl ? 'يزامن' : 'SYNCING'
+                              ? isRtl
+                                ? 'يزامن'
+                                : 'SYNCING'
                               : status === 'degraded'
-                                ? isRtl ? 'متدهور' : 'DEGRADED'
+                                ? isRtl
+                                  ? 'متدهور'
+                                  : 'DEGRADED'
                                 : status === 'error'
-                                  ? isRtl ? 'خطأ' : 'ERROR'
-                                  : isRtl ? 'متوقف' : 'PAUSED';
+                                  ? isRtl
+                                    ? 'خطأ'
+                                    : 'ERROR'
+                                  : isRtl
+                                    ? 'متوقف'
+                                    : 'PAUSED';
                         return (
                           <span
                             className={`text-[9px] font-bold px-2 py-0.5 rounded-full border uppercase font-mono ${style}`}
@@ -2092,7 +2130,10 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(previewOcrEntry.extractedText);
-                    toast({ title: isRtl ? 'تم نسخ النص المفرغ للحافظة' : 'Copied text to clipboard', variant: 'success' });
+                    toast({
+                      title: isRtl ? 'تم نسخ النص المفرغ للحافظة' : 'Copied text to clipboard',
+                      variant: 'success',
+                    });
                   }}
                   className="px-3 py-1.5 bg-indigo-600 text-white font-bold rounded-xl text-xs hover:bg-indigo-700 transition flex items-center gap-1.5 cursor-pointer"
                 >

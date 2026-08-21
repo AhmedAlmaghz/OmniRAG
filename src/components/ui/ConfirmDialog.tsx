@@ -139,7 +139,10 @@ export function ConfirmDialog({
             <h2 id="confirm-dialog-title" className="text-base font-extrabold text-slate-900 dark:text-slate-100">
               {title}
             </h2>
-            <p id="confirm-dialog-message" className="text-sm text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+            <p
+              id="confirm-dialog-message"
+              className="text-sm text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed"
+            >
               {message}
             </p>
           </div>
