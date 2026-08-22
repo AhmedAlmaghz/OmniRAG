@@ -465,7 +465,126 @@ export function DocumentIngestionStudio({
           let finalChunksProcessed = 1;
           let finalEngineUsed = parsingEngine === 'mistral_ocr' ? 'Mistral Document AI' : 'Unstructured.io MCP';
 
-          if (isPdf && file.size > 4 * 1024 * 1024) {
+          // Large-file path: negotiate a direct-upload provider with the server
+          // so the file bytes never hit a hosting body limit (e.g. Vercel's
+          // 4.5 MB FUNCTION_PAYLOAD_TOO_LARGE). The server picks whichever is
+          // configured: S3-compatible (Tigris/S3/R2/MinIO — any host) or the
+          // optional Vercel Blob path. With no provider, fall back to the
+          // classic direct upload below.
+          const DIRECT_UPLOAD_THRESHOLD = 3.5 * 1024 * 1024;
+          if (file.size > DIRECT_UPLOAD_THRESHOLD) {
+            setParseStage('upload');
+            setParseStageText(
+              lang === 'ar'
+                ? `جاري رفع الملف الكبير (${(file.size / (1024 * 1024)).toFixed(2)} MB) إلى التخزين السحابي الآمن...`
+                : `Uploading large file (${(file.size / (1024 * 1024)).toFixed(2)} MB) to secure cloud storage...`,
+            );
+
+            try {
+              const sessionRes = await fetchWithAuth('/api/v1/documents/upload-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fileName: file.name,
+                  mimeType: file.type || 'application/octet-stream',
+                  sizeBytes: file.size,
+                }),
+              });
+
+              if (sessionRes.ok) {
+                const session = await sessionRes.json();
+
+                if (session.method === 's3' && session.uploadUrl) {
+                  // Presigned PUT straight to the S3-compatible store. The
+                  // Content-Type must match the signed value exactly.
+                  const putRes = await fetch(session.uploadUrl, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': session.contentType || 'application/octet-stream' },
+                    body: file,
+                  });
+                  if (!putRes.ok) {
+                    throw new Error(`Direct storage PUT failed: HTTP ${putRes.status}`);
+                  }
+
+                  setParseProgress(55);
+                  setParseStage('ocr');
+                  setParseStageText(
+                    lang === 'ar'
+                      ? 'جاري معالجة المستند من التخزين السحابي عبر محرك الذكاء الاصطناعي...'
+                      : 'Processing document from cloud storage via AI pipeline...',
+                  );
+
+                  res = await fetchWithAuth('/api/v1/documents/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      storageKey: session.storageKey,
+                      fileName: file.name,
+                      mimeType: file.type || 'application/octet-stream',
+                      engine:
+                        parsingEngine === 'mistral_ocr'
+                          ? 'mistral'
+                          : parsingEngine === 'unstructured_mcp'
+                            ? 'unstructured'
+                            : 'auto',
+                      pagesPerChunk: currentPagesPerChunk,
+                      maxFileSizeMb: currentMaxFileSizeMb,
+                    }),
+                  });
+                } else if (session.method === 'vercel-blob') {
+                  // Optional Vercel-hosted path: the SDK fetches its own
+                  // token from handleUploadUrl, then uploads directly.
+                  const { upload } = await import('@vercel/blob/client');
+                  const tenantPrefix = `uploads/${tenantId}`;
+                  const safeName = file.name.replace(/[^\w.\-() ]/g, '_');
+                  const pathname = `${tenantPrefix}/${Date.now()}-${safeName}`;
+
+                  const blobResult = await upload(pathname, file, {
+                    access: 'public',
+                    handleUploadUrl: session.handleUploadUrl || '/api/v1/documents/upload-token',
+                    onUploadProgress: ({ percentage }) => {
+                      setParseProgress(Math.min(10 + Math.round(percentage * 0.4), 50));
+                    },
+                  });
+
+                  if (blobResult?.url) {
+                    setParseProgress(55);
+                    setParseStage('ocr');
+                    setParseStageText(
+                      lang === 'ar'
+                        ? 'جاري معالجة المستند من التخزين السحابي عبر محرك الذكاء الاصطناعي...'
+                        : 'Processing document from cloud storage via AI pipeline...',
+                    );
+
+                    res = await fetchWithAuth('/api/v1/documents/parse', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        blobUrl: blobResult.url,
+                        fileName: file.name,
+                        mimeType: file.type || 'application/octet-stream',
+                        engine:
+                          parsingEngine === 'mistral_ocr'
+                            ? 'mistral'
+                            : parsingEngine === 'unstructured_mcp'
+                              ? 'unstructured'
+                              : 'auto',
+                        pagesPerChunk: currentPagesPerChunk,
+                        maxFileSizeMb: currentMaxFileSizeMb,
+                      }),
+                    });
+                  }
+                }
+                // method === 'none': no provider configured on this host —
+                // fall through to the classic direct upload below.
+              }
+            } catch (directUploadErr: any) {
+              console.warn('[DocumentIngestion] Direct storage upload failed, falling back:', directUploadErr);
+              res = null;
+            }
+          }
+
+          if (!res && isPdf && file.size > 4 * 1024 * 1024) {
             // Client-side PDF Slicing using pdf-lib!
             setParseStageText(
               lang === 'ar'

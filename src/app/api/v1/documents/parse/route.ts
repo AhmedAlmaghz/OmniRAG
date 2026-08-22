@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { processPdfWithBatchedPipeline } from '@/lib/pdf/pdfChunker';
+import { isTenantObjectKey, downloadS3Object, deleteS3Object } from '@/lib/uploads/directUpload';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { dispatchFile, archiveUploadedFile } from '@/lib/services/unstructuredService';
@@ -10,6 +11,10 @@ import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
 export const dynamic = 'force-dynamic';
+
+// Large-file extraction (blob fetch + OCR of a 50 MB PDF) can run long.
+// Vercel clamps this to the plan's ceiling (60s Hobby / 300s Pro).
+export const maxDuration = 300;
 
 interface ServerOcrCacheEntry {
   text: string;
@@ -205,6 +210,92 @@ function normalizeMimeType(fileName: string, mimeType: string): string {
 const DEFAULT_MAX_FILE_SIZE_MB = 10;
 const MAX_ALLOWED_FILE_SIZE_MB_CAP = 50;
 
+/**
+ * Fetches a file the client uploaded directly to an S3-compatible store
+ * (Tigris / AWS S3 / R2 / MinIO) and returns its bytes. The client sends only
+ * the tenant-scoped object key, so this path bypasses any hosting body limit.
+ * The transient object is deleted after reading (best-effort).
+ */
+async function fetchS3StoredFile(
+  storageKey: string,
+  tenantId: string,
+): Promise<{ buffer: Buffer } | { error: string; code: string }> {
+  if (!isTenantObjectKey(storageKey, tenantId)) {
+    return { error: 'مفتاح التخزين غير مسموح (Storage key not permitted)', code: '403_STORAGE_KEY_FORBIDDEN' };
+  }
+
+  const buffer = await downloadS3Object(storageKey);
+  if (!buffer || buffer.length === 0) {
+    return { error: 'تعذر قراءة الملف من التخزين (Could not read file from storage)', code: '404_OBJECT_NOT_FOUND' };
+  }
+
+  // Best-effort cleanup — the bytes are already in memory.
+  deleteS3Object(storageKey).catch(() => {});
+
+  return { buffer };
+}
+
+/**
+ * Fetches a file previously uploaded directly to Vercel Blob storage (the
+ * optional Vercel-hosted path) and returns its bytes. The SDK is imported
+ * dynamically so deployments without a Blob store never load it.
+ *
+ * SSRF guard: only URLs on the tenant's own Blob store host are accepted.
+ * The blob is deleted after reading (best-effort) so transient uploads do not
+ * accumulate storage cost.
+ */
+async function fetchBlobFile(
+  blobUrl: string,
+  tenantId: string,
+): Promise<{ buffer: Buffer; fileName: string; mimeType: string } | { error: string; code: string }> {
+  let parsed: URL;
+  try {
+    parsed = new URL(blobUrl);
+  } catch {
+    return { error: 'رابط التخزين غير صالح (Invalid blob URL)', code: '400_INVALID_BLOB_URL' };
+  }
+
+  // Only accept Vercel Blob store hosts, and only the tenant's own namespace.
+  const isVercelBlobHost = parsed.hostname.endsWith('.public.blob.vercel-storage.com');
+  const tenantPrefix = `/uploads/${tenantId}/`;
+  if (!isVercelBlobHost || !parsed.pathname.startsWith(tenantPrefix)) {
+    return { error: 'رابط التخزين غير مسموح (Blob URL not permitted)', code: '403_BLOB_URL_FORBIDDEN' };
+  }
+
+  try {
+    const { get, del } = await import('@vercel/blob');
+    const result = await get(blobUrl, { access: 'public' });
+    if (!result || result.statusCode !== 200 || !result.stream) {
+      return { error: 'تعذر قراءة الملف من التخزين (Could not read file from storage)', code: '404_BLOB_NOT_FOUND' };
+    }
+
+    const chunks: Uint8Array[] = [];
+    const reader = result.stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    const buffer = Buffer.concat(chunks);
+
+    const fileName = decodeURIComponent(parsed.pathname.split('/').pop() || 'document.bin');
+    const mimeType = result.blob.contentType || 'application/octet-stream';
+
+    // Best-effort cleanup of the transient upload.
+    del(blobUrl, {}).catch((delErr) => {
+      console.warn('[Document Ingestion] Failed to delete transient blob:', delErr?.message);
+    });
+
+    return { buffer, fileName, mimeType };
+  } catch (err: any) {
+    console.error('[Document Ingestion] Blob fetch failed:', err?.message);
+    return {
+      error: 'فشل تحميل الملف من التخزين المؤقت (Failed to load file from storage)',
+      code: '502_BLOB_FETCH_FAILED',
+    };
+  }
+}
+
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   // The wrapper already applied rate limiting and verified auth; authCtx is the
   // single source of identity. No redundant inner checks here.
@@ -253,7 +344,61 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       if (contentType.includes('application/json')) {
         try {
           const jsonBody = await req.json();
-          if (jsonBody && jsonBody.fileData) {
+          if (jsonBody && jsonBody.storageKey) {
+            // Large-file path (portable): the file was uploaded directly to an
+            // S3-compatible store (Tigris / AWS S3 / R2 / MinIO). Fetch the
+            // bytes here and continue with the normal pipeline.
+            const stored = await fetchS3StoredFile(jsonBody.storageKey, authCtx.tenantId);
+            if ('error' in stored) {
+              return NextResponse.json({ error: stored.error, code: stored.code }, { status: 400 });
+            }
+            fileBuffer = stored.buffer;
+            fileName = jsonBody.fileName || 'document.bin';
+            mimeType = jsonBody.mimeType || 'application/octet-stream';
+            cleanBase64 = fileBuffer.toString('base64');
+            requestedEngine = jsonBody.engine || 'auto';
+            requestedModel = jsonBody.model || undefined;
+            mistralApiKey = jsonBody.mistralApiKey || undefined;
+            unstructuredApiKey = jsonBody.unstructuredApiKey || undefined;
+            groqApiKey = jsonBody.groqApiKey || undefined;
+
+            if (jsonBody.maxFileSizeMb && !isNaN(Number(jsonBody.maxFileSizeMb))) {
+              requestedMaxFileSizeMb = Math.min(
+                Math.max(Number(jsonBody.maxFileSizeMb), 1),
+                MAX_ALLOWED_FILE_SIZE_MB_CAP,
+              );
+            }
+            if (jsonBody.pagesPerChunk && !isNaN(Number(jsonBody.pagesPerChunk))) {
+              requestedPagesPerChunk = Math.min(Math.max(Number(jsonBody.pagesPerChunk), 1), 200);
+            }
+          } else if (jsonBody && jsonBody.blobUrl) {
+            // Large-file path (Vercel-hosted option): the file was uploaded
+            // directly to Vercel Blob by the client. Fetch the bytes here and
+            // continue with the normal pipeline.
+            const blobResult = await fetchBlobFile(jsonBody.blobUrl, authCtx.tenantId);
+            if ('error' in blobResult) {
+              return NextResponse.json({ error: blobResult.error, code: blobResult.code }, { status: 400 });
+            }
+            fileBuffer = blobResult.buffer;
+            fileName = jsonBody.fileName || blobResult.fileName;
+            mimeType = jsonBody.mimeType || blobResult.mimeType;
+            cleanBase64 = fileBuffer.toString('base64');
+            requestedEngine = jsonBody.engine || 'auto';
+            requestedModel = jsonBody.model || undefined;
+            mistralApiKey = jsonBody.mistralApiKey || undefined;
+            unstructuredApiKey = jsonBody.unstructuredApiKey || undefined;
+            groqApiKey = jsonBody.groqApiKey || undefined;
+
+            if (jsonBody.maxFileSizeMb && !isNaN(Number(jsonBody.maxFileSizeMb))) {
+              requestedMaxFileSizeMb = Math.min(
+                Math.max(Number(jsonBody.maxFileSizeMb), 1),
+                MAX_ALLOWED_FILE_SIZE_MB_CAP,
+              );
+            }
+            if (jsonBody.pagesPerChunk && !isNaN(Number(jsonBody.pagesPerChunk))) {
+              requestedPagesPerChunk = Math.min(Math.max(Number(jsonBody.pagesPerChunk), 1), 200);
+            }
+          } else if (jsonBody && jsonBody.fileData) {
             fileName = jsonBody.fileName || 'document.txt';
             mimeType = jsonBody.mimeType || 'text/plain';
             cleanBase64 = jsonBody.fileData.includes(',') ? jsonBody.fileData.split(',')[1] : jsonBody.fileData;
