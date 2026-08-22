@@ -12,9 +12,13 @@ import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
 export const dynamic = 'force-dynamic';
 
-// Large-file extraction (blob fetch + OCR of a 50 MB PDF) can run long.
-// Vercel clamps this to the plan's ceiling (60s Hobby / 300s Pro).
-export const maxDuration = 300;
+// Function run-time ceiling (seconds) for this route. Next.js requires a
+// literal here — env-driven values fail the segment-config analyzer.
+// 60 deploys on EVERY Vercel plan (Hobby's hard ceiling). To allow the
+// long cloud extractions measured in testing (full-book OCR ≈ 7.4 min,
+// PPTX via Unstructured Jobs ≈ 6.5 min), raise this on Pro Fluid to 800.
+// Self-hosted / Cloud Run ignore the value entirely (no platform timeout).
+export const maxDuration = 60;
 
 interface ServerOcrCacheEntry {
   text: string;
