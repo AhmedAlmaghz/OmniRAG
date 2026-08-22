@@ -4,6 +4,7 @@ import path from 'path';
 import mammoth from 'mammoth';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
 import { getAiModel } from '../config/aiModels';
+import { ensureLongHttpTimeouts } from '../http/longHttpTimeouts';
 
 export interface FileTypeClassification {
   isText: boolean;
@@ -298,15 +299,180 @@ export async function mistralOcr(
 /**
  * Interfaces directly with the Unstructured Partition API to extract structured layout elements as Markdown.
  */
-export async function unstructuredPartition(
+/** Converts Unstructured partition elements to clean Markdown. */
+function elementsToMarkdown(elements: any[]): string {
+  return elements
+    .map((e: any) => {
+      if (!e.text) return '';
+      if (e.type === 'Title') return `## ${e.text}`;
+      if (e.type === 'Heading') return `### ${e.text}`;
+      if (e.type === 'ListItem') return `* ${e.text}`;
+      if (e.type === 'Table') {
+        return e.metadata?.text_as_html || e.text;
+      }
+      return e.text;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Unstructured rate limit: at least 1 second must pass between job launches.
+ */
+let lastJobLaunchAt = 0;
+
+/**
+ * NEW Unstructured Transform flow (Jobs API) for Platform API keys.
+ *
+ * The modern platform (UNSTRUCTURED_API_URL=https://platform-api.transform.
+ * unstructured.io/api/v1) exposes no synchronous partition endpoint; instead
+ * local files are transformed through a short-lived job:
+ *
+ *   1. POST {apiUrl}/jobs/          → multipart: request_data + input_files
+ *   2. GET  {apiUrl}/jobs/{id}      → poll until status COMPLETED
+ *   3. GET  {apiUrl}/jobs/{id}/download?file_id=… → partition elements JSON
+ *
+ * Uses the documented "auto" partitioner (VLM subtype, dynamic, allow_fast):
+ * the platform picks the right strategy per document.
+ *
+ * Platform limits honoured: 10 files/job, 50 MB/file, ≥1 s between launches,
+ * max 5 concurrent jobs (we run sequentially).
+ */
+export async function partitionViaJobsApi(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
   apiKey: string,
-  strategy: 'hi_res' | 'fast' | 'ocr_only' = 'hi_res',
+  apiUrl: string,
 ): Promise<DispatchResult> {
-  const apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general';
+  const base = apiUrl.replace(/\/+$/, '');
+  const headers = {
+    'unstructured-api-key': apiKey,
+    accept: 'application/json',
+  };
 
+  try {
+    // Respect the ≥1 s between job launches rule.
+    const waitMs = Math.max(0, 1250 - (Date.now() - lastJobLaunchAt));
+    if (waitMs > 0) await sleep(waitMs);
+
+    const fd = new FormData();
+    fd.append(
+      'request_data',
+      JSON.stringify({
+        job_nodes: [
+          {
+            name: 'Partitioner',
+            type: 'partition',
+            subtype: 'vlm',
+            settings: { is_dynamic: true, allow_fast: true },
+          },
+        ],
+      }),
+    );
+    fd.append('input_files', new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), fileName);
+
+    const createRes = await fetch(`${base}/jobs/`, {
+      method: 'POST',
+      headers,
+      body: fd,
+      signal: AbortSignal.timeout(10 * 60 * 1000),
+    });
+    lastJobLaunchAt = Date.now();
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      throw new Error(`Jobs API create returned ${createRes.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const job = await createRes.json();
+    const jobId = job?.id;
+    if (!jobId) throw new Error('Jobs API response is missing an id');
+
+    // Poll until a terminal state, bounded well inside the route budget.
+    const deadline = Date.now() + 9 * 60 * 1000;
+    let outputFiles: Array<{ file_id?: string }> = [];
+    for (;;) {
+      await sleep(5000);
+      if (Date.now() > deadline) throw new Error('Jobs API polling timed out');
+
+      const statusRes = await fetch(`${base}/jobs/${jobId}`, {
+        headers,
+        signal: AbortSignal.timeout(60 * 1000),
+      });
+      if (!statusRes.ok) throw new Error(`Jobs API status returned ${statusRes.status}`);
+
+      const status = (await statusRes.json()) as any;
+      if (status?.status === 'COMPLETED') {
+        outputFiles = status.output_node_files || [];
+        break;
+      }
+      if (status?.status === 'FAILED' || status?.status === 'STOPPED') {
+        throw new Error(`Job ended with status ${status.status}`);
+      }
+    }
+
+    const fileIds = outputFiles.map((f) => f?.file_id).filter((id): id is string => !!id);
+    if (fileIds.length === 0) throw new Error('Completed job exposed no output files');
+
+    const elementTexts: string[] = [];
+    let totalElements = 0;
+    for (const fileId of fileIds) {
+      const dlRes = await fetch(`${base}/jobs/${jobId}/download?file_id=${encodeURIComponent(fileId)}`, {
+        headers,
+        signal: AbortSignal.timeout(5 * 60 * 1000),
+      });
+      if (!dlRes.ok) continue;
+      const raw = await dlRes.text();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const elements = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.elements) ? parsed.elements : null;
+      if (elements) {
+        totalElements += elements.length;
+        const md = elementsToMarkdown(elements);
+        if (md.trim()) elementTexts.push(md.trim());
+      }
+    }
+
+    if (elementTexts.length === 0) {
+      throw new Error('Job output contained no readable elements');
+    }
+
+    return {
+      text: elementTexts.join('\n\n'),
+      engineUsed: 'Unstructured Transform API (Jobs ⚡)',
+      success: true,
+      metadata: { elementsCount: totalElements, jobId },
+    };
+  } catch (error: any) {
+    console.error('[Unstructured Service] Jobs API partition error:', error.message);
+    return {
+      text: '',
+      engineUsed: 'Unstructured Transform API (Jobs ⚡)',
+      success: false,
+      metadata: { error: error.message },
+    };
+  }
+}
+
+/**
+ * Legacy synchronous partition (works with classic Partition API keys).
+ * Returns null so the caller can fall through when it is not applicable.
+ */
+async function partitionViaLegacyEndpoint(
+  fileBuffer: Buffer,
+  fileName: string,
+  mimeType: string,
+  apiKey: string,
+  apiUrl: string,
+  strategy: 'hi_res' | 'fast' | 'ocr_only',
+): Promise<DispatchResult> {
   try {
     const formData = new FormData();
     const blob = new Blob([new Uint8Array(fileBuffer)]);
@@ -321,6 +487,9 @@ export async function unstructuredPartition(
         'unstructured-api-key': apiKey,
       },
       body: formData,
+      // Large multipart uploads + hi_res partitioning outlive Node's ~300 s
+      // default headers timeout.
+      signal: AbortSignal.timeout(10 * 60 * 1000),
     });
 
     if (!response.ok) {
@@ -330,23 +499,8 @@ export async function unstructuredPartition(
 
     const elements = await response.json();
     if (Array.isArray(elements)) {
-      const markdownText = elements
-        .map((e: any) => {
-          if (!e.text) return '';
-          // Simple heuristic conversion of element types to Markdown headings/paragraphs
-          if (e.type === 'Title') return `## ${e.text}`;
-          if (e.type === 'Heading') return `### ${e.text}`;
-          if (e.type === 'ListItem') return `* ${e.text}`;
-          if (e.type === 'Table') {
-            return e.metadata?.text_as_html || e.text;
-          }
-          return e.text;
-        })
-        .filter(Boolean)
-        .join('\n\n');
-
       return {
-        text: markdownText,
+        text: elementsToMarkdown(elements),
         engineUsed: 'Unstructured.io Partition Engine',
         success: true,
         metadata: { elementsCount: elements.length, strategy },
@@ -363,6 +517,25 @@ export async function unstructuredPartition(
       metadata: { error: error.message },
     };
   }
+}
+
+export async function unstructuredPartition(
+  fileBuffer: Buffer,
+  fileName: string,
+  mimeType: string,
+  apiKey: string,
+  strategy: 'hi_res' | 'fast' | 'ocr_only' = 'hi_res',
+): Promise<DispatchResult> {
+  const apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general';
+
+  // Route by endpoint generation: the legacy partition host accepts classic
+  // API keys directly; anything else (the modern Transform platform) goes
+  // through the async Jobs API that Platform keys authenticate with.
+  const isLegacyHost = /api\.unstructuredapp\.io/i.test(apiUrl);
+  if (isLegacyHost) {
+    return partitionViaLegacyEndpoint(fileBuffer, fileName, mimeType, apiKey, apiUrl, strategy);
+  }
+  return partitionViaJobsApi(fileBuffer, fileName, mimeType, apiKey, apiUrl);
 }
 
 /**
@@ -508,6 +681,34 @@ export async function dispatchFile(
   const resolvedMime = normalizeMimeType(fileName, mimeType);
   const enginePref = options.preferredEngine || 'auto';
 
+  // Long OCR round-trips outlive Node's default ~300 s fetch headers timeout.
+  ensureLongHttpTimeouts();
+
+  // 0. PowerPoint (.pptx) local XML parsing first — instant, key-free, and
+  // preserves slide order + speaker notes. Falls through to cloud engines
+  // when the deck is mostly images (little text to extract locally).
+  if (fileClassification.isPowerPoint && fileName.toLowerCase().endsWith('.pptx')) {
+    try {
+      const { parsePptxLocally } = await import('./pptxParser');
+      const localPptx = await parsePptxLocally(fileBuffer);
+      if (localPptx.text.trim().length >= 400) {
+        console.log(
+          `[Document Ingestion] Parsed PowerPoint locally (${localPptx.slideCount} slides) — no cloud engine needed.`,
+        );
+        return {
+          text: localPptx.text.trim(),
+          engineUsed: `Local PPTX XML Parser (${localPptx.slideCount} slides ⚡)`,
+          success: true,
+        };
+      }
+      console.warn(
+        `[Document Ingestion] Local PPTX parse produced only ${localPptx.text.trim().length} chars — falling through to cloud engines.`,
+      );
+    } catch (e: any) {
+      console.warn('[Document Ingestion] Local PPTX parser failed, falling back to other engines...', e?.message);
+    }
+  }
+
   // 1. Word Document (.docx / .doc) local parsing with Mammoth first (ensures perfect Arabic UTF-8 encoding without mojibake/strange characters)
   if (fileClassification.isWord) {
     try {
@@ -632,6 +833,50 @@ export async function dispatchFile(
     }
   } catch (err: any) {
     console.error('[Unstructured Service] Fallback document extraction failed:', err);
+  }
+
+  // 6. FINAL local fallback: offline Tesseract OCR — keeps image-only files
+  // working even when no cloud API key is configured.
+  if (fileClassification.isImage) {
+    try {
+      const { ocrImageBuffer } = await import('./localOcr');
+      const localText = await ocrImageBuffer(fileBuffer);
+      if (localText.length > 0) {
+        return {
+          text: localText,
+          engineUsed: 'Local Tesseract OCR (offline ⚡)',
+          success: true,
+        };
+      }
+    } catch (e: any) {
+      console.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
+    }
+  }
+
+  // 6b. FINAL local fallback for image-only PPTX decks (design-tool exports
+  // where every slide is a full-bleed picture and the XML carries no text).
+  if (fileClassification.isPowerPoint && fileName.toLowerCase().endsWith('.pptx')) {
+    try {
+      const { extractSlideImagesFromPptx } = await import('./pptxParser');
+      const { ocrImageBuffer } = await import('./localOcr');
+      const slideImages = await extractSlideImagesFromPptx(fileBuffer);
+      if (slideImages.length > 0) {
+        const sections: string[] = [];
+        for (let i = 0; i < slideImages.length; i++) {
+          const text = await ocrImageBuffer(slideImages[i]);
+          if (text) sections.push(`### Slide ${i + 1}\n\n${text}`);
+        }
+        if (sections.length > 0) {
+          return {
+            text: sections.join('\n\n'),
+            engineUsed: `Local PPTX Slide-Image OCR (offline, ${slideImages.length} slides ⚡)`,
+            success: true,
+          };
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Unstructured Service] Local PPTX slide-image OCR failed:', e?.message);
+    }
   }
 
   // If Mistral or Unstructured was preferred but failed, try Gemini fallback anyway

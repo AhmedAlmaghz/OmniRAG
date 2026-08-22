@@ -1,6 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { generateContentWithResilience } from '../gemini/resilientGemini';
 import { getAiModel, getFallbackModels } from '../config/aiModels';
+import { ensureLongHttpTimeouts } from '../http/longHttpTimeouts';
 
 export interface PdfChunkInfo {
   chunkIndex: number;
@@ -35,6 +36,27 @@ export async function slicePdfIntoChunks(
 
     if (totalPages === 0) {
       throw new Error('ملف PDF فارغ ولا يحتوي على أي صفحات.');
+    }
+
+    // Single-chunk fast path: when every page fits one request, hand back
+    // the ORIGINAL buffer. Re-saving via copyPages duplicates shared
+    // resource dictionaries into each chunk — a scanned PDF with all images
+    // in one shared dict re-serialises at ~full size per chunk, so slicing
+    // a 15 MB / 58-page file into 6 chunks would upload ~90 MB total.
+    if (totalPages <= pagesPerChunk) {
+      return {
+        totalPages,
+        chunks: [
+          {
+            chunkIndex: 1,
+            totalChunks: 1,
+            startPage: 1,
+            endPage: totalPages,
+            pdfBuffer,
+            base64Data: pdfBuffer.toString('base64'),
+          },
+        ],
+      };
     }
 
     const totalChunks = Math.ceil(totalPages / pagesPerChunk);
@@ -107,6 +129,9 @@ export async function parsePdfChunkWithMistral(
         },
         include_image_base64: false,
       }),
+      // Uploading a 15 MB base64 document plus server-side OCR of dozens of
+      // pages routinely exceeds Node's ~300 s default headers timeout.
+      signal: AbortSignal.timeout(10 * 60 * 1000),
     });
 
     if (!res.ok) {
@@ -146,39 +171,27 @@ export async function parsePdfChunkWithUnstructured(
   apiKey?: string,
 ): Promise<{ text: string } | null> {
   const token = apiKey || process.env.UNSTRUCTURED_API_KEY;
-  const apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general';
   if (!token) return null;
 
+  // Delegates to the shared engine, which routes by UNSTRUCTURED_API_URL:
+  // legacy partition host → synchronous POST; modern Transform platform →
+  // the async Jobs API (create job → poll → download elements).
   try {
-    const formData = new FormData();
-    const blob = new Blob([new Uint8Array(chunk.pdfBuffer)]);
-    formData.append('files', blob, `chunk_${chunk.chunkIndex}.pdf`);
-    formData.append('strategy', 'hi_res');
-
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'unstructured-api-key': token,
-      },
-      body: formData,
-    });
-
-    if (!res.ok) {
-      console.warn(`[Unstructured API] HTTP ${res.status} on chunk ${chunk.chunkIndex}`);
-      return null;
+    const { unstructuredPartition } = await import('../services/unstructuredService');
+    const result = await unstructuredPartition(
+      chunk.pdfBuffer,
+      `chunk_${chunk.chunkIndex}.pdf`,
+      'application/pdf',
+      token,
+      'fast',
+    );
+    if (result.success && result.text.trim().length > 0) {
+      return { text: result.text.trim() };
     }
-
-    const elements = await res.json();
-    if (Array.isArray(elements)) {
-      const extracted = elements
-        .map((el: any) => el.text)
-        .filter(Boolean)
-        .join('\n\n');
-      return { text: extracted };
-    }
+    console.warn(`[Unstructured API] Chunk ${chunk.chunkIndex}: ${result.metadata?.error || 'no text'}`);
     return null;
   } catch (err: any) {
-    console.warn(`[Unstructured API] Execution failed on chunk ${chunk.chunkIndex}:`, err?.message || err);
+    console.warn(`[Unstructured API] Chunk ${chunk.chunkIndex} error:`, err?.message);
     return null;
   }
 }
@@ -297,10 +310,24 @@ export async function processPdfWithBatchedPipeline(
 ): Promise<DocumentParseResult> {
   const { preferredEngine = 'auto', pagesPerChunk = 25, mistralApiKey, unstructuredApiKey, model } = options;
 
+  // Long OCR round-trips (15 MB uploads + dozens of pages) outlive Node's
+  // default ~300 s fetch headers timeout — raise it before any engine call.
+  ensureLongHttpTimeouts();
+
   // 1. Adaptive pages per chunk based on PDF file size to prevent 413 Request Entity Too Large errors
   let resolvedPagesPerChunk = pagesPerChunk;
   const fileMb = pdfBuffer.length / (1024 * 1024);
-  if (fileMb > 15) {
+
+  // Files small enough to fit a single OCR request (Mistral caps at 50 MB;
+  // 30 MB binary ≈ 40 MB base64) go out WHOLE — one request, zero slicing.
+  // Slicing is counterproductive for shared-resource PDFs: copyPages
+  // duplicates the shared dictionaries, so every chunk re-serialises at
+  // roughly full-file size (6 chunks of a 15 MB file ≈ 90 MB uploaded).
+  const SINGLE_REQUEST_BYTES = 30 * 1024 * 1024;
+  if (pdfBuffer.length <= SINGLE_REQUEST_BYTES) {
+    resolvedPagesPerChunk = Number.MAX_SAFE_INTEGER;
+    console.log(`[Knowledge Pipeline] PDF (${fileMb.toFixed(2)} MB) fits a single OCR request — skipping slicing.`);
+  } else if (fileMb > 15) {
     resolvedPagesPerChunk = Math.min(pagesPerChunk, 5); // 5 pages per chunk for huge files (>15MB)
     console.log(
       `[Knowledge Pipeline] Huge PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 5 to avoid 413 errors.`,
@@ -382,6 +409,22 @@ export async function processPdfWithBatchedPipeline(
       }
     }
 
+    // Step F: LOCAL offline OCR (Tesseract) — extracts the embedded page
+    // images and recognizes them without any cloud API key. Reached only
+    // when every engine above failed, i.e. scanned PDFs with no keys set.
+    if (!chunkText) {
+      try {
+        const { ocrPdfLocally } = await import('../services/localOcr');
+        const localText = await ocrPdfLocally(chunk.pdfBuffer);
+        if (localText.trim().length > 0) {
+          chunkText = localText.trim();
+          primaryEngineUsed = 'Local Tesseract OCR (offline ⚡)';
+        }
+      } catch (ocrErr: any) {
+        console.warn(`[Knowledge Pipeline] Local OCR failed on chunk ${chunk.chunkIndex}:`, ocrErr?.message);
+      }
+    }
+
     if (chunkText) {
       accumulatedTexts.push(`--- [قسم الصفحات ${chunk.startPage} إلى ${chunk.endPage}] ---\n${chunkText}`);
     }
@@ -401,6 +444,20 @@ export async function processPdfWithBatchedPipeline(
     if (fullGeminiRes && fullGeminiRes.text && fullGeminiRes.text.trim().length > 0) {
       accumulatedTexts.push(fullGeminiRes.text.trim());
       primaryEngineUsed = 'Gemini Multimodal Direct OCR Parser';
+    }
+  }
+
+  // Last resort: LOCAL offline OCR on the full buffer (scanned PDFs, no keys)
+  if (accumulatedTexts.length === 0 && pdfBuffer.length > 0) {
+    try {
+      const { ocrPdfLocally } = await import('../services/localOcr');
+      const localText = await ocrPdfLocally(pdfBuffer);
+      if (localText.trim().length > 0) {
+        accumulatedTexts.push(localText.trim());
+        primaryEngineUsed = 'Local Tesseract OCR (offline ⚡)';
+      }
+    } catch (ocrErr: any) {
+      console.warn('[Knowledge Pipeline] Local OCR full-buffer fallback failed:', ocrErr?.message);
     }
   }
 

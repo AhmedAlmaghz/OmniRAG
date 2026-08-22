@@ -16,3 +16,6 @@ terminal_logs/
 # TypeScript incremental build artifacts — must not be committed (stale
 # tsbuildinfo causes misleading CI typecheck results across machines).
 *.tsbuildinfo
+# Tesseract OCR language models — downloaded & cached at runtime by
+# tesseract.js (never commit these binary artifacts).
+*.traineddata

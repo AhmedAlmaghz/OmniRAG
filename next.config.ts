@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  // tesseract.js spawns worker threads and streams its WASM core from
+  // node_modules at runtime — bundling it into the server build breaks both.
+  serverExternalPackages: ['tesseract.js'],
   experimental: {
     webpackBuildWorker: false,
     serverActions: {
