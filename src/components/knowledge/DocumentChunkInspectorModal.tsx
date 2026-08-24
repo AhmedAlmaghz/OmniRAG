@@ -4,7 +4,20 @@ import React, { useState } from 'react';
 import { Document, DocumentChunk } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { useAsync } from '@/hooks/useAsync';
-import { X, Layers, Search, Copy, Check, Sparkles, Loader2, Database, ShieldCheck, Hash } from 'lucide-react';
+import {
+  Layers,
+  Search,
+  Copy,
+  Check,
+  Sparkles,
+  Loader2,
+  Database,
+  ShieldCheck,
+  Hash,
+  AlertTriangle,
+} from 'lucide-react';
+import { Modal, ModalCloseButton } from '@/components/ui/Modal';
+import { copyToClipboard } from '@/lib/clipboard';
 
 interface DocumentChunkInspectorModalProps {
   document: Document;
@@ -19,7 +32,12 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'chunks' | 'raw'>('chunks');
 
-  const { data: chunks, isLoading } = useAsync<DocumentChunk[]>(
+  const {
+    data: chunks,
+    isLoading,
+    error,
+    refetch,
+  } = useAsync<DocumentChunk[]>(
     async (signal) => {
       const res = await fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}&documentId=${document.id}`, { signal });
       if (!res.ok) return [];
@@ -30,8 +48,12 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
   );
   const chunkList = chunks ?? [];
 
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
+  // Honest copy feedback + honest failure state. Previously the clipboard call
+  // was unguarded (false "copied" on permission denial) and an API failure
+  // rendered the misleading "no matching chunks" empty state.
+  const handleCopy = async (text: string, id: string) => {
+    const ok = await copyToClipboard(text);
+    if (!ok) return;
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };
@@ -47,13 +69,10 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
   const totalTokens = chunkList.reduce((acc, c) => acc + Math.round(c.content.length / 4), 0);
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div
-        className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
-        dir={isRtl ? 'rtl' : 'ltr'}
-      >
+    <Modal open onClose={onClose} maxWidthClass="max-w-4xl" ariaLabelledBy="chunk-inspector-title">
+      <div dir={isRtl ? 'rtl' : 'ltr'} className="flex flex-col min-h-0 flex-1">
         {/* Header */}
-        <div className="p-5 border-b border-slate-150 flex items-center justify-between gap-4 bg-slate-50/70">
+        <div className="p-5 border-b border-slate-150 flex items-center justify-between gap-4 bg-slate-50/70 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100/60 shrink-0">
               <Layers className="w-5 h-5" />
@@ -67,7 +86,9 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
                   {document.language?.toUpperCase() || 'AR'}
                 </span>
               </div>
-              <h3 className="text-sm font-extrabold text-slate-900 truncate mt-0.5">{document.title}</h3>
+              <h3 id="chunk-inspector-title" className="text-sm font-extrabold text-slate-900 truncate mt-0.5">
+                {document.title}
+              </h3>
             </div>
           </div>
 
@@ -75,6 +96,7 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
             <div className="flex items-center bg-slate-200/70 p-0.5 rounded-xl border border-slate-300/60 text-xs">
               <button
                 onClick={() => setActiveView('chunks')}
+                aria-pressed={activeView === 'chunks'}
                 className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
                   activeView === 'chunks'
                     ? 'bg-white text-indigo-600 shadow-3xs'
@@ -85,6 +107,7 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
               </button>
               <button
                 onClick={() => setActiveView('raw')}
+                aria-pressed={activeView === 'raw'}
                 className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
                   activeView === 'raw' ? 'bg-white text-indigo-600 shadow-3xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -93,17 +116,12 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
               </button>
             </div>
 
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <ModalCloseButton onClose={onClose} label={isRtl ? 'إغلاق' : 'Close'} />
           </div>
         </div>
 
         {/* Stats Strip */}
-        <div className="px-5 py-2.5 bg-indigo-50/40 border-b border-indigo-100/60 flex items-center justify-between gap-4 flex-wrap text-xs text-indigo-950 font-medium">
+        <div className="px-5 py-2.5 bg-indigo-50/40 border-b border-indigo-100/60 flex items-center justify-between gap-4 flex-wrap text-xs text-indigo-950 font-medium shrink-0">
           <div className="flex items-center gap-4 flex-wrap">
             <span className="flex items-center gap-1.5">
               <Hash className="w-3.5 h-3.5 text-indigo-600" />
@@ -115,11 +133,6 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
               <span>{isRtl ? 'الرموز التقديرية:' : 'Estimated Tokens:'}</span>
               <strong className="font-mono text-indigo-700">~{totalTokens.toLocaleString()}</strong>
             </span>
-            <span className="flex items-center gap-1.5">
-              <Database className="w-3.5 h-3.5 text-indigo-600" />
-              <span>{isRtl ? 'نموذج التضمين:' : 'Embedding Model:'}</span>
-              <strong className="font-mono text-indigo-700">text-embedding-004</strong>
-            </span>
           </div>
 
           <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
@@ -129,7 +142,7 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
         </div>
 
         {/* Content Body */}
-        <div className="p-5 flex-1 overflow-y-auto space-y-4">
+        <div className="p-5 flex-1 overflow-y-auto space-y-4 min-h-0">
           {activeView === 'chunks' ? (
             <>
               {/* Search filter */}
@@ -154,6 +167,19 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
                       ? 'جاري جلب المقاطع والمتجهات الدلالية من Qdrant...'
                       : 'Retrieving vector points and payloads from Qdrant...'}
                   </p>
+                </div>
+              ) : error ? (
+                <div role="alert" className="py-12 text-center space-y-3">
+                  <AlertTriangle className="w-8 h-8 text-rose-500 mx-auto" />
+                  <p className="text-xs font-bold text-rose-700">
+                    {isRtl ? 'فشل جلب المقاطع من الخادم.' : 'Failed to load chunks from the server.'}
+                  </p>
+                  <button
+                    onClick={refetch}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    {isRtl ? 'إعادة المحاولة' : 'Retry'}
+                  </button>
                 </div>
               ) : filteredChunks.length === 0 ? (
                 <div className="py-16 text-center text-slate-400 text-xs space-y-2">
@@ -247,8 +273,9 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-150 bg-slate-50/70 flex items-center justify-between text-xs text-slate-500">
-          <span className="font-mono text-[11px]">
+        <div className="p-4 border-t border-slate-150 bg-slate-50/70 flex items-center justify-between text-xs text-slate-500 shrink-0">
+          <span className="font-mono text-[11px] flex items-center gap-2">
+            <Database className="w-3 h-3" />
             Tenant: <strong className="text-slate-800">{tenantId}</strong>
           </span>
           <button
@@ -259,6 +286,6 @@ export function DocumentChunkInspectorModal({ document, tenantId, lang, onClose 
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

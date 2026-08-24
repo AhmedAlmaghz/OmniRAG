@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { SourceConnector, Collection } from '@/lib/types/omnirag';
-import { X, Save, Clock, ShieldCheck, Database, Sliders, Folder, Search, Check, Info } from 'lucide-react';
+import { Save, Clock, ShieldCheck, Database, Sliders, Folder, Search, Check, Info } from 'lucide-react';
+import { Modal, ModalCloseButton } from '@/components/ui/Modal';
 
 interface EditSourceModalProps {
   source: SourceConnector;
@@ -23,14 +24,13 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
   const [jsonError, setJsonError] = useState('');
 
   const toggleCollection = (id: string) => {
-    setSelectedCollectionIds((prev) =>
-      prev.includes(id) ? prev.filter((cid) => cid !== id) : [...prev, id]
-    );
+    setSelectedCollectionIds((prev) => (prev.includes(id) ? prev.filter((cid) => cid !== id) : [...prev, id]));
   };
 
-  const filteredCols = availableCollections.filter((col) =>
-    col.name.toLowerCase().includes(collectionQuery.toLowerCase()) ||
-    (col.description && col.description.toLowerCase().includes(collectionQuery.toLowerCase()))
+  const filteredCols = availableCollections.filter(
+    (col) =>
+      col.name.toLowerCase().includes(collectionQuery.toLowerCase()) ||
+      (col.description && col.description.toLowerCase().includes(collectionQuery.toLowerCase())),
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -65,9 +65,8 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
   const isRtl = lang === 'ar';
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-3xl p-6 max-w-2xl w-full border border-slate-200 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
-        
+    <Modal open onClose={onClose} maxWidthClass="max-w-2xl" ariaLabelledBy="edit-source-title">
+      <div className="p-6 space-y-5 overflow-y-auto max-h-[85vh]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
@@ -75,23 +74,18 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
               <Sliders className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900">
+              <h3 id="edit-source-title" className="text-base font-bold text-slate-900">
                 {isRtl ? `تعديل إعدادات المصدر: ${source.name}` : `Edit Source: ${source.name}`}
               </h3>
-              <p className="text-xs text-slate-500 font-mono">ID: {source.id} | Type: {source.type}</p>
+              <p className="text-xs text-slate-500 font-mono">
+                ID: {source.id} | Type: {source.type}
+              </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <ModalCloseButton onClose={onClose} label={isRtl ? 'إغلاق' : 'Close'} />
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          
           {/* Grid Layout for General Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -144,13 +138,13 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
                 <option value="degraded">{isRtl ? 'متأثر بأخطاء (Degraded)' : 'Degraded'}</option>
               </select>
             </div>
-            
+
             <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-3 flex gap-2.5 items-start">
               <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
               <div className="space-y-0.5">
                 <p className="text-[10px] font-bold text-blue-900">{isRtl ? 'تلميح ذكي للمزامنة' : 'Smart Sync Tip'}</p>
                 <p className="text-[9px] text-blue-700 leading-normal">
-                  {isRtl 
+                  {isRtl
                     ? 'عند تعديل مجموعات المصدر، سيتم تلقائياً تحديث وتوزيع كافة المستندات والملفات المدرجة مسبقاً لتنضم للمجموعات الجديدة فوراً.'
                     : 'Updating source collections will automatically cascade and associate all previously indexed documents to the new collections instantly.'}
                 </p>
@@ -165,7 +159,7 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
                 <Folder className="w-4 h-4 text-indigo-500" />
                 <span>{isRtl ? 'تخصيص المجموعات المعرفية المرتبطة:' : 'Assigned Knowledge Collections:'}</span>
               </label>
-              
+
               {/* Filter search bar inside modal */}
               <div className="relative max-w-xs w-full sm:w-64">
                 <Search className={`absolute ${isRtl ? 'right-2.5' : 'left-2.5'} top-2.5 w-3.5 h-3.5 text-slate-400`} />
@@ -182,11 +176,17 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
             {/* Collections toggle list */}
             {availableCollections.length === 0 ? (
               <div className="text-center py-6 border border-dashed border-slate-200 rounded-xl bg-white">
-                <p className="text-xs text-slate-500">{isRtl ? 'لا توجد مجموعات معرفية معرفة حالياً في هذا الحساب.' : 'No collections configured in this tenant yet.'}</p>
+                <p className="text-xs text-slate-500">
+                  {isRtl
+                    ? 'لا توجد مجموعات معرفية معرفة حالياً في هذا الحساب.'
+                    : 'No collections configured in this tenant yet.'}
+                </p>
               </div>
             ) : filteredCols.length === 0 ? (
               <div className="text-center py-6 bg-white rounded-xl">
-                <p className="text-xs text-slate-500">{isRtl ? 'لا توجد نتائج مطابقة لبحثك' : 'No collections match your search'}</p>
+                <p className="text-xs text-slate-500">
+                  {isRtl ? 'لا توجد نتائج مطابقة لبحثك' : 'No collections match your search'}
+                </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-44 overflow-y-auto pr-1">
@@ -198,23 +198,29 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
                       type="button"
                       onClick={() => toggleCollection(col.id)}
                       className={`flex items-center justify-between p-2.5 rounded-xl border transition text-left cursor-pointer ${
-                        isChecked 
-                          ? 'border-indigo-600 bg-indigo-50/40 text-indigo-900 shadow-xs' 
+                        isChecked
+                          ? 'border-indigo-600 bg-indigo-50/40 text-indigo-900 shadow-xs'
                           : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className={`w-4 h-4 rounded flex items-center justify-center border transition ${
-                          isChecked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
-                        }`}>
+                        <div
+                          className={`w-4 h-4 rounded flex items-center justify-center border transition ${
+                            isChecked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
+                          }`}
+                        >
                           {isChecked && <Check className="w-3 h-3" />}
                         </div>
                         <div className="min-w-0">
                           <p className="text-xs font-semibold truncate leading-tight">{col.name}</p>
-                          <p className="text-[10px] text-slate-400 truncate leading-none mt-0.5">{col.description || (isRtl ? 'لا يوجد وصف' : 'No description')}</p>
+                          <p className="text-[10px] text-slate-400 truncate leading-none mt-0.5">
+                            {col.description || (isRtl ? 'لا يوجد وصف' : 'No description')}
+                          </p>
                         </div>
                       </div>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ml-2 shrink-0 ${isChecked ? 'bg-indigo-200/50 text-indigo-800' : 'bg-slate-100 text-slate-500'}`}>
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ml-2 shrink-0 ${isChecked ? 'bg-indigo-200/50 text-indigo-800' : 'bg-slate-100 text-slate-500'}`}
+                      >
                         {col.documentCount || 0} {isRtl ? 'مستند' : 'docs'}
                       </span>
                     </button>
@@ -222,7 +228,7 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
                 })}
               </div>
             )}
-            
+
             <div className="flex items-center justify-between text-[11px] text-slate-500 bg-slate-50 p-2 rounded-xl">
               <span>{isRtl ? 'إجمالي المجموعات المحددة للربط:' : 'Total collections selected:'}</span>
               <span className="font-bold text-indigo-600 font-mono text-xs">{selectedCollectionIds.length}</span>
@@ -233,7 +239,9 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
           <div>
             <label className="text-xs font-bold text-slate-700 block mb-1 flex items-center gap-1">
               <Database className="w-3.5 h-3.5 text-amber-500" />
-              <span>{isRtl ? 'معلومات وإعدادات الربط التفصيلية (JSON Config):' : 'Connection Parameters (JSON Config):'}</span>
+              <span>
+                {isRtl ? 'معلومات وإعدادات الربط التفصيلية (JSON Config):' : 'Connection Parameters (JSON Config):'}
+              </span>
             </label>
             <textarea
               rows={4}
@@ -252,7 +260,9 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
               className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>{isSaving ? (isRtl ? 'جاري الحفظ...' : 'Saving...') : (isRtl ? 'حفظ التغييرات' : 'Save Changes')}</span>
+              <span>
+                {isSaving ? (isRtl ? 'جاري الحفظ...' : 'Saving...') : isRtl ? 'حفظ التغييرات' : 'Save Changes'}
+              </span>
             </button>
             <button
               type="button"
@@ -264,6 +274,6 @@ export function EditSourceModal({ source, lang, onClose, onSave, availableCollec
           </div>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 }

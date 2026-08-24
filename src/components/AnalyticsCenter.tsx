@@ -377,11 +377,11 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                 <span className="text-[11px] text-slate-400">
                   {conversationsCount != null
                     ? lang === 'ar'
-                      ? `و${conversationsCount} محادثة — مفهرسة مع RLS`
-                      : `+${conversationsCount} conversations — indexed with RLS`
+                      ? `و${conversationsCount} محادثة — مفهرسة ومعزولة لكل مستأجر`
+                      : `+${conversationsCount} conversations — indexed and tenant-isolated`
                     : lang === 'ar'
-                      ? 'مفهرسة مع حماية RLS'
-                      : 'Indexed with RLS protection'}
+                      ? 'مفهرسة مع عزل المستأجرين'
+                      : 'Indexed with tenant isolation'}
                 </span>
               </div>
             </div>

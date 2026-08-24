@@ -332,12 +332,37 @@ export function DocumentIngestionStudio({
   const [isUploading, setIsUploading] = useState(false);
   const [isParsingFile, setIsParsingFile] = useState(false);
   const [steps, setSteps] = useState<IngestionProgressStep[]>([]);
-  const [estimatedSecondsLeft, setEstimatedSecondsLeft] = useState<number>(8);
   const [overallProgress, setOverallProgress] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Wall-clock start of the current ingestion request (for honest elapsed time). */
+  const uploadStartedAtRef = useRef<number>(0);
+
+  // Progress-animation intervals started by ingestion handlers. They are
+  // cleared when each request settles, but a mid-upload UNMOUNT previously
+  // left them running forever, firing setState on a dead component. Every
+  // interval registers here and unmount cleanup sweeps the rest.
+  const activeIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+
+  const registerInterval = (id: ReturnType<typeof setInterval>) => {
+    activeIntervalsRef.current.add(id);
+    return id;
+  };
+
+  const unregisterInterval = (id: ReturnType<typeof setInterval>) => {
+    clearInterval(id);
+    activeIntervalsRef.current.delete(id);
+  };
+
+  useEffect(() => {
+    const intervals = activeIntervalsRef.current;
+    return () => {
+      intervals.forEach((id) => clearInterval(id));
+      intervals.clear();
+    };
+  }, []);
 
   // Load sample document
   const handleSelectSample = (sample: (typeof SAMPLE_DOCS)[0]) => {
@@ -416,18 +441,20 @@ export function DocumentIngestionStudio({
         return;
       }
 
-      const progressInterval = setInterval(() => {
-        setParseElapsedMs((prev) => prev + 200);
-        setParseProgress((prev) => {
-          if (prev < 90) {
-            // Deterministic constant increment (was random 1-4). UI animation
-            // only — this is not security- or correctness-relevant, but a fixed
-            // step keeps the bar moving uniformly without CSPRNG intake.
-            return prev + 2;
-          }
-          return prev;
-        });
-      }, 200);
+      const progressInterval = registerInterval(
+        setInterval(() => {
+          setParseElapsedMs((prev) => prev + 200);
+          setParseProgress((prev) => {
+            if (prev < 90) {
+              // Deterministic constant increment (was random 1-4). UI animation
+              // only — this is not security- or correctness-relevant, but a fixed
+              // step keeps the bar moving uniformly without CSPRNG intake.
+              return prev + 2;
+            }
+            return prev;
+          });
+        }, 200),
+      );
 
       (async () => {
         try {
@@ -435,7 +462,7 @@ export function DocumentIngestionStudio({
           const { entry: cachedEntry, cacheKey: fileHash } = await getCache(file, file.name, file.size);
 
           if (cachedEntry && cachedEntry.extractedText && cachedEntry.extractedText.trim().length > 0) {
-            clearInterval(progressInterval);
+            unregisterInterval(progressInterval);
             setParseProgress(100);
             setParseStage('complete');
             setParseStageText(
@@ -794,7 +821,7 @@ export function DocumentIngestionStudio({
             }
           }
 
-          clearInterval(progressInterval);
+          unregisterInterval(progressInterval);
 
           if (res.ok) {
             const data = await res.json();
@@ -865,14 +892,14 @@ export function DocumentIngestionStudio({
             });
           }
         } catch (error: any) {
-          clearInterval(progressInterval);
+          unregisterInterval(progressInterval);
           console.error('Error parsing file:', error);
           setStatusMessage({
             type: 'error',
             text: lang === 'ar' ? `فشل استخراج النص: ${error.message}` : `Extraction failed: ${error.message}`,
           });
         } finally {
-          clearInterval(progressInterval);
+          unregisterInterval(progressInterval);
           setIsParsingFile(false);
         }
       })();
@@ -987,63 +1014,59 @@ export function DocumentIngestionStudio({
     }));
     setSteps(activeSteps);
     setOverallProgress(0);
-    setEstimatedSecondsLeft(8);
-
-    const totalDurationMs = INITIAL_STEPS.reduce((sum, s) => sum + s.durationMs, 0);
     const startTime = Date.now();
+    uploadStartedAtRef.current = startTime;
 
-    const intervalId = setInterval(() => {
-      const elapsedMs = Date.now() - startTime;
+    const intervalId = registerInterval(
+      setInterval(() => {
+        const elapsedMs = Date.now() - startTime;
 
-      setSteps((prevSteps) => {
-        if (prevSteps.length === 0) return prevSteps;
+        setSteps((prevSteps) => {
+          if (prevSteps.length === 0) return prevSteps;
 
-        // Find current step that is processing or first pending
-        const currentIdx = prevSteps.findIndex((s) => s.status === 'processing' || s.status === 'pending');
-        if (currentIdx === -1) return prevSteps;
+          // Find current step that is processing or first pending
+          const currentIdx = prevSteps.findIndex((s) => s.status === 'processing' || s.status === 'pending');
+          if (currentIdx === -1) return prevSteps;
 
-        const updated = [...prevSteps];
-        const step = { ...updated[currentIdx] };
+          const updated = [...prevSteps];
+          const step = { ...updated[currentIdx] };
 
-        if (step.status === 'pending') {
-          step.status = 'processing';
-        }
-
-        // Increment progress: deterministic per-tick step (no random jitter).
-        // Was `0.8 + Math.random() * 0.4`; a constant 1.0 keeps the stepper
-        // linear and removes the Math.random call. UI animation only.
-        const tickProgress = 100 / (step.durationMs / 100);
-        step.progress = Math.min(100, step.progress + tickProgress);
-
-        // If step is done, move to next
-        if (step.progress >= 100) {
-          if (currentIdx < prevSteps.length - 1) {
-            step.status = 'completed';
-            step.progress = 100;
-            // set next step to processing
-            const nextStep = { ...updated[currentIdx + 1] };
-            nextStep.status = 'processing';
-            nextStep.progress = 0;
-            updated[currentIdx + 1] = nextStep;
-          } else {
-            // Cap last step at 95% until real API responds
-            step.progress = 95;
+          if (step.status === 'pending') {
+            step.status = 'processing';
           }
-        }
 
-        updated[currentIdx] = step;
+          // Increment progress: deterministic per-tick step (no random jitter).
+          // Was `0.8 + Math.random() * 0.4`; a constant 1.0 keeps the stepper
+          // linear and removes the Math.random call. UI animation only.
+          const tickProgress = 100 / (step.durationMs / 100);
+          step.progress = Math.min(100, step.progress + tickProgress);
 
-        // Calculate overall progress
-        const totalP = updated.reduce((sum, s) => sum + s.progress, 0) / updated.length;
-        setOverallProgress(Math.round(totalP));
+          // If step is done, move to next
+          if (step.progress >= 100) {
+            if (currentIdx < prevSteps.length - 1) {
+              step.status = 'completed';
+              step.progress = 100;
+              // set next step to processing
+              const nextStep = { ...updated[currentIdx + 1] };
+              nextStep.status = 'processing';
+              nextStep.progress = 0;
+              updated[currentIdx + 1] = nextStep;
+            } else {
+              // Cap last step at 95% until real API responds
+              step.progress = 95;
+            }
+          }
 
-        // Calculate remaining seconds
-        const remSecs = Math.max(1, Math.round((totalDurationMs - elapsedMs) / 1000));
-        setEstimatedSecondsLeft(remSecs);
+          updated[currentIdx] = step;
 
-        return updated;
-      });
-    }, 100);
+          // Calculate overall progress
+          const totalP = updated.reduce((sum, s) => sum + s.progress, 0) / updated.length;
+          setOverallProgress(Math.round(totalP));
+
+          return updated;
+        });
+      }, 100),
+    );
 
     try {
       let determinedSourceType: string = 'file';
@@ -1088,7 +1111,7 @@ export function DocumentIngestionStudio({
         }),
       });
 
-      clearInterval(intervalId);
+      unregisterInterval(intervalId);
 
       if (res.ok) {
         const data = await res.json();
@@ -1108,7 +1131,6 @@ export function DocumentIngestionStudio({
           })),
         );
         setOverallProgress(100);
-        setEstimatedSecondsLeft(0);
 
         const createdSourceId =
           data.source?.id ||
@@ -1158,7 +1180,7 @@ export function DocumentIngestionStudio({
         setStatusMessage({ type: 'error', text: err.error || 'Failed to ingest document' });
       }
     } catch (err: any) {
-      clearInterval(intervalId);
+      unregisterInterval(intervalId);
       setSteps((prev) =>
         prev.map((s) => {
           if (s.status === 'processing') {
@@ -1885,8 +1907,8 @@ export function DocumentIngestionStudio({
                 </h4>
                 <p className="text-[10px] text-slate-400 mt-0.5">
                   {lang === 'ar'
-                    ? `الوقت المتبقي المتوقع: ~${estimatedSecondsLeft} ثوانٍ`
-                    : `Estimated time remaining: ~${estimatedSecondsLeft} seconds`}
+                    ? `الزمن المنقضي: ${Math.round((Date.now() - uploadStartedAtRef.current) / 1000)} ثانية`
+                    : `Elapsed: ${Math.round((Date.now() - uploadStartedAtRef.current) / 1000)}s`}
                 </p>
               </div>
               <span className="text-sm font-black text-indigo-400 font-mono">{overallProgress}%</span>

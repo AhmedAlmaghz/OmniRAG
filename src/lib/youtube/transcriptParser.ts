@@ -2,9 +2,7 @@ import { YoutubeTranscript } from 'youtube-transcript';
 // @ts-expect-error — youtube-captions-scraper ships no bundled types
 import { getSubtitles } from 'youtube-captions-scraper';
 import ytdl from '@distube/ytdl-core';
-import { generateContentWithResilience } from '../gemini/resilientGemini';
 import { transcribeWithGroqWhisper } from '../services/unstructuredService';
-import { getAiModel, getFallbackModels } from '../config/aiModels';
 
 /**
  * Extracts standard 11-character YouTube video ID from various URL formats.
@@ -255,92 +253,17 @@ async function fetchWithCaptionsScraper(
 }
 
 /**
- * AI Speech Transcriber & Content Analyzer Fallback
- * Used when a video does not have native YouTube subtitles/captions enabled.
+ * Typed extraction failure. Carries a machine-readable `code` so API routes
+ * can map it to the right HTTP status WITHOUT substring-matching Arabic
+ * message text (the old `'صحيح'.includes()` heuristic).
  */
-async function generateAiTranscriptFallback(
-  videoId: string,
-  title: string,
-  channel: string,
-  targetUrl: string,
-  description: string,
-  lang: string,
-): Promise<string> {
-  const prompt = `You are an expert audio/video speech transcriber and content analyzer.
-Please generate a full, comprehensive, timestamped transcript in ${lang === 'ar' ? 'Arabic' : 'English'} for the following YouTube video.
-
-Video Details:
-- Title: "${title}"
-- Channel: "${channel}"
-- URL: "${targetUrl}"
-- Description & Context: "${description.slice(0, 2000)}"
-
-Requirements:
-1. Provide a realistic line-by-line or section-by-section timestamped transcript using formats like [00:00], [01:15], [02:30], etc.
-2. Structure the spoken dialogue, explanations, technical points, and key takeaways presented in this video thoroughly.
-3. Make sure it is detailed, accurate to the subject matter, and formatted cleanly for RAG database indexing.
-4. Output ONLY the timestamped transcript text.`;
-
-  try {
-    const response = await generateContentWithResilience({
-      model: getAiModel('documentParseModel'),
-      fallbackModels: getFallbackModels(),
-      contents: prompt,
-      maxRetriesPerModel: 2,
-      initialDelayMs: 400,
-    });
-
-    if (response?.text && response.text.trim().length > 50) {
-      return response.text.trim();
-    }
-  } catch {
-    // Gracefully fall back to structured heuristics without logging unhandled exceptions
+export class TranscriptExtractionError extends Error {
+  code: string;
+  constructor(message: string, code: string = 'TRANSCRIPT_UNAVAILABLE') {
+    super(message);
+    this.name = 'TranscriptExtractionError';
+    this.code = code;
   }
-
-  // Resilient heuristic segmentation from description & chapters if Gemini is experiencing demand spikes
-  const lines = description
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith('http'));
-
-  const timestampedLines: string[] = [];
-  const timeLabels = ['[00:00]', '[01:15]', '[02:45]', '[04:20]', '[06:00]', '[08:15]', '[10:30]', '[12:45]'];
-
-  timestampedLines.push(
-    `${timeLabels[0]} ${lang === 'ar' ? 'بداية ومقدمة الفيديو' : 'Video Introduction'}: ${title} - (${channel})`,
-  );
-
-  let labelIdx = 1;
-  for (const line of lines) {
-    if (labelIdx < timeLabels.length && line.length > 10) {
-      // Check if line already has a timestamp like 01:23 or [01:23]
-      const existingTime = line.match(/^(\[?\d{1,2}:\d{2}\]?)/);
-      if (existingTime) {
-        timestampedLines.push(
-          line.startsWith('[') ? line : `[${existingTime[1]}] ${line.slice(existingTime[1].length).trim()}`,
-        );
-      } else {
-        timestampedLines.push(`${timeLabels[labelIdx]} ${line}`);
-        labelIdx++;
-      }
-    }
-  }
-
-  if (timestampedLines.length <= 2) {
-    const descText =
-      description.trim() ||
-      (lang === 'ar'
-        ? `تفريغ نصي وتحليل شامل لمحتوى فيديو "${title}" المقدم عبر قناة "${channel}".`
-        : `Transcript and content summary for "${title}" by channel "${channel}".`);
-    timestampedLines.push(
-      `${timeLabels[1]} ${lang === 'ar' ? 'العرض والمحتوى الرئيسي' : 'Core Overview'}:\n${descText}`,
-    );
-    timestampedLines.push(
-      `${timeLabels[2]} ${lang === 'ar' ? 'الخلاصة والنقاط الختامية للفيديو.' : 'Summary and key takeaways.'}`,
-    );
-  }
-
-  return timestampedLines.join('\n');
 }
 
 /**
@@ -388,17 +311,29 @@ async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; 
 
 /**
  * Main YouTube Transcript extraction processor.
- * 1. Tries primary native caption extraction packages (`youtube-transcript`, `youtube-captions-scraper`, XML tracks).
- * 2. If no native captions exist on YouTube, seamlessly falls back to AI Audio/Video Transcription Engine.
+ *
+ * Extraction ladder (real sources only, in order of reliability):
+ *   1. `youtube-transcript` package captions
+ *   2. `youtube-captions-scraper` captions
+ *   3. YouTube Player-Response XML caption track
+ *   4. Groq Whisper transcription of the downloaded audio (needs GROQ_API_KEY)
+ *
+ * When NONE of them yields text the function THROWS a
+ * {@link TranscriptExtractionError} — it never generates an AI-invented
+ * "transcript" from the video title/description, because fabricated text
+ * indexed as ground truth poisons retrieval and misleads users.
  */
 export async function processYoutubeTranscript(url: string, lang: string = 'ar') {
   if (!url) {
-    throw new Error('يرجى تقديم رابط فيديو يوتيوب صحيح (YouTube Video URL)');
+    throw new TranscriptExtractionError('يرجى تقديم رابط فيديو يوتيوب صحيح (YouTube Video URL)', 'INVALID_URL');
   }
 
   const videoId = extractVideoId(url);
   if (!videoId) {
-    throw new Error('رابط فيديو يوتيوب غير صالح. يُرجى استخدام تنسيق مثل: https://www.youtube.com/watch?v=VIDEO_ID');
+    throw new TranscriptExtractionError(
+      'رابط فيديو يوتيوب غير صالح. يُرجى استخدام تنسيق مثل: https://www.youtube.com/watch?v=VIDEO_ID',
+      'INVALID_URL',
+    );
   }
 
   const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -518,17 +453,15 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
     }
   }
 
-  // 6. Strategy 5: If video has NO native subtitles and audio download was restricted, use AI Multimodal Transcription Engine
+  // 5. Honest failure: no captions and no transcribable audio available.
+  // The previous fallback "generated a realistic timestamped transcript" with
+  // Gemini and fabricated [mm:ss] stamps over the video description — that
+  // invented text was then indexed as ground truth. We refuse instead.
   if (!transcriptText || transcriptText.trim().length === 0) {
-    transcriptText = await generateAiTranscriptFallback(
-      videoId,
-      videoTitle,
-      channelName,
-      targetUrl,
-      videoDescription,
-      lang,
+    throw new TranscriptExtractionError(
+      'لا يحتوي هذا الفيديو على ترجمات متاحة، وتعذر تنزيل الصوت للتفريغ الآلي. تأكد من أن الفيديو يدعم الترجمة (CC) أو فعّل مفتاح GROQ_API_KEY للتفريغ الصوتي.',
+      'TRANSCRIPT_UNAVAILABLE',
     );
-    extractionMethod = 'AI Video Speech & Semantic Transcriber (Gemini)';
   }
 
   const words = transcriptText.trim().split(/\s+/).length;

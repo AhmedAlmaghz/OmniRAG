@@ -165,8 +165,8 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
           </h1>
           <p className="text-slate-400 text-sm leading-relaxed mb-6">
             {lang === 'ar'
-              ? 'تلتزم OmniRAG بأقصى درجات أمان البيانات. بمجرد تسجيل حسابك، يُنشأ لك مستأجر (Tenant) معزول بالكامل برقم تعريفي مشفر، مع تفعيل سياسات Neon RLS وجدران الحماية للخطافات الحتمية (HookHarness).'
-              : 'OmniRAG is built with strict Zero-Trust security. Every user registered receives a unique isolated tenant workspace with full Row-Level Security (RLS) policies on Postgres, vector-isolated Qdrant segments, and deterministic hook checks.'}
+              ? 'تلتزم OmniRAG بأقصى درجات أمان البيانات. بمجرد تسجيل حسابك، يُنشأ لك مستأجر (Tenant) معزول بعزل مفروض على مستوى التطبيق عبر فلاتر tenant_id إلزامية في كل استعلام، مع فحوص الخطافات الحتمية (HookHarness).'
+              : 'OmniRAG is built with strict security. Every registered user gets an isolated tenant workspace enforced at the APPLICATION layer via mandatory tenant_id predicates on every query, plus deterministic hook checks.'}
           </p>
 
           {/* Key Compliance List */}

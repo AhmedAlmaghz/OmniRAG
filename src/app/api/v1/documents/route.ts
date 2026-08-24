@@ -1,11 +1,12 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
-import { Document, DocumentChunk, SourceConnector, SourceType } from '@/lib/types/omnirag';
+import { Document, DocumentChunk, SourceConnector, SOURCE_TYPE_VALUES, SourceType } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
-import { chunkDocument, resolveChunkGeometry, estimateTokenCount } from '@/lib/rag/chunker';
+import { chunkDocumentWithPages, resolveChunkGeometry, estimateTokenCount } from '@/lib/rag/chunker';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,20 +39,7 @@ const createDocumentSchema = z.object({
   sourceConfig: z.record(z.string(), z.any()).default({}),
 });
 
-const VALID_SOURCE_TYPES: SourceType[] = [
-  'file',
-  'url',
-  'rss',
-  'youtube',
-  'github',
-  'notion',
-  'gdrive',
-  'confluence',
-  'slack',
-  'email',
-  'database',
-  'api',
-];
+const VALID_SOURCE_TYPES = SOURCE_TYPE_VALUES;
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   // Load client-supplied dynamic environment keys from headers into process.env / global store
@@ -170,7 +158,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         ? (sourceType as SourceType)
         : 'file';
 
-      sourceId = `src-${validSourceType}-${Date.now().toString().slice(-6)}`;
+      sourceId = `src-${validSourceType}-${randomUUID().slice(0, 8)}`;
       sourceObj = {
         id: sourceId,
         tenantId,
@@ -187,7 +175,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       await db.addSource(sourceObj);
     }
 
-    const docId = `doc-${Date.now()}`;
+    const docId = `doc-${randomUUID()}`;
     const nowIso = new Date().toISOString();
     const newDoc: Document = {
       id: docId,
@@ -228,7 +216,11 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // Unified chunking — all ingestion paths go through chunkDocument so the
     // same document always produces the same chunk grid regardless of route.
     // Geometry (size/overlap/strategy) is validated and clamped inside.
-    const chunkTextList = chunkDocument(content, chunkingConfig);
+    // The page-aware variant additionally extracts real page numbers from the
+    // `[صفحة N]` markers embedded by the PDF/OCR pipelines, so citations cite
+    // actual pages instead of a hardcoded "صفحة 1".
+    const pageChunks = chunkDocumentWithPages(content, chunkingConfig);
+    const chunkTextList = pageChunks.map((c) => c.text);
     const geometry = resolveChunkGeometry(chunkingConfig);
     const strategy = geometry.strategy;
 
@@ -239,20 +231,23 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // as the app's default content language.
     const chunkLanguage: DocumentChunk['language'] = language === 'en' ? 'en' : 'ar';
 
-    const chunks: DocumentChunk[] = chunkTextList.map((text, index) => ({
+    const chunks: DocumentChunk[] = pageChunks.map((pageChunk, index) => ({
       id: `chunk-${docId}-${index + 1}`,
       tenantId,
       documentId: docId,
       documentTitle: title,
-      content: text,
+      content: pageChunk.text,
       chunkIndex: index,
-      pageNumber: 1,
+      // Real page from extraction markers when available; 1 only as the
+      // neutral default for marker-less sources (plain text, paste, web).
+      pageNumber: pageChunk.pageNumber ?? 1,
       language: chunkLanguage,
       metadata: {
         sourceId: sourceObj.id,
         position: index,
         strategy,
-        tokenCount: estimateTokenCount(text),
+        tokenCount: estimateTokenCount(pageChunk.text),
+        ...(pageChunk.pageNumber != null ? { extractedPage: true } : {}),
       },
     }));
     const indexResult = await db.addChunks(chunks);
@@ -271,7 +266,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     // Register sync log with the MEASURED duration for honest feedback.
     const durationMs = Date.now() - ingestionStartedAt;
     await db.addSyncLog({
-      id: `log-${Date.now()}`,
+      id: `log-${randomUUID()}`,
       tenantId,
       sourceId: sourceObj.id,
       sourceName: sourceObj.name,

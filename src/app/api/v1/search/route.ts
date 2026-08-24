@@ -24,7 +24,6 @@ const searchQuerySchema = z.object({
   semanticWeight: z.number().min(0).max(1).optional(),
   lexicalWeight: z.number().min(0).max(1).optional(),
   rerank: z.boolean().optional(),
-  mmrDiversity: z.number().min(0).max(1).optional(),
   useHyde: z.boolean().optional(),
 });
 

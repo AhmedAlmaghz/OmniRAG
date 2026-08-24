@@ -22,8 +22,9 @@
 //   • Configurable but bounded: callers may tune size/overlap/strategy, but all
 //     values are clamped to sane ranges so a bad client config can't produce
 //     degenerate (0-char or unbounded) chunks.
-
-import { SYSTEM_CONFIG } from '../config/systemConfig';
+//   • Page-aware: extraction pipelines embed `[صفحة N]` markers in the text;
+//     `chunkDocumentWithPages` turns those markers into structured per-chunk
+//     page metadata so citations show REAL pages instead of a hardcoded 1.
 
 export type ChunkingStrategy = 'semantic' | 'markdown' | 'recursive';
 
@@ -299,47 +300,62 @@ export function chunkDocument(text: string, config?: ChunkingConfig): string[] {
  */
 export function estimateTokenCount(text: string): number {
   if (!text) return 0;
-  return Math.max(1, Math.round(text.length / (CHARS_PER_TOKEN + 0.3)));
+  return Math.max(1, Math.round(text.length / CHARS_PER_TOKEN));
 }
 
 // ---------------------------------------------------------------------------
-// Backward compatibility
+// Page-aware chunking
 // ---------------------------------------------------------------------------
-// The legacy memory-backed paths imported `chunkTextIntoList` from
-// `textChunker.ts`. We re-export a compatible shim here AND keep textChunker.ts
-// delegating to this module, so there is exactly one implementation. New code
-// should import `chunkDocument` directly.
 
-export interface ChunkGeometry {
-  size: number;
-  step: number;
+export interface ChunkWithPage {
+  text: string;
+  /**
+   * 1-based page number inferred from extraction-pipeline markers
+   * (`### [صفحة N]` from OCR engines, `--- [قسم الصفحات X إلى Y] ---` from the
+   * PDF batching pipeline). `null` when the source text carries no markers —
+   * callers then fall back to 1 instead of inventing a page.
+   */
+  pageNumber: number | null;
 }
-
-export const DEFAULT_CHUNK_GEOMETRY: ChunkGeometry = {
-  size: 1000,
-  step: 800,
-};
 
 /**
- * Legacy shim preserved for the existing `textChunker.ts` contract and its
- * regression tests. Splits with a fixed-size sliding window + overlap. New code
- * should prefer `chunkDocument`.
+ * Matches Arabic page/section markers embedded by the extraction pipelines,
+ * with ASCII or Arabic-Indic (٠-٩) digits. The "قسم الصفحات X إلى Y" range
+ * form is emitted by processPdfWithBatchedPipeline around multi-page batches.
  */
-export function chunkTextIntoList(text: string, geometry: ChunkGeometry = DEFAULT_CHUNK_GEOMETRY): string[] {
-  const list: string[] = [];
-  if (!text || !text.trim()) return list;
-  const stride = geometry.step > 0 ? geometry.step : geometry.size;
-  for (let i = 0; i < text.length; i += stride) {
-    const snippet = text.substring(i, i + geometry.size).trim();
-    if (snippet) list.push(snippet);
-    if (i + geometry.size >= text.length) break;
-  }
-  if (list.length === 0 && text.trim()) list.push(text.trim());
-  return list;
+const PAGE_MARKER_RE =
+  /\[\s*(?:قسم\s*الصفحات|صفحة|صفحه)\s*([\d\u0660-\u0669]+)(?:\s*إلى\s*([\d\u0660-\u0669]+))?\s*\]/g;
+
+function toWesternDigits(input: string): string {
+  return input.replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660));
 }
 
-// Re-export the ingestion default so callers can reference a single constant.
-export const INGESTION_DEFAULTS = {
-  chunkSize: SYSTEM_CONFIG.INGESTION.DEFAULT_CHUNK_SIZE,
-  chunkOverlap: SYSTEM_CONFIG.INGESTION.DEFAULT_CHUNK_OVERLAP,
-};
+/**
+ * Chunk a document while preserving REAL page numbers. Each chunk's page is
+ * the highest page marker it contains; chunks without any marker inherit the
+ * previous chunk's page, so a paragraph split across a window boundary still
+ cites correctly. This replaces the old behavior where every ingestion path
+ * stamped `pageNumber: 1` unconditionally and every citation read "صفحة 1".
+ */
+export function chunkDocumentWithPages(text: string, config?: ChunkingConfig): ChunkWithPage[] {
+  const chunks = chunkDocument(text, config);
+  const out: ChunkWithPage[] = [];
+  let inheritedPage: number | null = null;
+
+  for (const chunkText of chunks) {
+    let page: number | null = inheritedPage;
+    PAGE_MARKER_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = PAGE_MARKER_RE.exec(chunkText)) !== null) {
+      const startNum = parseInt(toWesternDigits(match[1]), 10);
+      const endNum = match[2] ? parseInt(toWesternDigits(match[2]), 10) : startNum;
+      if (Number.isFinite(endNum) && endNum > 0 && endNum > (page ?? 0)) {
+        page = endNum;
+      }
+    }
+    out.push({ text: chunkText, pageNumber: page });
+    if (page !== null) inheritedPage = page;
+  }
+
+  return out;
+}

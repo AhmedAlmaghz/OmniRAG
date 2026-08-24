@@ -2,7 +2,7 @@ import { google } from './googleProvider';
 import { generateText } from 'ai';
 import { SearchQuery, SearchResult, DocumentChunk, Citation, MCPToolCall } from '../types/omnirag';
 import { db } from '../storage/db';
-import { searchPostgresLexical } from '../storage/postgres';
+import { searchPostgresLexical, normalizeArabicForSearch } from '../storage/postgres';
 import { searchQdrantSemantic } from '../storage/qdrant';
 import { generateEmbedding } from './embedding';
 import { rerankChunks } from './reranker';
@@ -110,10 +110,19 @@ function buildCitations(contextChunks: DocumentChunk[]): Citation[] {
     documentId: chunk.documentId,
     documentTitle: chunk.documentTitle,
     pageNumber: chunk.pageNumber,
-    score: chunk.score || 0.85,
-    snippet: chunk.content.substring(0, 120) + '...',
+    // Report the ACTUAL retrieval score; fabricating 0.85 for chunks without
+    // one made citation confidence meaningless to the user.
+    score: Number((chunk.score ?? 0).toFixed(4)),
+    snippet: buildCitationSnippet(chunk.content),
     sourceUrl: getCitationSourceUrl(chunk),
   }));
+}
+
+/** Truncated snippet with an ellipsis ONLY when content was actually cut. */
+function buildCitationSnippet(content: string): string {
+  const clean = (content || '').trim();
+  if (clean.length <= 120) return clean;
+  return `${clean.substring(0, 120).trimEnd()}...`;
 }
 
 /**
@@ -276,7 +285,10 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
         }
       });
 
-      // Batch load document titles to eliminate N+1 queries
+      // Batch load document titles — only when some merged items actually
+      // lack one. The Qdrant payload carries `documentTitle`, so the previous
+      // unconditional "load every tenant document per search" round-trip was
+      // an N+1-style tax on the common path.
       const docIds = Array.from(
         new Set(
           Array.from(itemMap.values())
@@ -285,7 +297,10 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
         ),
       );
       const docMap = new Map<string, string>();
-      if (docIds.length > 0) {
+      const missingTitles = docIds.filter(
+        (id) => !Array.from(itemMap.values()).some((i) => i.documentId === id && i.documentTitle),
+      );
+      if (missingTitles.length > 0) {
         const tenantDocs = await db.getDocuments(tenantId);
         tenantDocs.forEach((d) => docMap.set(d.id, d.title));
       }
@@ -309,8 +324,16 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
           item.documentTitle = docMap.get(item.documentId) || 'مستند مسترجع';
         }
 
-        // Apply Reciprocal Rank Fusion (RRF)
-        const rrf = computeRrfScore(item.semanticRank, item.lexicalRank, semanticWeight, lexicalWeight);
+        // Apply Reciprocal Rank Fusion (RRF). k comes from the central config —
+        // previously the SYSTEM_CONFIG value was dead because this call relied
+        // on the function default, so tuning the config changed nothing.
+        const rrf = computeRrfScore(
+          item.semanticRank,
+          item.lexicalRank,
+          semanticWeight,
+          lexicalWeight,
+          SYSTEM_CONFIG.RAG.RRF_CONSTANT_K,
+        );
         item.score = Number(rrf.toFixed(4));
         item.tenantId = tenantId;
       }
@@ -354,14 +377,17 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       chunks = chunks.slice(0, FALLBACK_SCAN_CAP);
     }
 
-    const queryTerms = lexicalSearchContent
-      .toLowerCase()
+    // Arabic-normalized keyword matching: both the query terms AND the chunk
+    // text are folded through normalizeArabicForSearch so diacritic/hamza
+    // variants match instead of silently missing.
+    const norm = (s: string) => normalizeArabicForSearch(s.toLowerCase());
+    const queryTerms = norm(lexicalSearchContent)
       .split(/\s+/)
       .filter((t) => t.length > 2);
 
     const scoredChunks = chunks.map((chunk) => {
-      const textLower = chunk.content.toLowerCase();
-      const titleLower = (chunk.documentTitle || '').toLowerCase();
+      const textLower = norm(chunk.content);
+      const titleLower = norm(chunk.documentTitle || '');
 
       let lexicalScore = 0;
       queryTerms.forEach((term) => {
@@ -415,7 +441,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   // AFTER reranking, once, as the single downward bound on assembled context.
   if (searchQuery.rerank && resultChunks.length > 1) {
     const preRerankTime = Date.now();
-    resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[], overfetchHint);
+    resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[]);
     console.log(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
   }
 

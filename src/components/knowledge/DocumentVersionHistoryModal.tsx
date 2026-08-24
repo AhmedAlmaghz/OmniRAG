@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Document, DocumentVersion } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { Modal } from '@/components/ui/Modal';
 import {
   History,
   GitBranch,
@@ -317,11 +318,8 @@ export function DocumentVersionHistoryModal({
       : { diffRows: [], addedCount: 0, removedCount: 0, unchangedCount: 0 };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div
-        className="bg-white rounded-3xl border border-slate-200/80 shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden text-slate-900"
-        dir={isRtl ? 'rtl' : 'ltr'}
-      >
+    <Modal open onClose={onClose} maxWidthClass="max-w-5xl" ariaLabelledBy="version-history-title">
+      <div className="flex flex-col min-h-0 max-h-[85vh] text-slate-900" dir={isRtl ? 'rtl' : 'ltr'}>
         {/* MODAL HEADER */}
         <div className="p-5 border-b border-slate-100 flex items-center justify-between gap-4 bg-slate-50/50 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
@@ -330,7 +328,9 @@ export function DocumentVersionHistoryModal({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-extrabold text-slate-950 truncate max-w-md">{doc.title}</h3>
+                <h3 id="version-history-title" className="text-sm font-extrabold text-slate-950 truncate max-w-md">
+                  {doc.title}
+                </h3>
                 <span className="text-[10px] font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-200 font-mono">
                   {isRtl ? `الإصدار النشط v${doc.version || 1}` : `Active v${doc.version || 1}`}
                 </span>
@@ -836,6 +836,6 @@ export function DocumentVersionHistoryModal({
         onConfirm={() => pendingRevertVersion && performRevert(pendingRevertVersion)}
         onCancel={() => setPendingRevertVersion(null)}
       />
-    </div>
+    </Modal>
   );
 }

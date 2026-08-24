@@ -1,30 +1,28 @@
 import { generateObject } from 'ai';
-import { google } from '@ai-sdk/google';
 import { z } from 'zod';
 import { DocumentChunk } from '../types/omnirag';
 import { getAiModel } from '../config/aiModels';
 import { SYSTEM_CONFIG } from '../config/systemConfig';
+import { google } from './googleProvider';
 
 /**
  * Re-ranks a list of document chunks based on their semantic relevance to the query
  * using Gemini as a Cross-Encoder (Zero-shot LLM Ranker).
  *
- * `topK` here is only an over-fetch hint inherited from the caller (see engine.ts);
  * `resultChunks` already passed the similarity floor, and the engine applies the
  * defensive CONTEXT_CHUNK_CAP once after reranking. To keep this function's
- * interface honest, it returns the reranked list in thesame order it came in
+ * interface honest, it returns the reranked list in the same order it came in
  * — sorted by blended score — without a fixed-count slice. We still cap how
  * many chunks we send to the LLM at once so we don't blow the model's context
  * window on the rerank prompt itself (a rerank-time token budget, distinct
  * from the retrieval answer pool cap).
  */
-const RERANK_LLM_BUDGET = 20;
+const RERANK_LLM_BUDGET = SYSTEM_CONFIG.RAG.RERANK.LLM_BUDGET;
+/** Blend: final = normalizedLlmScore * LLM_WEIGHT + originalRrfScore * BASE_WEIGHT. */
+const RERANK_LLM_WEIGHT = SYSTEM_CONFIG.RAG.RERANK.LLM_WEIGHT;
+const RERANK_BASE_WEIGHT = 1 - RERANK_LLM_WEIGHT;
 
-export async function rerankChunks(
-  query: string,
-  chunks: DocumentChunk[],
-  topK: number = 10,
-): Promise<DocumentChunk[]> {
+export async function rerankChunks(query: string, chunks: DocumentChunk[]): Promise<DocumentChunk[]> {
   if (!chunks || chunks.length <= 1) return chunks;
 
   // Bound how many chunks are passed to the rerank LLM prompt in a single call.
@@ -84,8 +82,7 @@ Evaluate each chunk and assign it a relevance score from 0.0 to 10.0.
       const llmScore = scoresMap.get(index) ?? 0;
       // Normalize LLM score to 0-1 range and blend with original RRF score
       const normalizedLlmScore = llmScore / 10.0;
-      // Weight: 70% LLM Reranker, 30% original RRF score
-      const finalScore = normalizedLlmScore * 0.7 + (chunk.score || 0) * 0.3;
+      const finalScore = normalizedLlmScore * RERANK_LLM_WEIGHT + (chunk.score || 0) * RERANK_BASE_WEIGHT;
 
       return {
         ...chunk,

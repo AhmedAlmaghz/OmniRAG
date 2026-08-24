@@ -4,7 +4,7 @@ import { searchQdrantSemantic } from '@/lib/storage/qdrant';
 import { randomInt } from '@/lib/crypto/webRandom';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { htmlToText, safeFetchBinary, safeFetchText } from '../net';
-import { chunkDocument, estimateTokenCount } from '@/lib/rag/chunker';
+import { chunkDocumentWithPages, estimateTokenCount } from '@/lib/rag/chunker';
 import { dispatchFile, mistralOcr, normalizeMimeType } from '@/lib/services/unstructuredService';
 import { processYoutubeTranscript } from '@/lib/youtube/transcriptParser';
 
@@ -955,7 +955,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       } as any);
 
       const docId = `doc-mcp-ingest-${Date.now().toString().slice(-8)}`;
-      const chunkTextList = chunkDocument(content);
+      const pageChunks = chunkDocumentWithPages(content);
+      const chunkTextList = pageChunks.map((c) => c.text);
 
       const newDoc = {
         id: docId,
@@ -981,7 +982,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
             documentTitle: docTitle,
             content: chunkText,
             chunkIndex: index,
-            pageNumber: 1,
+            pageNumber: pageChunks[index]?.pageNumber ?? 1,
             language: 'ar',
             score: 0,
             metadata: { ingestedVia: 'mcp_tool', position: index, tokenCount: estimateTokenCount(chunkText) },

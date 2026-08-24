@@ -53,9 +53,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 
   const ai = getAiClient();
   if (!ai) {
-    const fallback = generateFallbackVector(normalizedText);
-    setCachedEmbedding(cacheKey, fallback);
-    return fallback;
+    // No API key (dev/sandbox): return the deterministic fallback WITHOUT
+    // caching it — otherwise the hash vector would be pinned until LRU
+    // eviction even after a real key becomes available.
+    return generateFallbackVector(normalizedText);
   }
 
   const candidateModels = Array.from(
@@ -81,9 +82,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     }
   }
 
-  const fallback = generateFallbackVector(normalizedText);
-  setCachedEmbedding(cacheKey, fallback);
-  return fallback;
+  // All candidate models failed (transient outage/quota): return the fallback
+  // vector but leave it UNCACHEd so the next call retries the real API instead
+  // of serving a poisoned hash vector until LRU eviction.
+  return generateFallbackVector(normalizedText);
 }
 
 /**

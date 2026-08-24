@@ -2,26 +2,12 @@
 
 import React, { useState } from 'react';
 import { Document } from '@/lib/types/omnirag';
-import {
-  X,
-  FileText,
-  Copy,
-  Check,
-  Calendar,
-  Layers,
-  Sparkles,
-  FileCheck,
-  Folder,
-  Tag,
-  Cpu,
-  Globe,
-  MonitorPlay,
-  FolderGit2,
-  Database,
-  FolderPlus,
-} from 'lucide-react';
+import { FileText, Copy, Check, Calendar, Layers, Sparkles, FileCheck, Folder } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Modal, ModalCloseButton } from '@/components/ui/Modal';
+import { copyToClipboard } from '@/lib/clipboard';
+import { getSourceTypeIcon } from '@/components/knowledge/displayHelpers';
 
 interface DocumentPreviewModalProps {
   document: Document;
@@ -41,44 +27,32 @@ export function DocumentPreviewModal({
   const isRtl = lang === 'ar';
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(document.content);
+  // Honest copy: clipboard.writeText rejects on permission denial / insecure
+  // contexts — only show "copied" when it actually worked.
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(document.content);
+    if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const getSourceIcon = () => {
+  const sourceIcon = (() => {
     const type = document.metadata?.connectorType || document.sourceType;
-    switch (type) {
-      case 'youtube':
-        return <MonitorPlay className="w-5 h-5 text-rose-600" />;
-      case 'url':
-        return <Globe className="w-5 h-5 text-blue-600" />;
-      case 'github':
-        return <FolderGit2 className="w-5 h-5 text-slate-800" />;
-      case 'database':
-        return <Database className="w-5 h-5 text-amber-600" />;
-      case 'gdrive':
-        return <FolderPlus className="w-5 h-5 text-emerald-600" />;
-      default:
-        return <FileText className="w-5 h-5 text-indigo-600" />;
-    }
-  };
+    const { Icon, className } = getSourceTypeIcon(type);
+    return <Icon className={`w-5 h-5 ${className}`} />;
+  })();
 
   const wordCount = document.content ? document.content.trim().split(/\s+/).length : 0;
   const estimatedTokens = Math.round((document.content?.length || 0) / 4);
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div
-        className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
-        dir={isRtl ? 'rtl' : 'ltr'}
-      >
+    <Modal open onClose={onClose} maxWidthClass="max-w-4xl" ariaLabelledBy="doc-preview-title">
+      <div dir={isRtl ? 'rtl' : 'ltr'} className="flex flex-col min-h-0 flex-1">
         {/* Header */}
-        <div className="p-5 border-b border-slate-150 flex items-center justify-between gap-4 bg-slate-50/70">
+        <div className="p-5 border-b border-slate-150 flex items-center justify-between gap-4 bg-slate-50/70 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center border border-indigo-100/60 shrink-0">
-              {getSourceIcon()}
+              {sourceIcon}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -95,7 +69,9 @@ export function DocumentPreviewModal({
                   {document.language || 'AR'}
                 </span>
               </div>
-              <h3 className="text-sm font-extrabold text-slate-900 truncate mt-0.5">{document.title}</h3>
+              <h3 id="doc-preview-title" className="text-sm font-extrabold text-slate-900 truncate mt-0.5">
+                {document.title}
+              </h3>
             </div>
           </div>
 
@@ -127,17 +103,12 @@ export function DocumentPreviewModal({
               )}
             </button>
 
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <ModalCloseButton onClose={onClose} label={isRtl ? 'إغلاق' : 'Close'} />
           </div>
         </div>
 
         {/* Metadata Chips Bar */}
-        <div className="px-5 py-2.5 bg-slate-100/60 border-b border-slate-200 flex items-center justify-between gap-4 flex-wrap text-xs text-slate-600">
+        <div className="px-5 py-2.5 bg-slate-100/60 border-b border-slate-200 flex items-center justify-between gap-4 flex-wrap text-xs text-slate-600 shrink-0">
           <div className="flex items-center gap-4 flex-wrap">
             <span className="flex items-center gap-1">
               <Layers className="w-3.5 h-3.5 text-indigo-600" />
@@ -169,7 +140,7 @@ export function DocumentPreviewModal({
         </div>
 
         {/* Body Rendered in Markdown */}
-        <div className="p-6 flex-1 overflow-y-auto space-y-4 font-sans bg-white">
+        <div className="p-6 flex-1 overflow-y-auto space-y-4 font-sans bg-white min-h-0">
           <div className="prose prose-slate max-w-none text-slate-800 leading-relaxed text-sm">
             <Markdown remarkPlugins={[remarkGfm]}>
               {document.content || (isRtl ? '*لا يوجد نص محفوظ.*' : '*No content available.*')}
@@ -178,7 +149,7 @@ export function DocumentPreviewModal({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-150 bg-slate-50/70 flex items-center justify-between text-xs text-slate-500">
+        <div className="p-4 border-t border-slate-150 bg-slate-50/70 flex items-center justify-between text-xs text-slate-500 shrink-0">
           <span className="font-mono text-[11px]">
             Doc ID: <strong className="text-slate-800">{document.id}</strong>
           </span>
@@ -190,6 +161,6 @@ export function DocumentPreviewModal({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

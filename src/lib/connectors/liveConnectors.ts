@@ -1,0 +1,327 @@
+/**
+ * Live connector extractions for knowledge-source synchronization.
+ *
+ * Historically ONLY `youtube` and `file` sources had real pipelines; every
+ * other advertised connector indexed fabricated placeholder text. This module
+ * adds REAL server-side extraction for the three no-auth connector types:
+ *
+ *   - `url`    : SSRF-guarded page fetch → readable plain text
+ *   - `rss`    : RSS/Atom feed fetch → recent entries as structured sections
+ *   - `github` : repository metadata + README (raw markdown) via api.github.com
+ *
+ * All outbound requests go through lib/mcp/net.ts guards (scheme allow-list,
+ * private-host SSRF deny-list, timeouts, response size caps). Types that still
+ * need OAuth/credentials (gdrive/notion/confluence/slack/email/database/api)
+ * intentionally have NO implementation here — they fail honestly upstream
+ * instead of inventing data.
+ */
+
+import { safeFetchText, htmlToText } from '../mcp/net';
+
+export interface ConnectorExtraction {
+  /** Document title derived from the source payload (feed title, repo name…). */
+  title: string;
+  /** Full extracted plain-text/markdown content ready for chunking. */
+  content: string;
+  /** Canonical public URL the content came from (stored in metadata). */
+  sourceUrl?: string;
+  /** Number of logical records merged into the content (feed entries etc.). */
+  itemsProcessed: number;
+}
+
+// ---------------------------------------------------------------------------
+// Pure parsing helpers (unit-testable, no I/O)
+// ---------------------------------------------------------------------------
+
+function decodeXmlEntities(input: string): string {
+  return input
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
+function stripCdata(input: string): string {
+  const m = input.match(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/);
+  return m ? m[1] : input;
+}
+
+/** Extracts the inner text of the first matching tag, CDATA/entity aware. */
+function tagText(block: string, tag: string): string {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i');
+  const m = block.match(re);
+  if (!m) return '';
+  return decodeXmlEntities(stripCdata(m[1])).trim();
+}
+
+/** Extracts an Atom-style href from <link … href="…"> when inner text absent. */
+function tagLink(block: string): string {
+  const inner = tagText(block, 'link');
+  if (inner) return inner;
+  const m = block.match(/<link\b[^>]*\bhref=["']([^"']+)["'][^>]*>/i);
+  return m ? decodeXmlEntities(m[1]).trim() : '';
+}
+
+export interface FeedEntry {
+  title: string;
+  link: string;
+  publishedAt: string;
+  summary: string;
+}
+
+/**
+ * Parses an RSS 2.0 or Atom feed body into normalized entries. Accepts either
+ * format because real-world feeds mix both shapes; returns [] for bodies with
+ * no recognizable items so callers can raise an honest error.
+ */
+export function parseRssOrAtomFeed(xmlBody: string, maxEntries: number = 30): FeedEntry[] {
+  if (!xmlBody) return [];
+  // Strip XML comments so commented-out items are not ingested.
+  const cleaned = xmlBody.replace(/<!--[\s\S]*?-->/g, '');
+
+  const blocks = [
+    ...(cleaned.match(/<item\b[\s\S]*?<\/item\s*>/gi) || []),
+    ...(cleaned.match(/<entry\b[\s\S]*?<\/entry\s*>/gi) || []),
+  ];
+
+  const entries: FeedEntry[] = [];
+  for (const block of blocks.slice(0, maxEntries)) {
+    const title = tagText(block, 'title');
+    const link = tagLink(block) || tagText(block, 'guid') || '';
+    const publishedAt = tagText(block, 'pubDate') || tagText(block, 'published') || tagText(block, 'updated') || '';
+    const summaryRaw =
+      tagText(block, 'content:encoded') ||
+      tagText(block, 'description') ||
+      tagText(block, 'summary') ||
+      tagText(block, 'content');
+
+    // Summaries carry HTML — fold them to plain text like the rest of the app.
+    const summary = summaryRaw ? htmlToText(summaryRaw) : '';
+
+    if (!title && !summary) continue;
+    entries.push({
+      title: title || link || 'عنصر بدون عنوان',
+      link,
+      publishedAt,
+      summary,
+    });
+  }
+  return entries;
+}
+
+export interface GithubRepoRef {
+  owner: string;
+  repo: string;
+}
+
+/** Parses https://github.com/:owner/:repo (+ optional .git / tree suffixes). */
+export function parseGithubRepoUrl(rawUrl: string): GithubRepoRef | null {
+  try {
+    const parsed = new URL((rawUrl || '').trim());
+    if (parsed.hostname !== 'github.com' && parsed.hostname !== 'www.github.com') return null;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length < 2) return null;
+    const owner = segments[0];
+    const repo = segments[1].replace(/\.git$/i, '');
+    if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return null;
+    return { owner, repo };
+  } catch {
+    return null;
+  }
+}
+
+/** Pulls <title>/og:title out of an HTML document. */
+export function extractHtmlTitle(html: string): string {
+  const og = html.match(/<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']+)["']/i);
+  if (og?.[1]) return decodeXmlEntities(og[1]).trim();
+  const t = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (t?.[1]) return decodeXmlEntities(t[1]).trim();
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+// Network-backed extractors
+// ---------------------------------------------------------------------------
+
+const FETCH_TIMEOUT_MS = 20_000;
+const PAGE_MAX_BYTES = 2 * 1024 * 1024;
+
+/** `url` connector: single-page readable-text extraction (SSRF-guarded). */
+export async function extractFromWebPage(config: Record<string, any>): Promise<ConnectorExtraction> {
+  const url = typeof config?.url === 'string' ? config.url.trim() : '';
+  if (!url) throw new Error('لا يوجد رابط صفحة ويب في إعدادات هذا الموصل.');
+
+  const res = await safeFetchText(url, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    maxBytes: PAGE_MAX_BYTES,
+    headers: { Accept: 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5' },
+  });
+  if (!res.ok) {
+    throw new Error(`فشل جلب الصفحة: ${res.error || `HTTP ${res.status}`}`);
+  }
+
+  let title = '';
+  let text = '';
+
+  if (res.contentType.includes('application/json')) {
+    // JSON endpoints (docs/specs) are ingested verbatim — reformatting risks
+    // corrupting machine-readable structure the model can exploit.
+    try {
+      text = JSON.stringify(JSON.parse(res.text), null, 2);
+      title = url;
+    } catch {
+      text = res.text;
+      title = url;
+    }
+  } else {
+    title = extractHtmlTitle(res.text) || url;
+    text = htmlToText(res.text);
+  }
+
+  if (text.trim().length < 80) {
+    throw new Error(
+      'تم جلب الصفحة لكن تعذر استخلاص محتوى نصي كافٍ منها (قد تكون محمية أو تعتمد على جافاسكربت بالكامل).',
+    );
+  }
+
+  return {
+    title: text.length > PAGE_MAX_BYTES / 2 ? `${title} (مقتطع)` : title,
+    content: `# ${title}\n\nالمصدر: ${url}\n\n${text}`,
+    sourceUrl: url,
+    itemsProcessed: 1,
+  };
+}
+
+/** `rss` connector: recent feed entries aggregated into one document. */
+export async function extractFromRssFeed(config: Record<string, any>): Promise<ConnectorExtraction> {
+  const feedUrl = typeof config?.feedUrl === 'string' ? config.feedUrl.trim() : '';
+  if (!feedUrl) throw new Error('لا يوجد رابط تغذية RSS في إعدادات هذا الموصل.');
+
+  const res = await safeFetchText(feedUrl, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    maxBytes: 4 * 1024 * 1024,
+    headers: { Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' },
+  });
+  if (!res.ok) {
+    throw new Error(`فشل جلب التغذية: ${res.error || `HTTP ${res.status}`}`);
+  }
+
+  const feedTitle = extractHtmlTitle(res.text) || tagText(res.text.split(/<item\b/i)[0], 'title');
+  const entries = parseRssOrAtomFeed(res.text);
+  if (entries.length === 0) {
+    throw new Error('المحتوى المجلوب ليس تغذية RSS/Atom صالحة أو لا يحتوي عناصر.');
+  }
+
+  const sections = entries.map((e, i) => {
+    const meta = [e.link ? `الرابط: ${e.link}` : '', e.publishedAt ? `التاريخ: ${e.publishedAt}` : '']
+      .filter(Boolean)
+      .join(' | ');
+    return `## ${i + 1}. ${e.title}${meta ? `\n${meta}` : ''}\n\n${e.summary}`;
+  });
+
+  return {
+    title: feedTitle ? `[تغذية RSS] ${feedTitle}` : `[تغذية RSS] ${feedUrl}`,
+    content: `# ${feedTitle || feedUrl}\n\nالمصدر: ${feedUrl}\nآخر تحديث: ${new Date().toISOString()}\nعدد العناصر: ${entries.length}\n\n${sections.join('\n\n---\n\n')}`,
+    sourceUrl: feedUrl,
+    itemsProcessed: entries.length,
+  };
+}
+
+/** `github` connector: repository metadata + README via the public REST API. */
+export async function extractFromGithubRepo(config: Record<string, any>): Promise<ConnectorExtraction> {
+  const repoUrl = typeof config?.repoUrl === 'string' ? config.repoUrl.trim() : '';
+  const ref = parseGithubRepoUrl(repoUrl);
+  if (!ref) {
+    throw new Error('رابط مستودع GitHub غير صالح. النسق المطلوب: https://github.com/owner/repo');
+  }
+
+  const patToken = typeof config?.patToken === 'string' && config.patToken.trim() ? config.patToken.trim() : '';
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    ...(patToken ? { Authorization: `Bearer ${patToken}` } : {}),
+  };
+
+  // Repo metadata (description / default branch / stars) — fixed host
+  // api.github.com, so no user-controlled redirect target here.
+  const metaRes = await safeFetchText(`https://api.github.com/repos/${ref.owner}/${ref.repo}`, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    maxBytes: 512 * 1024,
+    headers,
+  });
+  let description = '';
+  let branch = typeof config?.branch === 'string' && config.branch.trim() ? config.branch.trim() : '';
+  if (metaRes.ok) {
+    try {
+      const meta = JSON.parse(metaRes.text);
+      description = typeof meta.description === 'string' ? meta.description : '';
+      if (!branch && typeof meta.default_branch === 'string') branch = meta.default_branch;
+    } catch {
+      /* metadata is best-effort; README is the critical payload */
+    }
+  }
+
+  const readmeTarget = branch || 'main';
+  const readmeRes = await safeFetchText(
+    `https://api.github.com/repos/${ref.owner}/${ref.repo}/readme?ref=${encodeURIComponent(readmeTarget)}`,
+    {
+      timeoutMs: FETCH_TIMEOUT_MS,
+      maxBytes: 2 * 1024 * 1024,
+      headers: { ...headers, Accept: 'application/vnd.github.raw+json' },
+    },
+  );
+
+  if (!readmeRes.ok) {
+    if (readmeRes.status === 404 && !patToken && readmeTarget !== 'master') {
+      throw new Error('تعذر العثور على README على الفرع main — جرّب ضبط حقل الفرع (Branch) بشكل صحيح.');
+    }
+    if (readmeRes.status === 403) {
+      throw new Error('رفض GitHub الطلب (معدل طلبات مجهول الهوية). أضف رمز وصول شخصي PAT في إعدادات الموصل.');
+    }
+    throw new Error(`فشل جلب المستودع: ${readmeRes.error || `HTTP ${readmeRes.status}`}`);
+  }
+
+  const readme = readmeRes.truncated ? `${readmeRes.text}\n\n[تم اقتطاع المحتوى بسبب الحجم]` : readmeRes.text;
+  const canonicalUrl = `https://github.com/${ref.owner}/${ref.repo}`;
+
+  const headerLines = [
+    `# ${ref.owner}/${ref.repo}`,
+    description ? `\n${description}` : '',
+    `\nالمصدر: ${canonicalUrl}`,
+    `الفرع: ${readmeTarget}`,
+  ].filter(Boolean);
+
+  return {
+    title: `[GitHub] ${ref.owner}/${ref.repo}`,
+    content: `${headerLines.join('\n')}\n\n${readme}`,
+    sourceUrl: canonicalUrl,
+    itemsProcessed: 1,
+  };
+}
+
+/**
+ * Dispatches extraction for a connector type. Returns undefined for types
+ * WITHOUT a live pipeline so the caller applies its honest-failure policy.
+ */
+export function supportsLiveSync(type: string): boolean {
+  return ['youtube', 'file', 'url', 'rss', 'github'].includes(type);
+}
+
+export async function extractConnectorContent(
+  type: string,
+  config: Record<string, any>,
+): Promise<ConnectorExtraction | undefined> {
+  switch (type) {
+    case 'url':
+      return extractFromWebPage(config);
+    case 'rss':
+      return extractFromRssFeed(config);
+    case 'github':
+      return extractFromGithubRepo(config);
+    default:
+      // youtube/file keep their dedicated pipelines inside the storage layer.
+      return undefined;
+  }
+}

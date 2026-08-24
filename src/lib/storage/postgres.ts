@@ -321,12 +321,22 @@ export async function ensurePostgresTables() {
         );
       `);
 
-      // Try creating GIN text indexes for English and Arabic FTS
+      // Try creating GIN text indexes for English and Arabic FTS. The lexical
+      // arm picks the dictionary per query language, so BOTH indexes must
+      // exist — with only the english index, every Arabic query (the app's
+      // primary language) degenerated to a sequential scan.
       try {
         await client.query(`
-          CREATE INDEX IF NOT EXISTS chunks_content_fts_idx ON chunks 
+          CREATE INDEX IF NOT EXISTS chunks_content_fts_idx ON chunks
           USING gin(to_tsvector('english', content));
         `);
+        await client.query(`
+          CREATE INDEX IF NOT EXISTS chunks_content_fts_arabic_idx ON chunks
+          USING gin(to_tsvector('arabic', content));
+        `);
+        // Version/reindex paths purge chunks by document_id — previously a
+        // full tenant scan because only tenant_id was indexed.
+        await client.query(`CREATE INDEX IF NOT EXISTS chunks_document_id_idx ON chunks (document_id);`);
       } catch (e) {
         console.warn('FTS index creation skipped or not supported:', e);
       }
@@ -1453,6 +1463,22 @@ export async function insertPostgresMessage(msg: Message) {
 }
 
 // Lexical search
+
+/**
+ * Light Arabic normalization for the LEXICAL query arm (never applied to
+ * stored content): strips diacritics/tatweel and unifies alef/waw-hamza forms
+ * so "الأسئلة" matches "الأسئله" and "مُستند" matches "مستند". This closes a
+ * real recall gap — hamza/diacritic variants previously missed exact FTS and
+ * ILIKE hits.
+ */
+export function normalizeArabicForSearch(input: string): string {
+  return input
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '') // harakat + dagger alif + tatweel
+    .replace(/[\u0622\u0623\u0625\u0627]/g, '\u0627') // آ أ إ ـا → ا
+    .replace(/\u0649/g, '\u064A') // ى → ي
+    .replace(/\u0624/g, '\u0648'); // ؤ → و
+}
+
 export async function searchPostgresLexical(
   queryText: string,
   tenantId: string,
@@ -1482,7 +1508,9 @@ export async function searchPostgresLexical(
     // disabled — see ensurePostgresTables).
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
 
-    const cleanQuery = queryText.replace(/['"&|!()*:<>\s]+/g, ' ').trim();
+    const cleanQuery = normalizeArabicForSearch(queryText)
+      .replace(/['"&|!()*:<>\s]+/g, ' ')
+      .trim();
     if (!cleanQuery) {
       await client.query('COMMIT');
       return [];

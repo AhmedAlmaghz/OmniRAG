@@ -16,7 +16,8 @@ import {
   SyncLogEntry,
   McpResourceItem,
 } from '../types/omnirag';
-import { chunkDocument, estimateTokenCount } from '../rag/chunker';
+import { randomUUID } from 'crypto';
+import { chunkDocumentWithPages, estimateTokenCount } from '../rag/chunker';
 import { DEFAULT_AI_MODELS } from '../config/aiModels';
 import {
   ensurePostgresTables,
@@ -63,6 +64,7 @@ import { upsertQdrantChunk, upsertQdrantChunks, deleteQdrantDocument, updateQdra
 import { generateEmbedding, embedBatch } from '../rag/embedding';
 import { processYoutubeTranscript } from '../youtube/transcriptParser';
 import { processPdfWithBatchedPipeline } from '../pdf/pdfChunker';
+import { extractConnectorContent, supportsLiveSync } from '../connectors/liveConnectors';
 import { decryptSourceConfig } from './sourceConfigCrypto';
 
 import {
@@ -79,6 +81,18 @@ import type { IOmniRAGDatabase } from './IOmniRAGDatabase';
 
 // Lazy-seeding state
 let isSeeded = false;
+
+/**
+ * Demo-content gate. INITIAL_* fixtures are marketing/demo documents, chunks,
+ * sources and sync logs. Previously the wrapper seeded them for ANY tenant
+ * whose store came back empty — including production tenants — so a fresh
+ * production tenant could "search" demo documents they never uploaded.
+ * Seeding now happens in development only; production tenants start empty
+ * like a real multi-tenant system should.
+ */
+function shouldSeedDemoData(): boolean {
+  return process.env.NODE_ENV !== 'production';
+}
 
 export class MemoryDatabase implements IOmniRAGDatabase {
   tenants: Tenant[] = [...INITIAL_TENANTS];
@@ -167,7 +181,9 @@ export class MemoryDatabase implements IOmniRAGDatabase {
   ): Promise<{ success: boolean; itemsProcessed: number; durationMs: number }> {
     const source = await this.getSourceById(id, tenantId);
     if (!source) return { success: false, itemsProcessed: 0, durationMs: 0 };
-    return { success: true, itemsProcessed: source.documentCount || 0, durationMs: 0 };
+    // The in-memory store has no live extraction pipeline. Reporting
+    // success here was a lie — callers now surface an honest failure.
+    return { success: false, itemsProcessed: 0, durationMs: 0 };
   }
 
   async getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
@@ -326,23 +342,23 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     const doc = await this.getDocumentById(documentId, tenantId);
     if (!doc || !doc.content) return undefined;
 
-    const chunkTextList = chunkDocument(doc.content, doc.metadata?.chunkingConfig);
+    const pageChunks = chunkDocumentWithPages(doc.content, doc.metadata?.chunkingConfig);
     this.chunks = this.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
-    const chunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+    const chunks: DocumentChunk[] = pageChunks.map((pageChunk, i) => ({
       id: `chunk-${doc.id}-re-${i + 1}`,
       tenantId,
       documentId: doc.id,
       documentTitle: doc.title,
-      content: text,
+      content: pageChunk.text,
       chunkIndex: i,
-      pageNumber: 1,
+      pageNumber: pageChunk.pageNumber ?? 1,
       language: doc.language === 'en' ? 'en' : 'ar',
-      metadata: { position: i, tokenCount: estimateTokenCount(text) },
+      metadata: { position: i, tokenCount: estimateTokenCount(pageChunk.text) },
     }));
     const result = await this.addChunks(chunks);
 
     doc.status = result.success ? 'indexed' : 'failed';
-    doc.chunkCount = chunkTextList.length;
+    doc.chunkCount = pageChunks.length;
     doc.updatedAt = new Date().toISOString();
     return { document: doc, result };
   }
@@ -699,7 +715,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       }
     }
 
-    if (sourcesList.length === 0) {
+    if (shouldSeedDemoData() && sourcesList.length === 0) {
       const defaultSources = INITIAL_SOURCES.map((s) => ({
         ...s,
         id: `${s.id}-${tenantId}`,
@@ -827,7 +843,6 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
       // Decrypt connector credentials for the trusted sync path only.
       const decryptedConfig = source.config ? decryptSourceConfig(source.config) : source.config;
-      const items = 1;
 
       source.status = 'syncing';
       await memoryDb.updateSource(id, source, tenantId);
@@ -839,50 +854,108 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         }
       }
 
-      // Handle YouTube Source Type Sync
-      let newDocTitle = `${source.name} - تحديث ${new Date().toLocaleDateString('ar-SA')}`;
-      let newDocContent = `تحديث بيانات من الموصل (${source.name}):\nتم جلب واستخراج ${items} سجل جديد وحفظها بتشفير عالي ومعالجة متجهات Qdrant بضمان عزْل المستأجر ${tenantId}.`;
+      /**
+       * Persist a FAILED sync attempt with a truthful message. Only YouTube
+       * and file connectors have live extraction pipelines today; every other
+       * advertised type previously indexed a synthetic Arabic placeholder that
+       * CLAIMED records were fetched and logged success — fabricated content
+       * polluting retrieval. They now fail honestly without ingesting anything.
+       */
+      const failSync = async (message: string): Promise<{ success: false; itemsProcessed: 0; durationMs: number }> => {
+        const durationMs = Date.now() - startedAt;
+        source.status = 'degraded';
+        source.lastError = message;
+        await memoryDb.updateSource(id, source, tenantId);
+        if (!this.useMemory) {
+          try {
+            await insertPostgresSource(source);
+          } catch (e) {
+            this.handleDatabaseError(e, 'syncSource-failStatus');
+          }
+        }
+        await this.addSyncLog({
+          id: `log-${randomUUID()}`,
+          tenantId,
+          sourceId: source.id,
+          sourceName: source.name,
+          status: 'failed',
+          itemsProcessed: 0,
+          durationMs,
+          message,
+          timestamp: new Date().toISOString(),
+        });
+        return { success: false, itemsProcessed: 0, durationMs };
+      };
+
+      // Extract REAL content for the connector types with live pipelines.
+      let extractedContent = '';
+      let extractedTitle: string | null = null;
+      let itemsProcessed = 1;
 
       if (source.type === 'youtube') {
         const ytUrl = decryptedConfig?.playlistUrl || decryptedConfig?.url;
-        if (ytUrl && typeof ytUrl === 'string' && ytUrl.trim()) {
-          try {
-            const ytData = await processYoutubeTranscript(ytUrl, 'ar');
-            if (ytData && ytData.success && ytData.transcript) {
-              newDocTitle = ytData.title ? `[تفريغ فيديو يوتيوب] ${ytData.title}` : newDocTitle;
-              newDocContent = ytData.transcript;
-            }
-          } catch (ytErr) {
-            console.log('YouTube sync transcript failed, fallback to structured summary:', (ytErr as Error)?.message);
-          }
+        if (!ytUrl || typeof ytUrl !== 'string' || !ytUrl.trim()) {
+          return await failSync('لا يوجد رابط فيديو مهيأ في إعدادات موصل اليوتيوب.');
         }
+        // processYoutubeTranscript THROWS when no real captions/transcription
+        // are available — that failure propagates instead of indexing an
+        // AI-invented transcript as ground truth.
+        const ytData = await processYoutubeTranscript(ytUrl.trim(), 'ar');
+        if (!ytData?.success || !ytData.transcript) {
+          return await failSync('تعذر الحصول على تفريغ نصي حقيقي للفيديو.');
+        }
+        extractedContent = ytData.transcript;
+        if (ytData.title) extractedTitle = `[تفريغ فيديو يوتيوب] ${ytData.title}`;
       } else if (source.type === 'file') {
         const fileData = decryptedConfig?.fileData || decryptedConfig?.base64;
-        if (fileData && typeof fileData === 'string') {
-          try {
-            const cleanBase64 = fileData.includes(',') ? fileData.split(',')[1] : fileData;
-            const fileBuffer = Buffer.from(cleanBase64, 'base64');
-            const pipelineRes = await processPdfWithBatchedPipeline(fileBuffer, {
-              preferredEngine: 'mistral',
-              pagesPerChunk: 25,
-            });
-            if (pipelineRes.text && pipelineRes.text.trim().length > 10) {
-              newDocContent = pipelineRes.text;
-              newDocTitle = `${source.name} (معالجة ${pipelineRes.chunksProcessed} دفعة / ${pipelineRes.totalPages} صفحة)`;
-            }
-          } catch (pdfErr) {
-            console.log('PDF sync pipeline fallback:', pdfErr);
-          }
+        if (!fileData || typeof fileData !== 'string') {
+          return await failSync('لا توجد بيانات ملف مخزنة في إعدادات هذا الموصل.');
         }
+        try {
+          const cleanBase64 = fileData.includes(',') ? fileData.split(',')[1] : fileData;
+          const fileBuffer = Buffer.from(cleanBase64, 'base64');
+          const pipelineRes = await processPdfWithBatchedPipeline(fileBuffer, {
+            preferredEngine: 'mistral',
+            pagesPerChunk: 25,
+          });
+          if (pipelineRes.text && pipelineRes.text.trim().length > 10) {
+            extractedContent = pipelineRes.text;
+          }
+        } catch (pdfErr: any) {
+          console.warn('[syncSource] PDF pipeline failed:', pdfErr?.message);
+        }
+        if (!extractedContent) {
+          return await failSync('فشل استخراج النصوص من الملف المرتبط بهذا الموصل.');
+        }
+      } else if (supportsLiveSync(source.type)) {
+        // Live HTTP-backed connectors (url / rss / github): extraction runs
+        // through the SSRF-guarded shared module. Failures propagate as
+        // honest sync failures — never as fabricated placeholder documents.
+        try {
+          const extraction = await extractConnectorContent(source.type, decryptedConfig || {});
+          if (!extraction || !extraction.content.trim()) {
+            return await failSync('لم يُنتج موصل الاستخلاص أي محتوى نصي قابل للفهرسة.');
+          }
+          extractedContent = extraction.content;
+          extractedTitle = extraction.title || null;
+          itemsProcessed = extraction.itemsProcessed || 1;
+        } catch (extractErr: any) {
+          return await failSync(extractErr?.message || 'فشل استخلاص المحتوى من المصدر الحي.');
+        }
+      } else {
+        return await failSync(
+          `المزامنة الآلية غير متاحة لموصلات نوع "${source.type}" بعد — استخدم الاستيعاب اليدوي من استوديو الرفع.`,
+        );
       }
 
-      const newDocId = `doc-sync-${Date.now().toString().slice(-4)}`;
+      const newDocId = `doc-sync-${randomUUID()}`;
+      const newDocTitle = extractedTitle || `${source.name} - تحديث ${new Date().toLocaleDateString('ar-EG')}`;
 
       const newDoc: Document = {
         id: newDocId,
         tenantId,
         title: newDocTitle,
-        content: newDocContent,
+        content: extractedContent,
         sourceType: source.type === 'file' ? 'file' : 'integration',
         language: 'ar',
         status: 'processing',
@@ -892,24 +965,30 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         collectionIds: source.collectionIds,
       };
 
-      // Unified chunker: every ingestion path produces the same chunk grid.
-      const chunkTextList = chunkDocument(newDocContent);
+      // Unified page-aware chunker: chunks carry REAL page numbers from the
+      // extraction markers so citations cite actual pages.
+      const pageChunks = chunkDocumentWithPages(extractedContent);
 
-      newDoc.chunkCount = chunkTextList.length;
+      newDoc.chunkCount = pageChunks.length;
       await this.addDocument(newDoc);
 
-      const chunks = chunkTextList.map(
-        (text, index) =>
+      const chunks = pageChunks.map(
+        (pageChunk, index) =>
           ({
             id: `chunk-${newDocId}-${index + 1}`,
             tenantId,
             documentId: newDocId,
             documentTitle: newDocTitle,
-            content: text,
+            content: pageChunk.text,
             chunkIndex: index,
-            pageNumber: 1,
+            pageNumber: pageChunk.pageNumber ?? 1,
             language: 'ar',
-            metadata: { sourceId: source.id, position: index, tokenCount: estimateTokenCount(text) },
+            metadata: {
+              sourceId: source.id,
+              position: index,
+              tokenCount: estimateTokenCount(pageChunk.text),
+              ...(pageChunk.pageNumber != null ? { extractedPage: true } : {}),
+            },
           }) as DocumentChunk,
       );
       const indexResult = await this.addChunks(chunks);
@@ -927,7 +1006,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       // Mark the connector healthy/degraded based on the real outcome.
       source.status = indexResult.success ? 'healthy' : 'degraded';
       source.lastSyncAt = new Date().toISOString();
-      source.documentCount = (source.documentCount || 0) + items;
+      source.documentCount = (source.documentCount || 0) + 1;
       source.lastError = indexResult.success ? undefined : indexResult.errors.join('؛ ');
       await memoryDb.updateSource(id, source, tenantId);
       if (!this.useMemory) {
@@ -940,36 +1019,50 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
       const durationMs = Date.now() - startedAt;
       await this.addSyncLog({
-        id: `log-${Date.now()}`,
+        id: `log-${randomUUID()}`,
         tenantId,
         sourceId: source.id,
         sourceName: source.name,
         status: indexResult.success ? 'success' : 'failed',
-        itemsProcessed: items,
+        itemsProcessed: itemsProcessed,
         durationMs,
         message: indexResult.success
-          ? `تمت المزامنة بنجاح: جلب وتفريغ وتجزيء إلى ${chunkTextList.length} مقطع دلالي وفهرستها في قواعد المتجهات.`
+          ? `تمت المزامنة بنجاح: جلب وتفريغ ${itemsProcessed} عنصر وتجزيئها إلى ${pageChunks.length} مقطع دلالي وفهرستها في قواعد المتجهات.`
           : `اكتملت المزامنة مع فشل الفهرسة المتجهية: ${indexResult.errors.join('؛ ')}`,
         timestamp: new Date().toISOString(),
       });
 
-      return { success: indexResult.success, itemsProcessed: items, durationMs };
+      return { success: indexResult.success, itemsProcessed: itemsProcessed, durationMs };
     } catch (err) {
       this.handleDatabaseError(err, 'syncSource');
       const durationMs = Date.now() - startedAt;
+      const errorMessage = (err as Error)?.message || String(err);
       try {
         const source = await memoryDb.getSourceById(id, tenantId);
         if (source) {
           source.status = 'error';
-          source.lastError = (err as Error)?.message || String(err);
+          source.lastError = errorMessage;
           await memoryDb.updateSource(id, source, tenantId);
         }
       } catch {
         /* best effort */
       }
-      return (await memoryDb.getSourceById(id, tenantId))
-        ? { success: false, itemsProcessed: 0, durationMs }
-        : { success: false, itemsProcessed: 0, durationMs };
+      try {
+        await this.addSyncLog({
+          id: `log-${randomUUID()}`,
+          tenantId,
+          sourceId: id,
+          sourceName: '',
+          status: 'failed',
+          itemsProcessed: 0,
+          durationMs,
+          message: `فشلت المزامنة: ${errorMessage}`,
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        /* logging must never mask the original failure */
+      }
+      return { success: false, itemsProcessed: 0, durationMs };
     }
   }
 
@@ -992,7 +1085,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       }
     }
 
-    if (logsList.length === 0) {
+    if (shouldSeedDemoData() && logsList.length === 0) {
       const defaultLogs = INITIAL_SYNC_LOGS.map((l) => ({
         ...l,
         id: `${l.id}-${tenantId}`,
@@ -1027,7 +1120,10 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       return sources.map((s) => ({
         uri: `resource://sources/${s.id}`,
         name: s.name,
-        description: `مصدر بيانات من نوع ${s.type} محمي بنظام RLS ومزود بـ ${s.documentCount} مستند فاعل`,
+        // Honest isolation wording: tenant isolation is enforced by explicit
+        // tenant_id predicates at the application layer, NOT Postgres RLS
+        // (which is intentionally disabled — see ensurePostgresTables).
+        description: `مصدر بيانات من نوع ${s.type} معزول على مستوى المستأجر عبر فلاتر tenant_id الإلزامية، ويحتوي ${s.documentCount} مستند`,
         mimeType: s.type === 'file' ? 'application/pdf' : 'application/json',
         tenantId: s.tenantId,
         sourceId: s.id,
@@ -1058,7 +1154,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       }
     }
 
-    if (docsList.length === 0) {
+    if (shouldSeedDemoData() && docsList.length === 0) {
       const defaultDocs = INITIAL_DOCUMENTS.map((d) => ({
         ...d,
         id: `${d.id}-${tenantId}`,
@@ -1199,8 +1295,10 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     const nowIso = new Date().toISOString();
     const startedAt = Date.now();
 
-    // Unified chunker: all ingestion paths produce the same chunk grid.
-    const chunkTextList = chunkDocument(newContent);
+    // Unified page-aware chunker: all ingestion paths produce the same chunk
+    // grid, with real page numbers extracted from content markers.
+    const versionPageChunks = chunkDocumentWithPages(newContent);
+    const chunkTextList = versionPageChunks.map((c) => c.text);
 
     const newVersion: DocumentVersion = {
       id: `ver-${doc.id}-v${nextVerNumber}`,
@@ -1236,19 +1334,20 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     await deleteQdrantDocument(documentId, tenantId);
     await deletePostgresChunksByDocument(documentId, tenantId);
 
-    const versionChunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+    const versionChunks: DocumentChunk[] = versionPageChunks.map((pageChunk, i) => ({
       id: `chunk-${doc.id}-v${nextVerNumber}-${i + 1}`,
       tenantId,
       documentId: doc.id,
       documentTitle: newTitle,
-      content: text,
+      content: pageChunk.text,
       chunkIndex: i,
-      pageNumber: 1,
+      pageNumber: pageChunk.pageNumber ?? 1,
       language: doc.language === 'en' ? 'en' : 'ar',
       metadata: {
         version: nextVerNumber,
         position: i,
-        tokenCount: estimateTokenCount(text),
+        tokenCount: estimateTokenCount(pageChunk.text),
+        ...(pageChunk.pageNumber != null ? { extractedPage: true } : {}),
       },
     }));
     const indexResult = await this.addChunks(versionChunks);
@@ -1301,9 +1400,10 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     const nowIso = new Date().toISOString();
     const startedAt = Date.now();
 
-    // Unified chunker: the restored chunk grid is identical to the one
-    // createDocumentVersion would produce for the same content.
-    const chunkTextList = chunkDocument(targetVer.content);
+    // Unified page-aware chunker: the restored chunk grid is identical to the
+    // one createDocumentVersion would produce for the same content.
+    const revertPageChunks = chunkDocumentWithPages(targetVer.content);
+    const chunkTextList = revertPageChunks.map((c) => c.text);
 
     const updatedDoc: Document = {
       ...doc,
@@ -1322,19 +1422,20 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     await deleteQdrantDocument(documentId, tenantId);
     await deletePostgresChunksByDocument(documentId, tenantId);
 
-    const revertChunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+    const revertChunks: DocumentChunk[] = revertPageChunks.map((pageChunk, i) => ({
       id: `chunk-${doc.id}-rev-v${targetVer.versionNumber}-${i + 1}`,
       tenantId,
       documentId: doc.id,
       documentTitle: targetVer.title,
-      content: text,
+      content: pageChunk.text,
       chunkIndex: i,
-      pageNumber: 1,
+      pageNumber: pageChunk.pageNumber ?? 1,
       language: doc.language === 'en' ? 'en' : 'ar',
       metadata: {
         restoredFromVersion: targetVer.versionNumber,
         position: i,
-        tokenCount: estimateTokenCount(text),
+        tokenCount: estimateTokenCount(pageChunk.text),
+        ...(pageChunk.pageNumber != null ? { extractedPage: true } : {}),
       },
     }));
     const indexResult = await this.addChunks(revertChunks);
@@ -1394,29 +1495,31 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     const startedAt = Date.now();
     await this.updateDocument(documentId, { status: 'processing' }, tenantId);
 
-    // Unified chunker — reuse the document's stored chunking config when it
-    // has one so a reindex reproduces the original geometry.
-    const chunkTextList = chunkDocument(doc.content, doc.metadata?.chunkingConfig);
+    // Unified page-aware chunker — reuse the document's stored chunking config
+    // when it has one so a reindex reproduces the original geometry.
+    const reindexPageChunks = chunkDocumentWithPages(doc.content, doc.metadata?.chunkingConfig);
+    const chunkTextList = reindexPageChunks.map((c) => c.text);
 
     // Purge the stale grid from all stores before rebuilding.
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
     await deleteQdrantDocument(documentId, tenantId);
     await deletePostgresChunksByDocument(documentId, tenantId);
 
-    const chunks: DocumentChunk[] = chunkTextList.map((text, i) => ({
+    const chunks: DocumentChunk[] = reindexPageChunks.map((pageChunk, i) => ({
       id: `chunk-${doc.id}-re-${Date.now().toString(36)}-${i + 1}`,
       tenantId,
       documentId: doc.id,
       documentTitle: doc.title,
-      content: text,
+      content: pageChunk.text,
       chunkIndex: i,
-      pageNumber: 1,
+      pageNumber: pageChunk.pageNumber ?? 1,
       language: doc.language === 'en' ? 'en' : 'ar',
       metadata: {
         sourceId: doc.metadata?.sourceId,
         position: i,
         reindexedAt: new Date().toISOString(),
-        tokenCount: estimateTokenCount(text),
+        tokenCount: estimateTokenCount(pageChunk.text),
+        ...(pageChunk.pageNumber != null ? { extractedPage: true } : {}),
       },
     }));
 
@@ -1473,7 +1576,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       }
     }
 
-    if (chunksList.length === 0) {
+    if (shouldSeedDemoData() && chunksList.length === 0) {
       const defaultChunks = INITIAL_CHUNKS.map((c) => ({
         ...c,
         id: `${c.id}-${tenantId}`,
@@ -1689,7 +1792,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       }
     }
 
-    if (collectionsList.length === 0) {
+    if (shouldSeedDemoData() && collectionsList.length === 0) {
       const defaultCols = INITIAL_COLLECTIONS.map((c) => ({
         ...c,
         id: `${c.id}-${tenantId}`,

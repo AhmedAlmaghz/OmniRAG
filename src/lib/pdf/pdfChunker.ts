@@ -232,9 +232,17 @@ Maintain accurate Arabic text if present. Output ONLY the extracted text with cl
 }
 
 /**
- * Native pdf-parse node module parser with stream text extraction fallback
+ * Native pdf-parse node module parser with stream text extraction fallback.
+ *
+ * Returns a confidence level alongside the text:
+ *  - `high`: real text layer from pdf-parse (trusted for auto routing).
+ *  - `low`: heuristic latin1 stream-operator scrape — often word-soup or
+ *    mojibake for embedded-font/Arabic/scanned PDFs, so it must NOT suppress
+ *    the OCR engines; it is only acceptable as a last resort.
  */
-export async function parsePdfChunkWithNativePdfParse(chunk: PdfChunkInfo): Promise<{ text: string } | null> {
+export async function parsePdfChunkWithNativePdfParse(
+  chunk: PdfChunkInfo,
+): Promise<{ text: string; confidence: 'high' | 'low' } | null> {
   // 1. Primary: Try pdf-parse module (v2 class PDFParse or v1 function)
   try {
     const pdfModule = await import('pdf-parse');
@@ -262,7 +270,7 @@ export async function parsePdfChunkWithNativePdfParse(chunk: PdfChunkInfo): Prom
     }
 
     if (extracted && extracted.length > 0) {
-      return { text: extracted };
+      return { text: extracted, confidence: 'high' };
     }
   } catch (err: any) {
     console.warn(`[Native pdf-parse] Chunk ${chunk.chunkIndex} warning:`, err?.message || err);
@@ -285,13 +293,44 @@ export async function parsePdfChunkWithNativePdfParse(chunk: PdfChunkInfo): Prom
     }
 
     if (extractedWords.length > 0) {
-      return { text: extractedWords.join(' ') };
+      return { text: extractedWords.join(' '), confidence: 'low' };
     }
   } catch (e) {
     // Ignore stream extraction errors
   }
 
   return null;
+}
+
+/** Minimum characters per page expected from a healthy text-layer extraction. */
+const NATIVE_MIN_CHARS_PER_PAGE = 120;
+/** Minimum fraction of letters/digits among non-whitespace characters. */
+const NATIVE_MIN_MEANINGFUL_RATIO = 0.5;
+
+/**
+ * Quality gate for native (non-OCR) PDF text extraction.
+ *
+ * Step A used to accept ANY non-empty string from pdf-parse — including
+ * near-empty layers and mojibake from scanned/embedded-font files — which then
+ * short-circuited Mistral OCR / Unstructured / Gemini vision and indexed
+ * garbage as ground truth. A native extraction now counts as usable only when
+ * it has plausible density for the page count and mostly real characters.
+ */
+export function assessNativePdfTextQuality(text: string, pageCount: number): boolean {
+  const compact = (text || '').replace(/\s+/g, ' ').trim();
+  if (compact.length < 100) return false;
+
+  const pages = Math.max(1, pageCount || 1);
+  if (compact.length < Math.min(pages * NATIVE_MIN_CHARS_PER_PAGE, 250)) return false;
+
+  const meaningful = (compact.match(/[\p{L}\p{N}]/gu) || []).length;
+  if (meaningful / compact.length < NATIVE_MIN_MEANINGFUL_RATIO) return false;
+
+  // Unresolved glyph references indicate a broken CMap/font mapping.
+  const cidJunk = (compact.match(/\(cid:\d+\)/gi) || []).length;
+  if (cidJunk > 5) return false;
+
+  return true;
 }
 
 /**
@@ -354,12 +393,23 @@ export async function processPdfWithBatchedPipeline(
     );
     let chunkText = '';
 
-    // Step A: Fast native PDF extraction (instant, zero network, zero API quota)
+    // Step A: Fast native PDF extraction (instant, zero network, zero API
+    // quota). Gated by the quality assessment: a thin text layer or mojibake
+    // scrape must fall through to the OCR engines instead of poisoning the
+    // document with garbage that then blocks better extraction.
     if (preferredEngine === 'auto') {
       const nativeRes = await parsePdfChunkWithNativePdfParse(chunk);
-      if (nativeRes && nativeRes.text && nativeRes.text.trim().length > 0) {
+      if (
+        nativeRes &&
+        nativeRes.confidence === 'high' &&
+        assessNativePdfTextQuality(nativeRes.text, chunk.endPage - chunk.startPage + 1)
+      ) {
         chunkText = nativeRes.text.trim();
         primaryEngineUsed = 'Native High-Speed PDF Parser';
+      } else if (nativeRes) {
+        console.log(
+          `[Knowledge Pipeline] Native extraction for chunk ${chunk.chunkIndex} failed the quality gate — deferring to OCR engines.`,
+        );
       }
     }
 
@@ -400,12 +450,15 @@ export async function processPdfWithBatchedPipeline(
       }
     }
 
-    // Step E: Final native fallback if auto was skipped or preferred non-auto failed
+    // Step E: Final native fallback if auto was skipped or preferred non-auto
+    // failed. Last resort — accept whatever native yields (low-confidence
+    // stream scrape included) since every better engine already failed.
     if (!chunkText) {
       const nativeRes = await parsePdfChunkWithNativePdfParse(chunk);
       if (nativeRes && nativeRes.text) {
         chunkText = nativeRes.text.trim();
-        primaryEngineUsed = 'Native High-Speed PDF Parser';
+        primaryEngineUsed =
+          nativeRes.confidence === 'high' ? 'Native High-Speed PDF Parser' : 'Native Stream Fallback (low confidence)';
       }
     }
 

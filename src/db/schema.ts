@@ -1,5 +1,23 @@
 import { pgTable, varchar, text, integer, jsonb, boolean } from 'drizzle-orm/pg-core';
 
+/**
+ * TIMESTAMP STORAGE — documented engineering decision (not an accident).
+ *
+ * All temporal columns are `varchar(100)` holding ISO-8601 UTC strings
+ * produced exclusively by `new Date().toISOString()` (always `…Z`, fixed
+ * width). For that uniform format, lexicographic ordering IS chronological
+ * ordering, so the few SQL-level comparisons (e.g.
+ * `DELETE FROM sessions WHERE expires_at < $1::text`) and every JS-side
+ * `new Date(x)` sort remain correct.
+ *
+ * Migrating to `timestamptz` would be the more idiomatic choice and unlocks
+ * SQL-side temporal indexes/intervals, but it requires converting ~20 columns
+ * AND changing every read/write helper in lib/storage/postgres.ts (the driver
+ * would return Date objects where ISO strings are expected today). That is a
+ * dedicated migration with its own test pass — do not "fix" these columns
+ * piecemeal; either migrate all of them together or leave this contract intact.
+ */
+
 // 1. Documents Table
 export const documents = pgTable('documents', {
   id: varchar('id', { length: 100 }).primaryKey(),

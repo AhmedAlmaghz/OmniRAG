@@ -144,7 +144,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     });
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     if (selectedType === 'youtube') {
       const url = fieldsState.url || '';
       const ytRegExp = /^.*(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/)([^#&?]*).*/;
@@ -182,35 +182,77 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     setIsTesting(true);
     setTestDiagnostics({
       step: 1,
-      logs: [lang === 'ar' ? 'جاري فحص الاتصال وتحديد النطاق (DNS Lookup)...' : 'Checking DNS & Endpoint latency...'],
+      logs: [
+        lang === 'ar' ? '✓ صيغة المدخلات صحيحة (تحقق محلي)' : '✓ Input format valid (local validation)',
+        lang === 'ar'
+          ? 'جاري فحص جاهزية البنية التحتية للمعالجة...'
+          : 'Checking processing infrastructure readiness...',
+      ],
     });
 
-    setTimeout(() => {
-      setTestDiagnostics((prev) => ({
-        step: 2,
-        logs: [
-          ...(prev?.logs || []),
-          lang === 'ar' ? '✓ الاتصال بالمنفذ مستقر | استجابة 24ms' : '✓ Connection established | 24ms latency',
-        ],
-      }));
+    try {
+      // REAL backend check: pings PostgreSQL / Qdrant / OCR services with
+      // measured latencies. The previous "test" was two setTimeout calls that
+      // printed a hardcoded "24ms" and "STATUS 200 OK" regardless of reality.
+      const startedAt = Date.now();
+      const res = await fetchWithAuth('/api/v1/diagnostics', { method: 'GET' });
+      const data = await res.json().catch(() => ({}));
+      const latency = Date.now() - startedAt;
 
-      setTimeout(() => {
-        setTestDiagnostics((prev) => ({
-          step: 3,
-          logs: [
-            ...(prev?.logs || []),
+      const logs: string[] = [
+        lang === 'ar' ? '✓ صيغة المدخلات صحيحة (تحقق محلي)' : '✓ Input format valid (local validation)',
+      ];
+
+      let allHealthy = true;
+      const services: Array<[string, any]> = Object.entries(data?.services || {});
+      if (services.length > 0) {
+        for (const [svcName, svc] of services) {
+          const ok = (svc as any)?.status === 'connected';
+          if (!ok) allHealthy = false;
+          const label = ok ? '✓' : '⚠';
+          logs.push(
             lang === 'ar'
-              ? '✓ تم التحقق من سلامة وصحة الرابط والتأكد من توفر البيانات'
-              : '✓ Target endpoint & URL structure validated successfully',
-            lang === 'ar'
-              ? '✓ تم جلب عينة بيانات أولية وقراءة هيكل المحتوى بنجاح 100%'
-              : '✓ Sample payload extracted successfully (100% Schema match)',
-          ],
-          success: true,
-        }));
-        setIsTesting(false);
-      }, 800);
-    }, 600);
+              ? `${label} ${svcName}: ${(svc as any)?.status} (${(svc as any)?.latencyMs ?? '?'}ms)`
+              : `${label} ${svcName}: ${(svc as any)?.status} (${(svc as any)?.latencyMs ?? '?'}ms)`,
+          );
+        }
+      } else {
+        // Diagnostics endpoint shape unexpected — report honestly instead of
+        // pretending everything passed.
+        allHealthy = res.ok;
+        logs.push(
+          res.ok
+            ? lang === 'ar'
+              ? `✓ استجابة الخادم سليمة (${latency}ms)`
+              : `✓ Server responded healthily (${latency}ms)`
+            : lang === 'ar'
+              ? `❌ استجابة غير متوقعة من الخادم (${res.status})`
+              : `❌ Unexpected server response (${res.status})`,
+        );
+      }
+
+      logs.push(
+        lang === 'ar'
+          ? allHealthy
+            ? 'البنية جاهزة — سيتم التحقق الفعلي من المصدر عند إنشاء المزامنة الأولى.'
+            : 'توجد خدمات غير مهيأة — الاستيعاب قد يفشل حتى ضبطها.'
+          : allHealthy
+            ? 'Infrastructure ready — source itself is validated on first sync.'
+            : 'Some services are unconfigured — ingestion may fail until resolved.',
+      );
+
+      setTestDiagnostics({ step: 3, logs, success: allHealthy });
+    } catch {
+      setTestDiagnostics({
+        step: 3,
+        logs: [
+          lang === 'ar' ? '❌ تعذر الوصول لخادم الفحص. تحقق من الاتصال.' : '❌ Could not reach the diagnostics server.',
+        ],
+        success: false,
+      });
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const handleFinish = async () => {
@@ -371,8 +413,20 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 </div>
 
                 <div className="space-y-1 pr-2">
-                  <h4 className="text-xs font-bold text-slate-900 group-hover:text-indigo-950">
-                    {lang === 'ar' ? st.nameAr : st.nameEn}
+                  <h4 className="text-xs font-bold text-slate-900 group-hover:text-indigo-950 flex items-center gap-1.5 flex-wrap">
+                    <span>{lang === 'ar' ? st.nameAr : st.nameEn}</span>
+                    {/* Honest capability badge: which connectors have a REAL
+                        live-sync pipeline today vs manual-only placeholders. */}
+                    {st.liveSync === true && (
+                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase font-mono">
+                        {lang === 'ar' ? 'مزامنة حية' : 'LIVE'}
+                      </span>
+                    )}
+                    {st.liveSync === false && (
+                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 uppercase font-mono">
+                        {lang === 'ar' ? 'قريباً' : 'SOON'}
+                      </span>
+                    )}
                   </h4>
                   <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
                     {lang === 'ar' ? st.descriptionAr : st.descriptionEn}
@@ -556,7 +610,11 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-200 text-xs font-mono space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1">
                     <span>Diagnostic Log</span>
-                    <span className="text-emerald-400 font-bold">STATUS 200 OK</span>
+                    <span
+                      className={testDiagnostics.success ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}
+                    >
+                      {testDiagnostics.success ? 'READY' : 'DEGRADED'}
+                    </span>
                   </div>
                   {testDiagnostics.logs.map((log, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-[11px]">
@@ -624,7 +682,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
               </div>
               <div className="p-3 bg-white rounded-xl border border-slate-200">
                 <span className="text-[11px] text-slate-400 block">
-                  {lang === 'ar' ? 'ضمان العزْل RLS:' : 'Tenant Security:'}
+                  {lang === 'ar' ? 'عزل بيانات المستأجر:' : 'Tenant Isolation:'}
                 </span>
                 <span className="font-bold text-emerald-600">Tenant Isolated ({tenantId})</span>
               </div>

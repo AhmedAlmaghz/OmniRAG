@@ -19,6 +19,12 @@
      them here fixes all ~28 call sites at once. */
   --color-slate-150: #e9eef5;
   --color-slate-850: #172033;
+
+  /* `shadow-3xs` is used in 10+ knowledge-module components but Tailwind v4's
+     theme only ships `--shadow-2xs` — so every `shadow-3xs` silently produced
+     no shadow at all. Register it as a real token (hairline card elevation,
+     slightly softer than the built-in 2xs). */
+  --shadow-3xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
 }
 
 /* Tailwind v4 is CSS-first and has no tailwind.config.js by default, so the

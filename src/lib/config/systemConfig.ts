@@ -31,6 +31,12 @@ export const SYSTEM_CONFIG = {
     // Defensive soft cap before assembling the model context. Sized for
     // ~8k-token chunks; raise per-tenant if long documents dominate.
     CONTEXT_CHUNK_CAP: 30,
+    // LLM cross-encoder reranking: how many candidates are scored per prompt,
+    // and how much weight the LLM score gets when blended with the RRF score.
+    RERANK: {
+      LLM_BUDGET: 20,
+      LLM_WEIGHT: 0.7,
+    },
   },
 
   // Security & Rate Limiting

@@ -1,8 +1,9 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
-import { SourceConnector, SourceType } from '@/lib/types/omnirag';
+import { SourceConnector, SOURCE_TYPE_VALUES, SourceType } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { encryptSourceConfig, redactSourceConfig } from '@/lib/storage/sourceConfigCrypto';
 
@@ -11,22 +12,10 @@ export const dynamic = 'force-dynamic';
 /**
  * Source connector creation payload. `type` was previously accepted as any
  * string, so a typo'd type produced a connector that no sync handler
- * understands. It is now restricted to the SourceType union.
+ * understands. It is now restricted to the SourceType union — sourced from the
+ * single SOURCE_TYPE_VALUES list in omnirag.ts instead of a route-local copy.
  */
-const SOURCE_TYPES: SourceType[] = [
-  'file',
-  'url',
-  'rss',
-  'youtube',
-  'github',
-  'notion',
-  'gdrive',
-  'confluence',
-  'slack',
-  'email',
-  'database',
-  'api',
-];
+const SOURCE_TYPES: SourceType[] = SOURCE_TYPE_VALUES;
 
 const createSourceSchema = z.object({
   name: z.string().trim().min(1, 'اسم الموصل مطلوب').max(300, 'اسم الموصل طويل جدا'),
@@ -118,7 +107,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     }
     const { name, type, config, syncSchedule, collectionIds } = parsed.data;
 
-    const id = `src-${type}-${Date.now().toString().slice(-6)}`;
+    const id = `src-${type}-${randomUUID().slice(0, 8)}`;
     // Encrypt any credential-bearing fields before persistence.
     const encryptedConfig = encryptSourceConfig(config);
     const newSource: SourceConnector = {

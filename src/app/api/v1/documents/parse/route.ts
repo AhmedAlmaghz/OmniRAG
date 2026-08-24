@@ -5,7 +5,7 @@ import { processPdfWithBatchedPipeline } from '@/lib/pdf/pdfChunker';
 import { isTenantObjectKey, downloadS3Object, deleteS3Object } from '@/lib/uploads/directUpload';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 import { getEnv } from '@/lib/env/runtimeEnv';
-import { dispatchFile, archiveUploadedFile } from '@/lib/services/unstructuredService';
+import { dispatchFile, archiveUploadedFile, normalizeMimeType } from '@/lib/services/unstructuredService';
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
@@ -126,6 +126,8 @@ const ALLOWED_MIME_TYPES = new Set([
   'audio/ogg',
   'audio/aac',
   'audio/flac',
+  'audio/mp4',
+  'audio/x-m4a',
   'video/mp4',
   'video/webm',
   'video/quicktime',
@@ -173,41 +175,11 @@ const ALLOWED_EXTENSIONS = new Set([
   'ogg',
   'aac',
   'flac',
+  'm4a',
   'mp4',
   'mov',
   'avi',
 ]);
-
-function normalizeMimeType(fileName: string, mimeType: string): string {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  if (ext === 'pdf') return 'application/pdf';
-  if (ext === 'png') return 'image/png';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'gif') return 'image/gif';
-  if (ext === 'bmp') return 'image/bmp';
-  if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  if (ext === 'doc') return 'application/msword';
-  if (ext === 'pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-  if (ext === 'ppt') return 'application/vnd.ms-powerpoint';
-  if (ext === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  if (ext === 'xls') return 'application/vnd.ms-excel';
-  if (ext === 'mp3') return 'audio/mp3';
-  if (ext === 'wav') return 'audio/wav';
-  if (ext === 'flac') return 'audio/flac';
-  if (ext === 'aac') return 'audio/aac';
-  if (ext === 'mp4') return 'video/mp4';
-  if (ext === 'mov') return 'video/quicktime';
-  if (ext === 'webm') {
-    if (mimeType && mimeType.startsWith('audio/')) return 'audio/webm';
-    return 'video/webm';
-  }
-  if (ext === 'txt') return 'text/plain';
-  if (ext === 'csv') return 'text/csv';
-  if (ext === 'json') return 'application/json';
-  if (ext === 'md' || ext === 'markdown') return 'text/markdown';
-  return mimeType || 'application/octet-stream';
-}
 
 // Default 10MB per upload; 50MB is the server-enforced hard cap. The cap is
 // intentionally NOT controllable by client headers to prevent DoS abuse.
@@ -359,7 +331,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
             fileBuffer = stored.buffer;
             fileName = jsonBody.fileName || 'document.bin';
             mimeType = jsonBody.mimeType || 'application/octet-stream';
-            cleanBase64 = fileBuffer.toString('base64');
             requestedEngine = jsonBody.engine || 'auto';
             requestedModel = jsonBody.model || undefined;
             mistralApiKey = jsonBody.mistralApiKey || undefined;
@@ -386,7 +357,6 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
             fileBuffer = blobResult.buffer;
             fileName = jsonBody.fileName || blobResult.fileName;
             mimeType = jsonBody.mimeType || blobResult.mimeType;
-            cleanBase64 = fileBuffer.toString('base64');
             requestedEngine = jsonBody.engine || 'auto';
             requestedModel = jsonBody.model || undefined;
             mistralApiKey = jsonBody.mistralApiKey || undefined;
@@ -500,16 +470,13 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         } catch (e) {}
       }
 
-      if (!fileBuffer) {
-        return NextResponse.json(
-          { error: 'فشل تحليل الملف المرفوع. يرجى التأكد من اختيار ملف صحيح ونشط.', code: '400_BAD_FORM_DATA' },
-          { status: 400 },
-        );
-      }
-
+      // Merged presence + emptiness check (previously two consecutive blocks).
       if (!fileBuffer || fileBuffer.length === 0) {
         return NextResponse.json(
-          { error: 'محتوى الملف مطلوب (File data is required)', code: '400_MISSING_DATA' },
+          {
+            error: 'فشل تحليل الملف المرفوع أو أن محتواه فارغ. يرجى التأكد من اختيار ملف صحيح.',
+            code: '400_BAD_FORM_DATA',
+          },
           { status: 400 },
         );
       }
@@ -526,9 +493,19 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         );
       }
 
-      // Extension & MIME type check
+      // Extension & MIME type check. The MIME is first normalized from the
+      // file extension so a generic `application/octet-stream` from the
+      // browser cannot vouch for an unknown extension: the previous
+      // "reject only when BOTH ext AND mime are disallowed" rule let any
+      // arbitrary file through whenever the client sent octet-stream. Policy
+      // now: allow when the extension is allowlisted OR the normalized MIME
+      // is an explicitly-known type — generic octet-stream alone proves
+      // nothing.
       const fileExt = fileName.split('.').pop()?.toLowerCase() || '';
-      if (fileExt && !ALLOWED_EXTENSIONS.has(fileExt) && mimeType && !ALLOWED_MIME_TYPES.has(mimeType.toLowerCase())) {
+      const resolvedMime = normalizeMimeType(fileName, mimeType || '').toLowerCase();
+      const mimeAllowed = resolvedMime !== 'application/octet-stream' && ALLOWED_MIME_TYPES.has(resolvedMime);
+      const extAllowed = !!fileExt && ALLOWED_EXTENSIONS.has(fileExt);
+      if (!extAllowed && !mimeAllowed) {
         return NextResponse.json(
           {
             error: `صيغة الملف (.${fileExt}) غير مدعومة. الصيغ المدعومة هي: PDF, DOCX, PPTX, TXT, Markdown, JSON, CSV, وشفرات البرمجة.`,
@@ -542,11 +519,21 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
       const skipCache = req.headers.get('x-skip-cache') === 'true';
 
-      // Meticulously archive the raw uploaded file first
-      const tenantId = authCtx.tenantId;
-      const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantId, fileHash);
-      console.log(`[Document Ingestion] File meticulously archived to disk: ${archivedPath}`);
+      // Optional raw-file archiving, OFF by default. The unconditional local
+      // disk write ran even on cache hits and grew without bound (PII
+      // retention liability on multi-tenant hosts); enable explicitly with
+      // ARCHIVE_UPLOADS=true when a retention policy exists.
+      if (process.env.ARCHIVE_UPLOADS === 'true') {
+        try {
+          const tenantIdForArchive = authCtx.tenantId;
+          const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantIdForArchive, fileHash);
+          console.log(`[Document Ingestion] File archived to disk: ${archivedPath}`);
+        } catch (archiveErr: any) {
+          console.warn('[Document Ingestion] Archiving failed (non-fatal):', archiveErr?.message);
+        }
+      }
 
+      const tenantId = authCtx.tenantId;
       // Cache key is scoped by tenantId: two tenants uploading identical bytes
       // must NOT share each other's extracted text. The previous file-hash-only
       // key leaked tenant A's OCR output to tenant B on an identical upload.

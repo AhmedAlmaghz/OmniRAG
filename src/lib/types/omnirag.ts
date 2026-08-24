@@ -240,6 +240,26 @@ export type SourceType =
   | 'database'
   | 'api';
 
+/**
+ * Runtime list mirroring {@link SourceType}. Single source of truth for route
+ * validation — routes previously re-declared their own copies of this array,
+ * so adding a connector type required editing three places in sync.
+ */
+export const SOURCE_TYPE_VALUES: SourceType[] = [
+  'file',
+  'url',
+  'rss',
+  'youtube',
+  'github',
+  'notion',
+  'gdrive',
+  'confluence',
+  'slack',
+  'email',
+  'database',
+  'api',
+];
+
 export type SourceStatus = 'healthy' | 'syncing' | 'degraded' | 'error' | 'paused';
 
 export interface SourceConnector {
@@ -298,7 +318,6 @@ export interface SearchQuery {
   semanticWeight?: number;
   lexicalWeight?: number;
   rerank?: boolean;
-  mmrDiversity?: number;
   useHyde?: boolean;
 }
 
