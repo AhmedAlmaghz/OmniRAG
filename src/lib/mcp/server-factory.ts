@@ -1,7 +1,6 @@
 import { db } from '@/lib/storage/db';
-import { MCP_TOOLS_REGISTRY, getToolDefinition } from './registry/tools';
-import { MCPServerConfig, MCPToolCall } from '@/lib/types/omnirag';
-import { randomUUID } from 'crypto';
+import { getToolDefinition } from './registry/tools';
+import { executeMcpToolCall, McpToolNotExecutableError } from './dispatcher';
 
 export interface MCPRPCRequest {
   jsonrpc?: string;
@@ -98,6 +97,9 @@ export async function processMcpProtocolRequest(
               inputSchema: def.parameters,
               hasSideEffect: def.hasSideEffect,
               requireConfirmation: def.requireConfirmation,
+              // Honesty flag: lets MCP clients distinguish sandbox-simulated
+              // tools from tools with live integrations before calling them.
+              simulated: def.simulated,
             };
           }
 
@@ -150,69 +152,50 @@ export async function processMcpProtocolRequest(
           };
         }
 
-        const startTime = Date.now();
-        let executionResult: any;
-        let isError = false;
-        let errorMsg = '';
+        // Single execution path: the dispatcher resolves registry tools and
+        // custom remote servers, enforces timeouts, stamps simulation honesty,
+        // and persists the tool-call audit record.
+        try {
+          const outcome = await executeMcpToolCall(toolName, toolArgs, {
+            tenantId: ctx.tenantId,
+            userId: ctx.userId,
+          });
 
-        const def = getToolDefinition(toolName);
-
-        if (def) {
-          try {
-            executionResult = await def.execute(toolArgs, { tenantId: ctx.tenantId, userId: ctx.userId });
-          } catch (err: any) {
-            isError = true;
-            errorMsg = err.message || 'فشل تشغيل الأداة';
-            executionResult = { error: errorMsg };
+          if (outcome.isError) {
+            return {
+              jsonrpc,
+              id: reqId,
+              error: { code: -32000, message: `فشل تنفيذ أداة الـ MCP (${toolName}): ${outcome.errorMessage}` },
+            };
           }
-        } else {
-          // Fallback execution for custom AI-generated or custom registered tools
-          executionResult = {
-            success: true,
-            message: `تم تشغيل الأداة المخصصة (${toolName}) بنجاح على بيئة المستأجر (${ctx.tenantId})`,
-            executedArgs: toolArgs,
-            timestamp: new Date().toISOString(),
-          };
-        }
 
-        const latencyMs = Date.now() - startTime;
-
-        // Save tool execution audit log
-        const toolCallRecord: MCPToolCall = {
-          id: `tc-${Date.now()}-${randomUUID().slice(0, 8)}`,
-          tenantId: ctx.tenantId,
-          scopedToolName: toolName,
-          inputParams: toolArgs,
-          outputResult: executionResult,
-          latencyMs,
-          status: isError ? 'failed' : 'completed',
-          hasSideEffect: def?.hasSideEffect || false,
-          timestamp: new Date().toISOString(),
-        };
-
-        await db.addToolCall(toolCallRecord);
-
-        if (isError) {
           return {
             jsonrpc,
             id: reqId,
-            error: { code: -32000, message: `فشل تنفيذ أداة الـ MCP (${toolName}): ${errorMsg}` },
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: typeof outcome.result === 'string' ? outcome.result : JSON.stringify(outcome.result, null, 2),
+                },
+              ],
+              isError: false,
+            },
+          };
+        } catch (err: any) {
+          if (err instanceof McpToolNotExecutableError) {
+            return {
+              jsonrpc,
+              id: reqId,
+              error: { code: -32601, message: err.message },
+            };
+          }
+          return {
+            jsonrpc,
+            id: reqId,
+            error: { code: -32000, message: `فشل تنفيذ أداة الـ MCP (${toolName}): ${err.message || err}` },
           };
         }
-
-        return {
-          jsonrpc,
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: typeof executionResult === 'string' ? executionResult : JSON.stringify(executionResult, null, 2),
-              },
-            ],
-            isError: false,
-          },
-        };
       }
 
       // 5. List Resources (`resources/list`)

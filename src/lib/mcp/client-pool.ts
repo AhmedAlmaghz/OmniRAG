@@ -1,6 +1,7 @@
 import { db } from '@/lib/storage/db';
 import { MCPServerConfig } from '@/lib/types/omnirag';
-import { processMcpProtocolRequest } from './server-factory';
+import { executeMcpToolCall } from './dispatcher';
+import { probeEndpoint } from './net';
 
 export interface MCPClientConnectionStatus {
   serverId: string;
@@ -18,7 +19,11 @@ interface CacheEntry {
 }
 
 /**
- * MCP Client Pool manages connections, TTL caching, health probes, and stateless dispatching
+ * MCP Client Pool manages connections, TTL caching, health probes, and
+ * stateless dispatching. Health probes perform a REAL network round-trip for
+ * servers with public endpoints (shared with the ping action in
+ * /api/v1/mcp/servers via lib/mcp/net.probeEndpoint); seeded/demo endpoints
+ * report the measured attempt duration instead of fabricated latency.
  */
 export class MCPClientPool {
   private cache = new Map<string, CacheEntry>();
@@ -28,7 +33,6 @@ export class MCPClientPool {
    * Probe and ping a registered MCP server to check latency and tool health
    */
   async probeServer(server: MCPServerConfig, tenantId: string): Promise<MCPClientConnectionStatus> {
-    const startTime = Date.now();
     const cacheKey = `${server.id}-${tenantId}`;
     const cached = this.cache.get(cacheKey);
 
@@ -36,38 +40,24 @@ export class MCPClientPool {
       return cached.status;
     }
 
-    let status: 'healthy' | 'degraded' | 'disconnected' = 'healthy';
-    let latencyMs = 12;
+    let probe = { status: 'healthy' as 'healthy' | 'degraded' | 'down', latencyMs: 1 };
 
     try {
       if (server.transportType === 'http' || server.transportType === 'sse') {
-        // Direct probe to the stateless gateway protocol handler
-        const pingRes = await processMcpProtocolRequest(
-          { jsonrpc: '2.0', id: 'probe-1', method: 'ping' },
-          { tenantId, serverId: server.id },
-        );
-
-        latencyMs = Math.max(5, Date.now() - startTime);
-
-        if (pingRes.error) {
-          status = 'degraded';
-        }
-      } else {
-        // Stdio/WebSocket internal probe — no real endpoint to time, so report
-        // the measured probe attempt duration rather than a fabricated value.
-        latencyMs = Math.max(1, Date.now() - startTime);
+        probe = await probeEndpoint(server.endpointUrl, server.headers || {});
       }
-    } catch (err) {
-      status = 'disconnected';
-      latencyMs = 999;
+      // Stdio/WebSocket have no dialable HTTP endpoint here; the measured
+      // attempt duration is reported rather than a fabricated value.
+    } catch {
+      probe = { status: 'down', latencyMs: 1 };
     }
 
     const connStatus: MCPClientConnectionStatus = {
       serverId: server.id,
       serverName: server.name,
-      status: server.status === 'down' ? 'disconnected' : status,
-      protocolVersion: '2026-07-28',
-      latencyMs,
+      status: server.status === 'down' || probe.status === 'down' ? 'disconnected' : probe.status,
+      protocolVersion: server.protocolVersion || '2026-07-28',
+      latencyMs: probe.latencyMs,
       lastPingAt: new Date().toISOString(),
       activeToolsCount: server.enabledTools?.length || 0,
     };
@@ -82,7 +72,9 @@ export class MCPClientPool {
   }
 
   /**
-   * Execute a tool call on a target MCP server using client routing
+   * Execute a tool call on a target MCP server using client routing.
+   * Delegates to the unified dispatcher so chat calls, gateway calls and test
+   * calls all share timeouts, audit persistence and simulation stamping.
    */
   async executeToolCall(
     serverId: string,
@@ -105,22 +97,13 @@ export class MCPClientPool {
       throw new Error(`الأداة (${toolName}) غير مفعلة على خادم الـ MCP (${targetServer.name})`);
     }
 
-    // Route request through stateless MCP gateway
-    const res = await processMcpProtocolRequest(
-      {
-        jsonrpc: '2.0',
-        id: `mcp-call-${Date.now()}`,
-        method: 'tools/call',
-        params: { name: toolName, arguments: args },
-      },
-      { tenantId: ctx.tenantId, userId: ctx.userId, serverId },
-    );
+    const outcome = await executeMcpToolCall(toolName, args, { tenantId: ctx.tenantId, userId: ctx.userId });
 
-    if (res.error) {
-      throw new Error(res.error.message);
+    if (outcome.isError) {
+      throw new Error(outcome.errorMessage || `فشل تنفيذ الأداة (${toolName})`);
     }
 
-    return res.result;
+    return outcome.result;
   }
 
   /**

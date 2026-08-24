@@ -3,6 +3,9 @@ import { generateEmbedding } from '@/lib/rag/embedding';
 import { searchQdrantSemantic } from '@/lib/storage/qdrant';
 import { randomInt } from '@/lib/crypto/webRandom';
 import { getAiModel } from '@/lib/config/aiModels';
+import { getEnv } from '@/lib/env/runtimeEnv';
+import { assertPublicHttpUrl, htmlToText, safeFetchText } from '../net';
+import { chunkDocument, estimateTokenCount } from '@/lib/rag/chunker';
 
 export interface MCPToolDefinition {
   name: string;
@@ -11,12 +14,110 @@ export interface MCPToolDefinition {
   category: 'slack' | 'github' | 'search' | 'postgres' | 'knowledge' | 'actions';
   hasSideEffect: boolean;
   requireConfirmation: boolean;
+  /**
+   * Declared honesty flag: `true` means every outcome of this tool is a
+   * clearly-marked sandbox simulation (no live integration exists yet).
+   * Dynamic tools that CAN reach a real backend set `false` here and stamp
+   * each individual result's `simulated` field based on what actually happened.
+   */
+  simulated: boolean;
+  /** Hard execution timeout applied by the dispatcher (ms). */
+  timeoutMs?: number;
   parameters: {
     type: string;
     properties: Record<string, { type: string; description: string; enum?: string[] }>;
     required: string[];
   };
   execute: (args: Record<string, any>, ctx: { tenantId: string; userId?: string }) => Promise<any>;
+}
+
+/** Legacy tool names found in persisted tenant rows, mapped to canonical ones. */
+const TOOL_ALIASES: Record<string, string> = {
+  unstructured_transform_document: 'unstructured_parse_document',
+  unstructured_chunk_document: 'unstructured_parse_document',
+};
+
+// ---------------------------------------------------------------------------
+// Web search providers. The first configured provider wins; when none is
+// configured the tool degrades to a result explicitly stamped as simulated.
+// ---------------------------------------------------------------------------
+
+interface WebSearchHit {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs = 10000): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function tavilySearch(query: string, numResults: number, language: string): Promise<WebSearchHit[]> {
+  const apiKey = getEnv('TAVILY_API_KEY');
+  const data = await fetchJsonWithTimeout('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      max_results: numResults,
+      search_depth: 'basic',
+      topic: 'general',
+      include_answer: false,
+      lang: language,
+    }),
+  });
+  return (data?.results || []).map((r: any) => ({
+    title: r.title || '',
+    url: r.url || '',
+    snippet: r.content || r.snippet || '',
+  }));
+}
+
+async function serperSearch(query: string, numResults: number, language: string): Promise<WebSearchHit[]> {
+  const apiKey = getEnv('SERPER_API_KEY');
+  const data = await fetchJsonWithTimeout('https://google.serper.dev/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
+    body: JSON.stringify({ q: query, num: numResults, gl: language === 'ar' ? 'sa' : 'us', hl: language }),
+  });
+  return (data?.organic || []).map((r: any) => ({
+    title: r.title || '',
+    url: r.link || '',
+    snippet: r.snippet || '',
+  }));
+}
+
+async function braveSearch(query: string, numResults: number, language: string): Promise<WebSearchHit[]> {
+  const apiKey = getEnv('BRAVE_API_KEY');
+  const params = new URLSearchParams({ q: query, count: String(numResults) });
+  if (language === 'ar') params.set('search_lang', 'ar');
+  const data = await fetchJsonWithTimeout(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+    method: 'GET',
+    headers: { Accept: 'application/json', 'X-Subscription-Token': apiKey },
+  });
+  return (data?.web?.results || []).map((r: any) => ({
+    title: r.title || '',
+    url: r.url || '',
+    snippet: r.description || '',
+  }));
+}
+
+function resolveSearchProvider(): ((q: string, n: number, l: string) => Promise<WebSearchHit[]>) | null {
+  if (getEnv('TAVILY_API_KEY')) return tavilySearch;
+  if (getEnv('SERPER_API_KEY')) return serperSearch;
+  if (getEnv('BRAVE_API_KEY')) return braveSearch;
+  return null;
 }
 
 export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
@@ -28,6 +129,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'slack',
     hasSideEffect: true,
     requireConfirmation: true,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -73,6 +175,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'slack',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -115,6 +218,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'slack',
     hasSideEffect: true,
     requireConfirmation: true,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -143,6 +247,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'github',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -183,6 +288,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'github',
     hasSideEffect: true,
     requireConfirmation: true,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -221,6 +327,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'github',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -254,6 +361,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'search',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: false,
+    timeoutMs: 15000,
     parameters: {
       type: 'object',
       properties: {
@@ -264,25 +373,38 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['query'],
     },
     execute: async (args) => {
-      const { query, numResults = 3 } = args;
-      return {
-        success: true,
-        query,
-        resultsCount: numResults,
-        sources: [
-          {
-            title: 'Model Context Protocol (MCP) Specification 2026-07-28',
-            url: 'https://modelcontextprotocol.io/spec/2026-07-28',
-            snippet:
-              'Stateless MCP server protocols, Resource Indicators RFC 8707, and OAuth iss validation RFC 9207 standard specifications.',
-          },
-          {
-            title: 'OmniRAG - Architecture & Multi-Tenant Isolated Systems',
-            url: 'https://omnirag.dev/docs/architecture',
-            snippet: 'Complete 5-layer isolation guidelines for modern RAG and MCP tools integration.',
-          },
-        ],
-      };
+      const { query, numResults = 3, language = 'ar' } = args;
+
+      const provider = resolveSearchProvider();
+      if (!provider) {
+        return {
+          success: false,
+          simulated: true,
+          query,
+          reason:
+            'لا يوجد مزود بحث ويب مُهيأ. أضف أحد مفاتيح البيئة TAVILY_API_KEY أو SERPER_API_KEY أو BRAVE_API_KEY لتفعيل البحث الحي الحقيقي.',
+          sources: [],
+        };
+      }
+
+      try {
+        const hits = await provider(query, Math.min(Math.max(numResults, 1), 10), language);
+        return {
+          success: true,
+          simulated: false,
+          query,
+          resultsCount: hits.length,
+          sources: hits,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          simulated: false,
+          query,
+          error: `فشل البحث الحي: ${err?.message || err}`,
+          sources: [],
+        };
+      }
     },
   },
 
@@ -293,20 +415,47 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'search',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: false,
+    timeoutMs: 20000,
     parameters: {
       type: 'object',
       properties: {
         url: { type: 'string', description: 'رابط الصفحة أو الوثيقة المراد قراءة محتواها' },
+        maxChars: { type: 'number', description: 'الحد الأقصى لعدد أحرف النص المعاد (افتراضي 8000)' },
       },
       required: ['url'],
     },
     execute: async (args) => {
+      const { url, maxChars = 8000 } = args;
+
+      let fetched;
+      try {
+        fetched = await safeFetchText(url, { timeoutMs: 12000, maxBytes: 1024 * 1024 });
+      } catch (err: any) {
+        // Policy violations (SSRF guard, dummy endpoints) surface as honest errors.
+        return { success: false, simulated: false, url, error: err?.message || 'فشل جلب الرابط' };
+      }
+
+      if (!fetched.ok) {
+        return {
+          success: false,
+          simulated: false,
+          url,
+          error: fetched.error || `تعذر جلب المحتوى (HTTP ${fetched.status})`,
+        };
+      }
+
+      const isHtml = fetched.contentType.includes('text/html') || /^\s*<(!doctype|html)/i.test(fetched.text);
+      const extracted = isHtml ? htmlToText(fetched.text) : fetched.text.trim();
+
       return {
         success: true,
-        url: args.url,
-        mimeType: 'text/html',
-        contentLength: 2450,
-        contentSnippet: `محتوى مستخرج من ${args.url}:\nيتناول هذا الرابط أحدث المواصفات الرسمية لتطوير خوادم بروتوكول سياق النموذج (MCP) مع تطبيق أعلى معايير الحماية والأمان وعزل المستأجرين.`,
+        simulated: false,
+        url,
+        mimeType: fetched.contentType || (isHtml ? 'text/html' : 'text/plain'),
+        contentLengthBytes: fetched.bytes,
+        truncated: fetched.truncated || extracted.length > maxChars,
+        contentSnippet: extracted.slice(0, maxChars),
       };
     },
   },
@@ -319,6 +468,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'postgres',
     hasSideEffect: false,
     requireConfirmation: true,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -328,8 +478,9 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['sqlQuery'],
     },
     execute: async (args, ctx) => {
-      const { sqlQuery } = args;
-      if (!sqlQuery.toLowerCase().trim().startsWith('select')) {
+      // Accept both the canonical param and the legacy engine-era `query`.
+      const sqlQuery = args.sqlQuery ?? args.query;
+      if (!sqlQuery || !String(sqlQuery).toLowerCase().trim().startsWith('select')) {
         throw new Error('يُسمح فقط باستعلامات القراءة (SELECT) لأسباب أمنية');
       }
 
@@ -354,6 +505,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'postgres',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -387,6 +539,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: false,
+    timeoutMs: 60000,
     parameters: {
       type: 'object',
       properties: {
@@ -440,6 +594,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
               : '';
             return {
               success: true,
+              simulated: false,
               engine: 'Unstructured.io MCP Transform',
               elementsCount: Array.isArray(elements) ? elements.length : 0,
               text,
@@ -453,6 +608,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
 
       return {
         success: true,
+        simulated: true,
         engine: 'Unstructured.io MCP Transform',
         elementsCount: 2,
         text: `[Unstructured MCP Transform] تم استخراج وتنسيق محتوى المستند (${fileName}) بنجاح بدقة تخطيطية عالية مع دعم الجداول والتنسيقات المعقدة.`,
@@ -469,6 +625,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: false,
+    timeoutMs: 60000,
     parameters: {
       type: 'object',
       properties: {
@@ -512,6 +670,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
               .join('\n\n');
             return {
               success: true,
+              simulated: false,
               engine: 'Mistral Document AI API',
               totalPages: pages.length,
               markdown,
@@ -525,6 +684,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
 
       return {
         success: true,
+        simulated: true,
         engine: 'Mistral Document AI API',
         totalPages: 1,
         markdown: `### [Mistral Document AI Output]\nتم استخراج النص من المستند (${fileName}) بهيكلية Markdown متطورة وتحليل بصري دقيق للجداول والمحتوى.`,
@@ -540,30 +700,44 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: false,
+    timeoutMs: 20000,
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'سؤال أو نص الاستعلام البحثي' },
         topK: { type: 'number', description: 'عدد النظائر والقطع المراد إرجاعها (افتراضي: 4)' },
-        collectionId: { type: 'string', description: 'معرف مجموعة المستندات (اختياري)' },
+        collectionIds: {
+          type: 'string',
+          description: 'معرفات مجموعات المعرفة مفصولة بفواصل لتضييق نطاق البحث (اختياري)',
+        },
       },
       required: ['query'],
     },
     execute: async (args, ctx) => {
       const { query, topK = 4 } = args;
+      const collectionIds = String(args.collectionIds || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
 
       // Vector search from Qdrant or fallback to db chunks
+      let usedVectorBackend = false;
       try {
         const queryVector = await generateEmbedding(query);
         const qdrantResults = await searchQdrantSemantic({
           tenantId: ctx.tenantId,
           vector: queryVector,
           limit: topK,
+          collectionIds: collectionIds.length > 0 ? collectionIds : undefined,
         });
 
         if (qdrantResults && qdrantResults.length > 0) {
+          usedVectorBackend = true;
           return {
             success: true,
+            simulated: false,
+            backend: 'qdrant-vector',
             query,
             totalFound: qdrantResults.length,
             chunks: qdrantResults.map((r) => ({
@@ -579,7 +753,14 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       }
 
       // Fallback
-      const chunks = await db.getChunks(ctx.tenantId);
+      let chunks = await db.getChunks(ctx.tenantId);
+      if (collectionIds.length > 0) {
+        const docsInCollections = (await db.getDocuments(ctx.tenantId)).filter((d) =>
+          d.collectionIds?.some((c) => collectionIds.includes(c)),
+        );
+        const validDocIds = new Set(docsInCollections.map((d) => d.id));
+        chunks = chunks.filter((c) => validDocIds.has(c.documentId));
+      }
       const filtered = chunks
         .filter(
           (c) =>
@@ -590,6 +771,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
 
       return {
         success: true,
+        simulated: false,
+        backend: usedVectorBackend ? 'qdrant-vector' : 'db-keyword-fallback',
         query,
         totalFound: filtered.length,
         chunks: (filtered.length > 0 ? filtered : chunks.slice(0, topK)).map((c) => ({
@@ -609,6 +792,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -619,16 +803,131 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     },
     execute: async (args, ctx) => {
       const docs = await db.getDocuments(ctx.tenantId);
+      const needle = (args.filter || '').toLowerCase();
+      const filteredDocs = needle
+        ? docs.filter((d) => d.title.toLowerCase().includes(needle) || (d.content || '').toLowerCase().includes(needle))
+        : docs;
       return {
         success: true,
+        simulated: false,
         collectionName: args.collectionName,
-        documentsCount: docs.length,
-        documents: docs.map((d) => ({
+        documentsCount: filteredDocs.length,
+        documents: filteredDocs.map((d) => ({
           id: d.id,
           title: d.title,
           status: d.status,
           createdAt: d.createdAt,
         })),
+      };
+    },
+  },
+
+  knowledge_ingest_document: {
+    name: 'knowledge_ingest_document',
+    serverName: 'OmniRAG Core Knowledge MCP Server',
+    description:
+      'جلب محتوى من رابط ويب أو نص مباشر ومعالجته وفهرسته داخل قاعدة معرفة المؤسسة (تجزيء دلالي + فهرسة متجهية)',
+    category: 'knowledge',
+    hasSideEffect: true,
+    requireConfirmation: true,
+    simulated: false,
+    timeoutMs: 30000,
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'رابط الصفحة/الوثيقة المراد جلبها وفهرستها (أو استخدم نص مباشر)' },
+        text: { type: 'string', description: 'نص جاهز للفهرسة بدل الجلب من رابط (اختياري)' },
+        title: { type: 'string', description: 'عنوان الوثيقة في قاعدة المعرفة' },
+        collectionIds: { type: 'string', description: 'معرفات المجموعات مفصولة بفواصل (اختياري)' },
+      },
+      required: [],
+    },
+    execute: async (args, ctx) => {
+      const { url, text, title, collectionIds } = args;
+      const collections = String(collectionIds || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      let content = typeof text === 'string' && text.trim() ? text.trim() : '';
+      let fetchedFrom = 'direct-text';
+
+      if (!content && url) {
+        const fetched = await safeFetchText(url, { timeoutMs: 12000, maxBytes: 1024 * 1024 });
+        if (!fetched.ok) {
+          return {
+            success: false,
+            simulated: false,
+            url,
+            error: fetched.error || `تعذر جلب المحتوى من الرابط (HTTP ${fetched.status})`,
+          };
+        }
+        const isHtml = fetched.contentType.includes('text/html') || /^\s*<(!doctype|html)/i.test(fetched.text);
+        content = isHtml ? htmlToText(fetched.text) : fetched.text.trim();
+        fetchedFrom = url;
+      }
+
+      if (!content || content.length < 20) {
+        throw new Error('لا يوجد محتوى كافٍ للفهرسة: مرّر رابطاً صالحاً أو نصاً لا يقل عن 20 حرفاً');
+      }
+
+      const docTitle = title || (url ? `وثيقة مستجلبة من ${safeHost(url)}` : 'نص مفهرس عبر MCP');
+      const docId = `doc-mcp-ingest-${Date.now().toString().slice(-8)}`;
+      const chunkTextList = chunkDocument(content);
+
+      const newDoc = {
+        id: docId,
+        tenantId: ctx.tenantId,
+        title: docTitle,
+        content,
+        sourceType: 'integration',
+        language: 'ar',
+        status: 'indexed',
+        chunkCount: chunkTextList.length,
+        createdAt: new Date().toISOString(),
+        metadata: { ingestedVia: 'mcp_tool', origin: fetchedFrom },
+        collectionIds: collections,
+      } as any;
+      await db.addDocument(newDoc);
+
+      const chunks = chunkTextList.map(
+        (chunkText, index) =>
+          ({
+            id: `chunk-${docId}-${index + 1}`,
+            tenantId: ctx.tenantId,
+            documentId: docId,
+            documentTitle: docTitle,
+            content: chunkText,
+            chunkIndex: index,
+            pageNumber: 1,
+            language: 'ar',
+            score: 0,
+            metadata: { ingestedVia: 'mcp_tool', position: index, tokenCount: estimateTokenCount(chunkText) },
+          }) as any,
+      );
+      const indexResult = await db.addChunks(chunks);
+
+      await db.addAuditLog({
+        id: `audit-${Date.now()}-ingest`,
+        tenantId: ctx.tenantId,
+        actorId: ctx.userId || 'mcp_gateway',
+        action: 'MCP_KNOWLEDGE_INGEST',
+        resourceType: 'document',
+        resourceId: docId,
+        status: indexResult.success ? 'success' : 'error',
+        details: `تم عبر أداة MCP جلب ومعالجة وفهرسة وثيقة (${docTitle}) بعدد ${chunkTextList.length} مقطعاً دلالياً.`,
+        timestamp: new Date().toISOString(),
+      });
+
+      return {
+        success: indexResult.success,
+        simulated: false,
+        documentId: docId,
+        title: docTitle,
+        fetchedFrom,
+        charactersProcessed: content.length,
+        chunksIndexed: chunkTextList.length,
+        vectorIndexErrors: indexResult.errors,
       };
     },
   },
@@ -641,6 +940,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'actions',
     hasSideEffect: true,
     requireConfirmation: true,
+    simulated: true,
     parameters: {
       type: 'object',
       properties: {
@@ -667,6 +967,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'actions',
     hasSideEffect: false,
     requireConfirmation: false,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -691,6 +992,24 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
   },
 };
 
+function safeHost(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return rawUrl.slice(0, 60);
+  }
+}
+
+/**
+ * Resolves a tool definition by canonical name or legacy alias.
+ * Returns undefined for unknown tools — callers must treat that as an honest
+ * "no such capability" instead of fabricating a successful execution.
+ */
 export function getToolDefinition(toolName: string): MCPToolDefinition | undefined {
-  return MCP_TOOLS_REGISTRY[toolName];
+  const canonical = TOOL_ALIASES[toolName] || toolName;
+  return MCP_TOOLS_REGISTRY[canonical];
+}
+
+export function getAllToolNames(): string[] {
+  return Object.keys(MCP_TOOLS_REGISTRY);
 }

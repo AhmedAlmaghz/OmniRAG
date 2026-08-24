@@ -42,8 +42,14 @@ export async function seedNewTenant(tenantId: string, tenantName: string): Promi
     status: 'healthy',
     latencyMs: 120,
     lastChecked: new Date().toISOString(),
-    enabledTools: ['web_live_search', 'fetch_url_content', 'knowledge_ingest_document', 'external_postgres_query'],
-    requireConfirmationTools: ['external_postgres_query'],
+    enabledTools: [
+      'search_knowledge_base',
+      'knowledge_ingest_document',
+      'web_live_search',
+      'fetch_url_content',
+      'external_postgres_query',
+    ],
+    requireConfirmationTools: ['external_postgres_query', 'knowledge_ingest_document'],
   };
   await db.addMcpServer(initialMcpServer);
 
@@ -51,11 +57,12 @@ export async function seedNewTenant(tenantId: string, tenantName: string): Promi
     id: `mcp-unstructured-transform-${tenantId.slice(-6)}`,
     tenantId,
     name: 'Unstructured Transform',
-    description: 'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
+    description:
+      'Connect to the official Unstructured Transform MCP server for advanced document transform, clean and chunk pipelines.',
     endpointUrl: 'https://mcp.transform.unstructured.io',
     protocolVersion: '2026-07-28',
     sandboxTier: 'T2_ELEVATED',
-    enabledTools: ['unstructured_transform_document', 'unstructured_chunk_document'],
+    enabledTools: ['unstructured_parse_document', 'mistral_document_ai_parse'],
     requireConfirmationTools: [],
     status: 'healthy',
     latencyMs: 45,
@@ -79,7 +86,7 @@ export async function seedNewTenant(tenantId: string, tenantName: string): Promi
 
   const welcomeTitle = `دليل التشغيل لمنصة OmniRAG في ${tenantName}`;
   const welcomeContent = `مرحباً بك في منصة OmniRAG المؤسسية المتقدمة لـ (${tenantName})!\n\nهذه المساحة مخصصة ومعزولة بالكامل رقمياً باستخدام نظام Row-Level Security (RLS) ومؤمنة حتمياً بواسطة خطافات HookHarness الأمنية لمنع تسريب البيانات وعزل المستأجرين.\n\nخطوات تشغيلية موصى بها:\n1. استكشف استوديو المحادثة المعززة الذكي للتفاعل مع ملفاتك.\n2. ارفع وثائق أو ملفات PDF جديدة في مستودع المعرفة للتقسيم والفهرسة التلقائية.\n3. أدر واختبر موصلات البيانات وخوادم MCP في بوابة الأدوات الخارجية.\n4. تابع سجلات التدقيق والتحليلات الأمنية الفورية في مركز الحوكمة والأمن.`;
-  
+
   const welcomeDoc: Document = {
     id: docId,
     tenantId,
@@ -88,7 +95,8 @@ export async function seedNewTenant(tenantId: string, tenantName: string): Promi
     sourceType: 'file',
     language: 'ar',
     status: 'indexed',
-    chunkCount: 1,    createdAt: new Date().toISOString(),
+    chunkCount: 1,
+    createdAt: new Date().toISOString(),
     metadata: { sourceId, author: 'منصة OmniRAG' },
     collectionIds: [colId],
   };

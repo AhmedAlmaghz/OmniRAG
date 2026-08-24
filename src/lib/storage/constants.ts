@@ -343,7 +343,7 @@ export const INITIAL_MCP_SERVERS: MCPServerConfig[] = [
     endpointUrl: 'https://mcp.transform.unstructured.io',
     protocolVersion: '2026-07-28',
     sandboxTier: 'T2_ELEVATED',
-    enabledTools: ['unstructured_transform_document', 'unstructured_chunk_document'],
+    enabledTools: ['unstructured_parse_document', 'mistral_document_ai_parse'],
     requireConfirmationTools: [],
     status: 'healthy',
     latencyMs: 45,

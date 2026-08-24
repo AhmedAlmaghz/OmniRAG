@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { MCPServerConfig } from '@/lib/types/omnirag';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { probeEndpoint } from '@/lib/mcp/net';
+import { mcpClientPool } from '@/lib/mcp/client-pool';
 
 export const dynamic = 'force-dynamic';
 
@@ -146,52 +148,12 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         return NextResponse.json({ error: 'Server not found' }, { status: 404 });
       }
 
-      const startTime = Date.now();
-      let status: 'healthy' | 'degraded' | 'down' = 'healthy';
-      let latencyMs = 0;
-      let errorMsg = '';
-
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-        const requestHeaders: Record<string, string> = {
-          Accept: 'application/json',
-          ...(server.headers || {}),
-        };
-
-        const response = await fetch(server.endpointUrl, {
-          method: 'GET',
-          signal: controller.signal,
-          headers: requestHeaders,
-        });
-        clearTimeout(timeoutId);
-
-        latencyMs = Date.now() - startTime;
-        if (response.ok) {
-          status = 'healthy';
-        } else {
-          status = 'degraded';
-          errorMsg = `HTTP Error ${response.status}: ${response.statusText}`;
-        }
-      } catch (err: any) {
-        latencyMs = Date.now() - startTime;
-        status = 'down';
-        console.error(`[mcp/test] Connection to ${server.endpointUrl} failed:`, err);
-        errorMsg = 'تعذر الاتصال بالخادم (مهلة أو رفض الاتصال).';
-      }
-
-      // Handle dummy/seeded endpoints gracefully in developer environments
-      const isDummy =
-        server.endpointUrl.includes('.internal') ||
-        server.endpointUrl.includes('example.com') ||
-        server.endpointUrl.startsWith('/');
-      if (isDummy && status === 'down') {
-        status = 'healthy';
-        // Dummy/seeded endpoints have nothing real to probe; report the measured
-        // probe-attempt duration instead of fabricating a latency value.
-        latencyMs = Math.max(1, Date.now() - startTime);
-      }
+      // Shared probe with the MCP client pool (lib/mcp/net.probeEndpoint):
+      // real network round-trip with timeout, SSRF guard, and honest
+      // measured-latency reporting for dummy/seeded endpoints.
+      const probe = await probeEndpoint(server.endpointUrl, server.headers || {});
+      const { status, latencyMs } = probe;
+      const errorMsg = probe.error || '';
 
       const updatedServer = {
         ...server,
@@ -200,6 +162,10 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         lastChecked: new Date().toISOString(),
       };
       await db.addMcpServer(updatedServer);
+
+      // Refresh the pooled health cache so subsequent probes don't serve the
+      // stale pre-ping status for up to a minute.
+      mcpClientPool.clearCache(tenantId);
 
       // Add to audit logs
       await db.addAuditLog({

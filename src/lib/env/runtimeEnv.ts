@@ -16,6 +16,10 @@ export const ALLOWED_RUNTIME_ENV_KEYS = new Set<string>([
   'UNSTRUCTURED_API_KEY',
   'GEMINI_API_KEY',
   'GOOGLE_GENERATIVE_AI_API_KEY',
+  // Optional MCP web-search provider keys (web_live_search tool)
+  'TAVILY_API_KEY',
+  'SERPER_API_KEY',
+  'BRAVE_API_KEY',
   'APP_URL',
   'ALLOWED_ORIGINS',
   'PG_TLS_REJECT_UNAUTHORIZED',

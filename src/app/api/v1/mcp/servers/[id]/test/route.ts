@@ -2,11 +2,25 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
 import { mcpClientPool } from '@/lib/mcp/client-pool';
+import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const dynamic = 'force-dynamic';
 
 export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
+    // Hydrate runtime-provided keys so a real tool-call test resolves the
+    // caller's configured environment (search providers, parsers, storage).
+    getEnv('GEMINI_API_KEY', req);
+    getEnv('UNSTRUCTURED_API_KEY', req);
+    getEnv('MISTRAL_API_KEY', req);
+    getEnv('TAVILY_API_KEY', req);
+    getEnv('SERPER_API_KEY', req);
+    getEnv('BRAVE_API_KEY', req);
+    getEnv('DATABASE_URL', req);
+    getEnv('POSTGRES_URL', req);
+    getEnv('QDRANT_URL', req);
+    getEnv('QDRANT_API_KEY', req);
+
     const { id } = await (props as { params: Promise<{ id: string }> }).params;
     const body = await req.json().catch(() => ({}));
     const tenantId = authCtx.tenantId;

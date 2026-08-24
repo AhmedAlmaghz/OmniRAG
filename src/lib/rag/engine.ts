@@ -9,8 +9,37 @@ import { rerankChunks } from './reranker';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { getAiModel } from '../config/aiModels';
 import { getEnv } from '../env/runtimeEnv';
-import { randomUUID } from 'crypto';
 import { SYSTEM_CONFIG } from '../config/systemConfig';
+import { MCPToolDefinition, getToolDefinition } from '../mcp/registry/tools';
+import { ToolExecutionOutcome, executeMcpToolCall } from '../mcp/dispatcher';
+
+/**
+ * Dispatcher wrapper that converts hard failures (e.g. a model-hallucinated
+ * unknown tool name) into a failed outcome instead of throwing, so the chat
+ * loop can explain the failure to the user rather than collapsing into the
+ * deterministic fallback response.
+ */
+async function runToolSafely(
+  tenantId: string,
+  toolName: string,
+  args: Record<string, any>,
+  conversationId?: string,
+): Promise<ToolExecutionOutcome> {
+  try {
+    return await executeMcpToolCall(toolName, args, { tenantId, conversationId });
+  } catch (err: any) {
+    const message = err?.message || 'الأداة غير قابلة للتنفيذ';
+    return {
+      toolName,
+      result: { success: false, error: message },
+      latencyMs: 0,
+      isError: true,
+      errorMessage: message,
+      source: 'registry',
+      simulated: false,
+    };
+  }
+}
 
 // Singleton AI Client instance for agentic MCP calls
 let globalAiClient: GoogleGenAI | null = null;
@@ -32,86 +61,40 @@ function getMcpAiClient(): GoogleGenAI {
   return globalAiClient;
 }
 
-// Definitions of supported MCP tools and their parameter schemas for Gemini
-const MCP_TOOL_DEFINITIONS: Record<string, { description: string; properties: any; required: string[] }> = {
-  slack_send_message: {
-    description: 'Send a message to a slack channel for team communication/notification',
-    properties: {
-      channel: {
-        type: Type.STRING,
-        description: 'The target slack channel starting with #, e.g. #general, #security-alerts',
-      },
-      message: { type: Type.STRING, description: 'The message content to send' },
-    },
-    required: ['channel', 'message'],
-  },
-  slack_post_alert: {
-    description: 'Post a high-priority security or system alert to slack',
-    properties: {
-      channel: { type: Type.STRING, description: 'The target channel starting with #, e.g. #security-alerts' },
-      message: { type: Type.STRING, description: 'The security/system alert description' },
-    },
-    required: ['channel', 'message'],
-  },
-  slack_read_channel: {
-    description: 'Read recent chat history or message logs from a slack channel',
-    properties: {
-      channel: { type: Type.STRING, description: 'The slack channel name to read, e.g. #general' },
-    },
-    required: ['channel'],
-  },
-  github_search_code: {
-    description: 'Search across the repository files for specific keywords, methods or classes',
-    properties: {
-      query: { type: Type.STRING, description: 'The search query/keyword' },
-    },
-    required: ['query'],
-  },
-  github_create_issue: {
-    description: 'Create a new issue in the GitHub repository for tracking bug reports or security concerns',
-    properties: {
-      repo: { type: Type.STRING, description: 'The repository name, e.g. security-audit' },
-      title: { type: Type.STRING, description: 'The issue title' },
-      body: { type: Type.STRING, description: 'The issue body/description' },
-    },
-    required: ['repo', 'title'],
-  },
-  github_read_repo: {
-    description: 'Retrieve summary and information about the target GitHub repository',
-    properties: {
-      repo: { type: Type.STRING, description: 'The repository name to read' },
-    },
-    required: ['repo'],
-  },
-  web_live_search: {
-    description: 'Execute a web search query to retrieve real-time external information or security policies',
-    properties: {
-      query: { type: Type.STRING, description: 'The search query' },
-    },
-    required: ['query'],
-  },
-  fetch_url_content: {
-    description: 'Fetch and extract text content from a specific web URL',
-    properties: {
-      url: { type: Type.STRING, description: 'The exact URL to fetch' },
-    },
-    required: ['url'],
-  },
-  external_postgres_query: {
-    description: 'Execute a secure Postgres SQL query on the external registered database',
-    properties: {
-      query: { type: Type.STRING, description: 'The safe SQL statement to execute' },
-    },
-    required: ['query'],
-  },
-  get_table_schema: {
-    description: 'Describe the database schema/columns for a specific table',
-    properties: {
-      tableName: { type: Type.STRING, description: 'The name of the database table' },
-    },
-    required: ['tableName'],
-  },
+/**
+ * Maps a central-registry JSON-schema parameter type onto the Gemini SDK Type
+ * enum. The registry (src/lib/mcp/registry/tools.ts) is the single source of
+ * truth for tool schemas — the model-facing declarations are DERIVED from it
+ * here, so adding a tool never requires touching the chat engine again.
+ */
+const REGISTRY_TYPE_TO_GEMINI: Record<string, any> = {
+  string: Type.STRING,
+  number: Type.NUMBER,
+  integer: Type.NUMBER,
+  boolean: Type.BOOLEAN,
+  array: Type.ARRAY,
+  object: Type.OBJECT,
 };
+
+function toGeminiFunctionDeclaration(def: MCPToolDefinition): FunctionDeclaration {
+  const properties: Record<string, any> = {};
+  for (const [propName, prop] of Object.entries(def.parameters.properties || {})) {
+    properties[propName] = {
+      type: REGISTRY_TYPE_TO_GEMINI[prop.type] || Type.STRING,
+      description: prop.description,
+      ...(prop.enum && prop.enum.length > 0 ? { enum: prop.enum } : {}),
+    };
+  }
+  return {
+    name: def.name,
+    description: def.description,
+    parameters: {
+      type: Type.OBJECT,
+      properties,
+      required: def.parameters.required,
+    },
+  };
+}
 
 /**
  * Build the numbered citation list from retrieved context chunks.
@@ -131,181 +114,6 @@ function buildCitations(contextChunks: DocumentChunk[]): Citation[] {
     snippet: chunk.content.substring(0, 120) + '...',
     sourceUrl: getCitationSourceUrl(chunk),
   }));
-}
-
-/**
- * Execute MCP Tool in a simulated/secure manner and log to Audit Logs.
- *
- * IMPORTANT — SIMULATION NOTICE: every branch below returns CANNED demo data,
- * not live integrations. There is no real Slack/GitHub/web/Postgres call
- * behind these tools yet. Each result is therefore stamped with
- * `__simulated: true` so downstream consumers (and the UI) can distinguish a
- * simulated outcome from a real one, and the audit log records the execution
- * as simulated. Replacing these branches with real MCP client calls is the
- * intended next step; until then, honesty about the simulation is enforced at
- * the data level.
- */
-async function executeMcpTool(tenantId: string, toolName: string, args: any): Promise<any> {
-  let result: any;
-  let success = true;
-  const startedAt = Date.now();
-
-  try {
-    switch (toolName) {
-      case 'slack_send_message':
-      case 'slack_post_alert':
-        result = {
-          success: true,
-          messageId: `msg-slack-${Date.now()}`,
-          channel: args.channel || '#general',
-          message: args.message || '',
-          timestamp: new Date().toISOString(),
-          status: 'delivered',
-        };
-        break;
-
-      case 'slack_read_channel':
-        result = [
-          {
-            user: 'سارة (أمن المعلومات)',
-            text: `تم رصد هجمات محاكاة على بوابة المستأجر ${tenantId}`,
-            timestamp: 'قبل 10 دقائق',
-          },
-          { user: 'منذر (مهندس النظم)', text: 'جميع شهادات SSL نشطة ومحدثة لعام 2026', timestamp: 'قبل ساعة' },
-          { user: 'Bot', text: 'تم تحديث سياسات الحماية لمستوى Sandbox للجميع', timestamp: 'قبل ساعتين' },
-        ];
-        break;
-
-      case 'github_search_code': {
-        const queryVal = (args.query || '').toLowerCase();
-        result = [
-          { file: 'src/lib/rag/engine.ts', line: 42, match: `found keyword: ${queryVal}`, repo: 'omnirag-monorepo' },
-          {
-            file: 'src/lib/storage/db.ts',
-            line: 884,
-            match: `getMcpServers query: ${queryVal}`,
-            repo: 'omnirag-monorepo',
-          },
-        ];
-        break;
-      }
-
-      case 'github_create_issue':
-        result = {
-          success: true,
-          issueNumber: 204,
-          title: args.title || 'تنبيه أمني من OmniRAG',
-          repo: args.repo || 'security-audit',
-          url: `https://github.com/omnirag-org/${args.repo || 'security-audit'}/issues/204`,
-        };
-        break;
-
-      case 'github_read_repo': {
-        const targetRepo = (args.repo || args.url || 'omnirag-org/core').toString();
-        result = {
-          repository: targetRepo,
-          fullName: targetRepo,
-          description: `GitHub Repository: ${targetRepo}`,
-          visibility: 'public',
-          defaultBranch: 'main',
-          languages: { TypeScript: '82%', CSS: '12%', HTML: '6%' },
-          mainFilesAndDirs: [
-            { name: 'src/index.ts', description: 'Main entry point' },
-            { name: 'README.md', description: 'Project documentation' },
-            { name: 'package.json', description: 'Package configuration' },
-          ],
-          lastCommit: 'Refactored RRF & Security - 2026-08-11',
-        };
-        break;
-      }
-
-      case 'web_live_search': {
-        result = [
-          {
-            title: 'معايير أمن المعلومات ISO27001 لعام 2026',
-            snippet: 'التحديثات الأخيرة تركز على عزل بيانات المستأجرين في بيئات الحوسبة السحابية المشتركة والمحسنة.',
-            url: 'https://iso.org/standards/27001-2026',
-          },
-          {
-            title: 'حماية تطبيقات الويب من ثغرات Prompt Injection',
-            snippet: 'تقنيات الفلترة الحتمية والحظر الاستباقي هي خط الدفاع الأول ضد محاولات تسريب المفاتيح السرية.',
-            url: 'https://owasp.org/www-project-top-ten',
-          },
-        ];
-        break;
-      }
-
-      case 'fetch_url_content': {
-        const urlStr = (args.url || '').trim();
-        result = {
-          url: urlStr || 'https://example.com',
-          title: 'بيان الحماية والسرية المعتمد',
-          content:
-            'يلتزم النظام بأعلى معايير حماية البيانات وتشفيرها أثناء النقل والتخزين، مع الفحص المستمر عبر الحواجز الأمنية للتحقق من هوية المستأجرين وتصاريحهم.',
-        };
-        break;
-      }
-
-      case 'external_postgres_query':
-        result = [
-          { id: 1, table: 'users_log', action: 'LOGIN', status: 'SUCCESS', ip: '192.168.1.45' },
-          { id: 2, table: 'users_log', action: 'READ_DOCUMENT', status: 'DENIED', ip: '192.168.1.110' },
-        ];
-        break;
-
-      case 'get_table_schema':
-        result = {
-          tableName: args.tableName || 'users_log',
-          columns: [
-            { name: 'id', type: 'UUID', primary: true },
-            { name: 'tenant_id', type: 'VARCHAR(50)', nullable: false },
-            { name: 'action', type: 'VARCHAR(100)' },
-            { name: 'status', type: 'VARCHAR(20)' },
-            { name: 'ip_address', type: 'VARCHAR(45)' },
-            { name: 'timestamp', type: 'TIMESTAMP', default: 'NOW()' },
-          ],
-        };
-        break;
-
-      default:
-        result = {
-          success: true,
-          tool: toolName,
-          args: args,
-          message: 'تم تنفيذ الأداة المخصصة بنجاح عبر بوابة الـ MCP بنظام الحماية والـ Sandbox المحكم.',
-          timestamp: new Date().toISOString(),
-        };
-    }
-  } catch (error: any) {
-    success = false;
-    result = { error: error.message || 'Failed to execute tool' };
-  }
-
-  // Stamp every outcome as simulated until real MCP client wiring replaces the
-  // canned branches above. This makes the simulation visible to the UI and to
-  // anyone reading tool-call records, instead of presenting demo data as live.
-  if (result && typeof result === 'object' && !Array.isArray(result)) {
-    result.__simulated = true;
-  } else if (Array.isArray(result)) {
-    result = { __simulated: true, items: result };
-  } else {
-    result = { __simulated: true, value: result };
-  }
-
-  // Log in Audit Logs — explicitly marked as a simulated execution.
-  await db.addAuditLog({
-    id: `audit-${randomUUID()}`,
-    tenantId,
-    actorId: 'mcp_gateway_agent',
-    action: 'MCP_TOOL_EXECUTED_SIMULATED',
-    resourceType: 'mcp_tool',
-    resourceId: toolName,
-    status: success ? 'success' : 'error',
-    details: `تنفيذ محاكى للأداة (${toolName}) — البيانات المعادة تجريبية وليست تكاملا حيا. المدخلات: ${JSON.stringify(args)}. المدة: ${Date.now() - startedAt}ms`,
-    timestamp: new Date().toISOString(),
-  });
-
-  return result;
 }
 
 /**
@@ -707,21 +515,26 @@ export async function generateRagCompletion(params: {
   const alreadyExecutedToolCalls: MCPToolCall[] = [];
 
   if (approvedToolCall) {
-    const approvedStartedAt = Date.now();
-    const executedResult = await executeMcpTool(
+    // Human-approved side-effect call — executed through the SAME unified MCP
+    // dispatcher used by the protocol gateway, so audit persistence, timeouts
+    // and simulation stamping behave identically in both paths.
+    const outcome = await runToolSafely(
       tenantId,
       approvedToolCall.scopedToolName,
       approvedToolCall.inputParams,
+      approvedToolCall.conversationId,
     );
     alreadyExecutedToolCalls.push({
       ...approvedToolCall,
-      status: 'completed',
-      outputResult: executedResult,
-      latencyMs: Date.now() - approvedStartedAt,
+      status: outcome.isError ? 'failed' : 'completed',
+      outputResult: outcome.result,
+      latencyMs: outcome.latencyMs,
       timestamp: new Date().toISOString(),
     });
 
-    promptText = `${promptText}\n\n[تأكيد تنفيذ أداة الـ MCP]: تمت الموافقة البشرية بنجاح وتم إرجاع نتيجة الأداة (${approvedToolCall.scopedToolName}):\n${JSON.stringify(executedResult, null, 2)}\n\nيرجى دمج هذه البيانات وصياغة الرد النهائي للمستخدم.`;
+    promptText = `${promptText}\n\n[تأكيد تنفيذ أداة الـ MCP]: تمت الموافقة البشرية بنجاح وتم إرجاع نتيجة الأداة (${approvedToolCall.scopedToolName}):\n${JSON.stringify(outcome.result, null, 2)}\n\nيرجى دمج هذه البيانات وصياغة الرد النهائي للمستخدم.${
+      outcome.isError ? '\nملاحظة: فشل تنفيذ الأداة — وضّح ذلك للمستخدم بلطف واقترح بديلاً.' : ''
+    }`;
   }
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
@@ -765,9 +578,11 @@ export async function generateRagCompletion(params: {
 4. رد بشكل طبيعي ومتصل كأنك تعرف تاريخ المحادثة.
 
 توجيهات واستخدام أدوات الـ MCP:
-1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، فيجب عليك فوراً استدعاء الأداة المناسبة عبر Function Call.
-2. ملاحظة مهمة: هذه الأدوات تعمل حاليا في وضع المحاكاة التجريبي (Sandbox Simulation) — النتائج المعادة منها بيانات توضيحية وليست تكاملا حيا مع الخدمات الخارجية. إذا ظهرت في النتيجة علامة "__simulated"، وضح للمستخدم بلطف أن البيانات المعادة تجريبية.
-3. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمان طلب الموافقة البشرية قبل التنفيذ تلقائياً.
+1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، أو البحث في قاعدة المعرفة (search_knowledge_base) أو فهرسة محتوى جديد فيها (knowledge_ingest_document)، فيجب عليك فوراً استدعاء الأداة المناسبة عبر Function Call.
+2. اختر دائماً الأداة الأنسب لنية المستخدم، ومرّر المدخلات المطلوبة كاملة وصحيحة حسب مخطط كل أداة. إذا لم تكن أي أداة مناسبة، أجب من المستندات المتاحة مباشرة دون استدعاء.
+3. ملاحظة صدق البيانات: بعض النتائج تأتي موسومة بـ "simulated: true" وهي بيانات تجريبية توضيحية وليست تكاملاً حياً — وضّح للمستخدم بلطف أن هذه البيانات تجريبية. أما النتائج الموسومة بـ "simulated: false" فهي من تكامل حقيقي.
+4. إذا فشلت الأداة وأعادت خطأً، لا تختلق نتائج: اعتذر باختصار، اشرح سبب الفشل، واقترح خطوة بديلة.
+5. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمان طلب الموافقة البشرية قبل التنفيذ تلقائياً.
 
 قواعد الإسناد والاستشهاد المضمن:
 1. عند استخدام معلومة من المستندات المرفقة، ضع رقم الاستشهاد مباشرة في النص كرقم بين أقواس مربعة مثل [1] أو [2] المطابق لرقم المصدر.
@@ -783,17 +598,11 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
           if (seenToolNames.has(toolName)) continue;
           seenToolNames.add(toolName);
 
-          const def = MCP_TOOL_DEFINITIONS[toolName];
+          // Schemas are derived from the central MCP registry — a single
+          // source of truth shared with the protocol gateway.
+          const def = getToolDefinition(toolName);
           if (def) {
-            functionDeclarations.push({
-              name: toolName,
-              description: def.description,
-              parameters: {
-                type: Type.OBJECT,
-                properties: def.properties,
-                required: def.required,
-              },
-            });
+            functionDeclarations.push(toGeminiFunctionDeclaration(def));
           }
         }
       }
@@ -812,8 +621,12 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
       if (functionCalls && functionCalls.length > 0) {
         const fc = functionCalls[0];
         const toolName = fc.name || '';
-        const args = fc.args as Record<string, any>;
-        const isApprovalRequired = requireApprovalTools.includes(toolName);
+        const args = (fc.args || {}) as Record<string, any>;
+        const toolDef = getToolDefinition(toolName);
+
+        // Approval gate: per-server confirmation list OR the registry's own
+        // side-effect declaration for the tool.
+        const isApprovalRequired = requireApprovalTools.includes(toolName) || (toolDef?.requireConfirmation ?? false);
 
         if (isApprovalRequired) {
           const pendingCall: MCPToolCall = {
@@ -823,7 +636,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             inputParams: args,
             latencyMs: 0,
             status: 'pending',
-            hasSideEffect: true,
+            hasSideEffect: toolDef?.hasSideEffect ?? true,
             timestamp: new Date().toISOString(),
           };
 
@@ -835,11 +648,15 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
             pendingToolCall: pendingCall,
           };
         } else {
-          const toolCallStartedAt = Date.now();
-          const toolResult = await executeMcpTool(tenantId, toolName, args);
-          const toolCallLatencyMs = Date.now() - toolCallStartedAt;
+          // Auto-executed read-only call — same unified dispatcher as the
+          // gateway (timeouts, audit persistence, simulation stamping).
+          const outcome = await runToolSafely(tenantId, toolName, args);
 
-          const secondPrompt = `${promptText}\n\n[أداة الـ MCP المنفذة تلقائياً]: تم تنفيذ الأداة (${toolName}) بنجاح وإرجاع المخرجات التالية:\n${JSON.stringify(toolResult, null, 2)}\n\nيرجى صياغة الاستجابة النهائية للمستخدم بناءً على هذه المخرجات والمستندات المتاحة.`;
+          const secondPrompt = `${promptText}\n\n[أداة الـ MCP المنفذة تلقائياً]: تم استدعاء الأداة (${toolName}) وإرجاع المخرجات التالية:\n${JSON.stringify(outcome.result, null, 2)}\n\n${
+            outcome.isError
+              ? 'فشل تنفيذ الأداة — اعتذر للمستخدم بلطف، اشرح سبب الفشل باختصار، واقترح خطوة بديلة دون اختلاق نتائج.'
+              : 'يرجى صياغة الاستجابة النهائية للمستخدم بناءً على هذه المخرجات والمستندات المتاحة.'
+          }`;
 
           const secondResponse = await aiClient.models.generateContent({
             model: modelAlias,
@@ -866,10 +683,10 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
                 tenantId,
                 scopedToolName: toolName,
                 inputParams: args,
-                outputResult: toolResult,
-                latencyMs: toolCallLatencyMs,
-                status: 'completed',
-                hasSideEffect: false,
+                outputResult: outcome.result,
+                latencyMs: outcome.latencyMs,
+                status: outcome.isError ? 'failed' : 'completed',
+                hasSideEffect: toolDef?.hasSideEffect ?? false,
                 timestamp: new Date().toISOString(),
               },
             ],

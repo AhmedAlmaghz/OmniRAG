@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { processMcpProtocolRequest } from '@/lib/mcp/server-factory';
+import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,10 +12,28 @@ export const dynamic = 'force-dynamic';
  * Tenant identity is derived exclusively from the verified auth context.
  */
 
+// Hydrate runtime-provided keys so tool executions inside the gateway (web
+// search providers, document parsers, storage backends) resolve the caller's
+// configured environment.
+function hydrateToolRuntimeEnv(req: NextRequest) {
+  getEnv('GEMINI_API_KEY', req);
+  getEnv('UNSTRUCTURED_API_KEY', req);
+  getEnv('MISTRAL_API_KEY', req);
+  getEnv('TAVILY_API_KEY', req);
+  getEnv('SERPER_API_KEY', req);
+  getEnv('BRAVE_API_KEY', req);
+  getEnv('DATABASE_URL', req);
+  getEnv('POSTGRES_URL', req);
+  getEnv('QDRANT_URL', req);
+  getEnv('QDRANT_API_KEY', req);
+}
+
 export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
     const tenantId = authCtx.tenantId;
     const userId = authCtx.userId;
+
+    hydrateToolRuntimeEnv(req);
 
     const body = await req.json();
 
@@ -47,6 +66,8 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props
 
 export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   const tenantId = authCtx.tenantId;
+
+  hydrateToolRuntimeEnv(req);
 
   // Return protocol capabilities and active gateway information
   const initInfo = await processMcpProtocolRequest(

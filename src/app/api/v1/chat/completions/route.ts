@@ -17,6 +17,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('GEMINI_API_KEY', req);
   getEnv('UNSTRUCTURED_API_KEY', req);
   getEnv('MISTRAL_API_KEY', req);
+  getEnv('TAVILY_API_KEY', req);
+  getEnv('SERPER_API_KEY', req);
+  getEnv('BRAVE_API_KEY', req);
   getEnv('DATABASE_URL', req);
   getEnv('POSTGRES_URL', req);
   getEnv('QDRANT_URL', req);
