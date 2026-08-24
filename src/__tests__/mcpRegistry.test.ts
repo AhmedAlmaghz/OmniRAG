@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
  */
 import { MCP_TOOLS_REGISTRY, getToolDefinition } from '../lib/mcp/registry/tools';
 import { INITIAL_MCP_SERVERS } from '../lib/storage/constants';
+import { MCP_SERVER_PRESETS } from '../lib/mcp/presets';
 
 const SEED_TENANT_ACTION_CORE_TOOLS = [
   'search_knowledge_base',
@@ -68,5 +69,54 @@ describe('MCP tools registry', () => {
     const search = getToolDefinition('search_knowledge_base')!;
     expect(search.hasSideEffect).toBe(false);
     expect(search.requireConfirmation).toBe(false);
+  });
+
+  it('exposes the document-to-markdown pipeline tools for uploads', () => {
+    const parseTool = getToolDefinition('unstructured_parse_document')!;
+    expect(parseTool.parameters.properties.fileData).toBeUndefined();
+    expect(parseTool.parameters.properties.documentUrl).toBeDefined();
+    // Long OCR round-trips need a generous dispatcher timeout.
+    expect(parseTool.timeoutMs!).toBeGreaterThanOrEqual(60000);
+    expect(getToolDefinition('mistral_document_ai_parse')).toBeDefined();
+  });
+});
+
+describe('MCP server presets catalog', () => {
+  it('only references registered (or aliased) tools in every preset', () => {
+    for (const preset of MCP_SERVER_PRESETS) {
+      for (const tool of preset.enabledTools) {
+        expect({ preset: preset.id, tool, resolved: !!getToolDefinition(tool) }).toEqual({
+          preset: preset.id,
+          tool,
+          resolved: true,
+        });
+      }
+      // Confirmation list must be a subset of enabled tools.
+      for (const tool of preset.requireConfirmationTools) {
+        expect(preset.enabledTools).toContain(tool);
+      }
+    }
+  });
+
+  it('has unique ids and includes the famous servers users expect', () => {
+    const ids = MCP_SERVER_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const expected of [
+      'unstructured-transform',
+      'knowledge-core',
+      'web-search',
+      'youtube-intelligence',
+      'slack',
+      'github',
+      'postgres-analytics',
+    ]) {
+      expect(ids).toContain(expected);
+    }
+  });
+
+  it('marks the Unstructured Transform preset with upload-processing + markdown extraction tools', () => {
+    const preset = MCP_SERVER_PRESETS.find((p) => p.id === 'unstructured-transform')!;
+    expect(preset.enabledTools).toContain('unstructured_parse_document');
+    expect(preset.enabledTools).toContain('knowledge_ingest_document');
   });
 });

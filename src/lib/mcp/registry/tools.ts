@@ -2,10 +2,40 @@ import { db } from '@/lib/storage/db';
 import { generateEmbedding } from '@/lib/rag/embedding';
 import { searchQdrantSemantic } from '@/lib/storage/qdrant';
 import { randomInt } from '@/lib/crypto/webRandom';
-import { getAiModel } from '@/lib/config/aiModels';
 import { getEnv } from '@/lib/env/runtimeEnv';
-import { assertPublicHttpUrl, htmlToText, safeFetchText } from '../net';
+import { htmlToText, safeFetchBinary, safeFetchText } from '../net';
 import { chunkDocument, estimateTokenCount } from '@/lib/rag/chunker';
+import { dispatchFile, mistralOcr, normalizeMimeType } from '@/lib/services/unstructuredService';
+import { processYoutubeTranscript } from '@/lib/youtube/transcriptParser';
+
+/**
+ * Resolves a document reference into a Buffer for the shared parsing pipeline.
+ * Accepts data URLs (uploaded files), public http(s) links, raw base64, or
+ * plain text — the same input shapes the ingestion surfaces accept. Network
+ * fetches go through the SSRF guard with timeout + size caps.
+ */
+async function resolveDocumentBuffer(documentRef: string): Promise<Buffer> {
+  if (documentRef.startsWith('data:')) {
+    return Buffer.from(documentRef.split(',')[1] || '', 'base64');
+  }
+  if (/^https?:\/\//i.test(documentRef)) {
+    const fetched = await safeFetchBinary(documentRef, { timeoutMs: 30000 });
+    if (!fetched.ok) {
+      throw new Error(fetched.error || `تعذر جلب الملف من الرابط (HTTP ${fetched.status})`);
+    }
+    return fetched.bytes;
+  }
+  // Raw base64 or plain-text fallback: valid base64 round-trips losslessly.
+  const decoded = Buffer.from(documentRef, 'base64');
+  if (
+    decoded.length > 0 &&
+    decoded.toString('base64').replace(/\s/g, '').length >=
+      documentRef.replace(/\s/g, '').replace(/=/g, '').length * 0.9
+  ) {
+    return decoded;
+  }
+  return Buffer.from(documentRef, 'utf-8');
+}
 
 export interface MCPToolDefinition {
   name: string;
@@ -533,85 +563,80 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
   // --- 5. KNOWLEDGE BASE & RAG MCP SERVER TOOLS ---
   unstructured_parse_document: {
     name: 'unstructured_parse_document',
-    serverName: 'OmniRAG Core Knowledge MCP Server',
+    serverName: 'Unstructured Transform MCP Server',
     description:
-      'معالجة وتحويل المستندات المعقدة والمتعددة (PDF, DOCX, PPTX, HTML) إلى عناصر هيكلية Markdown باستخدام Unstructured.io MCP Transform',
+      'معالجة وتحويل الملفات المرفوعة والمستندات (PDF, DOCX, PPTX, Excel, صور، صوت وفيديو) إلى محتوى Markdown منظّم باستخدام خط Unstructured Transform متعدد المحركات',
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
     simulated: false,
-    timeoutMs: 60000,
+    timeoutMs: 120000,
     parameters: {
       type: 'object',
       properties: {
-        documentUrl: { type: 'string', description: 'رابط الملف أو محتوى Base64 للمستند المراد معالجته' },
-        fileName: { type: 'string', description: 'اسم الملف الأصلي مع الامتداد (مثل document.pdf)' },
+        documentUrl: {
+          type: 'string',
+          description: 'مرجع المستند: رابط http(s) عام، أو Data URL للملف المرفوع، أو محتوى Base64',
+        },
+        fileName: {
+          type: 'string',
+          description: 'اسم الملف الأصلي مع الامتداد (مثل report.pdf) — يحدد المحرك المناسب',
+        },
         strategy: {
           type: 'string',
-          description: 'استراتيجية التحويل: hi_res أو fast أو ocr_only',
+          description: 'استراتيجية التحويل للـ PDF/الصور: hi_res أو fast أو ocr_only',
           enum: ['hi_res', 'fast', 'ocr_only'],
         },
       },
       required: ['documentUrl'],
     },
     execute: async (args, ctx) => {
-      const apiKey = process.env.UNSTRUCTURED_API_KEY;
-      const apiUrl = process.env.UNSTRUCTURED_API_URL || 'https://api.unstructuredapp.io/general/v0/general';
       const { documentUrl, fileName = 'document.pdf', strategy = 'hi_res' } = args;
+      if (!documentUrl || typeof documentUrl !== 'string') {
+        throw new Error('مرجع المستند (documentUrl) مطلوب: رابط عام أو Data URL أو Base64');
+      }
 
-      if (apiKey && documentUrl) {
-        try {
-          let blob: Blob;
-          if (documentUrl.startsWith('data:')) {
-            const base64Str = documentUrl.split(',')[1];
-            const buffer = Buffer.from(base64Str, 'base64');
-            blob = new Blob([new Uint8Array(buffer)]);
-          } else if (documentUrl.startsWith('http')) {
-            const fetchRes = await fetch(documentUrl);
-            blob = await fetchRes.blob();
-          } else {
-            const buffer = Buffer.from(documentUrl, 'utf-8');
-            blob = new Blob([new Uint8Array(buffer)]);
-          }
+      // Single shared pipeline with document ingestion: local PPTX/DOCX
+      // parsers -> audio/video transcription -> Mistral OCR -> Unstructured
+      // partition -> Gemini multimodal fallback. No duplicated engine code.
+      const buffer = await resolveDocumentBuffer(documentUrl);
+      if (buffer.length === 0) {
+        throw new Error('محتوى الملف فارغ أو غير صالح');
+      }
 
-          const formData = new FormData();
-          formData.append('files', blob, fileName);
-          formData.append('strategy', strategy);
+      let parsed;
+      try {
+        parsed = await dispatchFile(buffer, fileName, normalizeMimeType(fileName), {
+          strategy: strategy as any,
+          preferredEngine: 'auto',
+        });
+      } catch (err: any) {
+        return {
+          success: false,
+          simulated: false,
+          fileName,
+          error: `فشل تحويل المستند: ${err?.message || err}`,
+        };
+      }
 
-          const res = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'unstructured-api-key': apiKey },
-            body: formData,
-          });
-
-          if (res.ok) {
-            const elements = await res.json();
-            const text = Array.isArray(elements)
-              ? elements
-                  .map((e: any) => e.text)
-                  .filter(Boolean)
-                  .join('\n\n')
-              : '';
-            return {
-              success: true,
-              simulated: false,
-              engine: 'Unstructured.io MCP Transform',
-              elementsCount: Array.isArray(elements) ? elements.length : 0,
-              text,
-              metadata: { strategy, fileName, tenantId: ctx.tenantId },
-            };
-          }
-        } catch (e: any) {
-          console.warn('[MCP Unstructured Tool] API call warning:', e?.message || e);
-        }
+      if (!parsed.success || !parsed.text?.trim()) {
+        return {
+          success: false,
+          simulated: false,
+          fileName,
+          engineUsed: parsed.engineUsed,
+          error: 'لم يتم استخراج أي نص قابل للقراءة من المستند',
+        };
       }
 
       return {
         success: true,
-        simulated: true,
-        engine: 'Unstructured.io MCP Transform',
-        elementsCount: 2,
-        text: `[Unstructured MCP Transform] تم استخراج وتنسيق محتوى المستند (${fileName}) بنجاح بدقة تخطيطية عالية مع دعم الجداول والتنسيقات المعقدة.`,
+        simulated: false,
+        engine: 'Unstructured Transform MCP',
+        engineUsed: parsed.engineUsed,
+        fileName,
+        charactersExtracted: parsed.text.length,
+        markdown: parsed.text,
         metadata: { strategy, fileName, tenantId: ctx.tenantId },
       };
     },
@@ -619,77 +644,73 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
 
   mistral_document_ai_parse: {
     name: 'mistral_document_ai_parse',
-    serverName: 'OmniRAG Core Knowledge MCP Server',
+    serverName: 'Unstructured Transform MCP Server',
     description:
-      'تحليل واستيعاب مستندات PDF والصور باستخدام Mistral Document AI OCR API لفهم التخطيط واستخراج الجداول والمعادلات الرياضية بصيغة Markdown',
+      'تحليل مستندات PDF والصور حصراً عبر Mistral Document AI OCR لفهم التخطيط واستخراج الجداول والمعادلات الرياضية بصيغة Markdown',
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
     simulated: false,
-    timeoutMs: 60000,
+    timeoutMs: 120000,
     parameters: {
       type: 'object',
       properties: {
-        documentUrl: { type: 'string', description: 'رابط الوثيقة أو Base64 Data URL للـ PDF' },
+        documentUrl: { type: 'string', description: 'رابط الوثيقة العامة أو Data URL أو Base64 للـ PDF/الصورة' },
         fileName: { type: 'string', description: 'اسم الملف للتوثيق' },
       },
       required: ['documentUrl'],
     },
     execute: async (args, ctx) => {
-      const apiKey = process.env.MISTRAL_API_KEY;
+      const apiKey =
+        getEnv('MISTRAL_API_KEY') || process.env.MISTRAL_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || '';
       const { documentUrl, fileName = 'document.pdf' } = args;
-
-      if (apiKey && documentUrl) {
-        try {
-          let docUrl = documentUrl;
-          if (!docUrl.startsWith('data:') && !docUrl.startsWith('http')) {
-            docUrl = `data:application/pdf;base64,${Buffer.from(docUrl).toString('base64')}`;
-          }
-
-          const res = await fetch('https://api.mistral.ai/v1/ocr', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-              model: getAiModel('ocrModel'),
-              document: {
-                type: 'document_url',
-                document_url: docUrl,
-              },
-              include_image_base64: false,
-            }),
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            const pages = data.pages || [];
-            const markdown = pages
-              .map((p: any, idx: number) => `### [صفحة ${idx + 1}]\n${p.markdown || p.text || ''}`)
-              .join('\n\n');
-            return {
-              success: true,
-              simulated: false,
-              engine: 'Mistral Document AI API',
-              totalPages: pages.length,
-              markdown,
-              metadata: { fileName, tenantId: ctx.tenantId },
-            };
-          }
-        } catch (e: any) {
-          console.warn('[MCP Mistral Tool] API call warning:', e?.message || e);
-        }
+      if (!documentUrl || typeof documentUrl !== 'string') {
+        throw new Error('مرجع المستند (documentUrl) مطلوب');
+      }
+      if (!apiKey) {
+        return {
+          success: false,
+          simulated: true,
+          fileName,
+          reason: 'مفتاح MISTRAL_API_KEY غير مُهيأ — أضفه لتفعيل تحليل Mistral Document AI الحقيقي.',
+        };
       }
 
-      return {
-        success: true,
-        simulated: true,
-        engine: 'Mistral Document AI API',
-        totalPages: 1,
-        markdown: `### [Mistral Document AI Output]\nتم استخراج النص من المستند (${fileName}) بهيكلية Markdown متطورة وتحليل بصري دقيق للجداول والمحتوى.`,
-        metadata: { fileName, tenantId: ctx.tenantId },
-      };
+      const buffer = await resolveDocumentBuffer(documentUrl);
+      if (buffer.length === 0) {
+        throw new Error('محتوى الملف فارغ أو غير صالح');
+      }
+
+      try {
+        const result = await mistralOcr(buffer, fileName, normalizeMimeType(fileName), apiKey);
+        const markdown = result.text || '';
+        if (!result.success || !markdown.trim()) {
+          return {
+            success: false,
+            simulated: false,
+            fileName,
+            engineUsed: result.engineUsed,
+            error: 'لم يُرجع Mistral OCR محتوى قابلاً للاستخدام',
+          };
+        }
+        return {
+          success: true,
+          simulated: false,
+          engine: 'Mistral Document AI API',
+          engineUsed: result.engineUsed,
+          fileName,
+          charactersExtracted: markdown.length,
+          markdown,
+          metadata: { fileName, tenantId: ctx.tenantId },
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          simulated: false,
+          fileName,
+          error: `فشل تحليل Mistral OCR: ${err?.message || err}`,
+        };
+      }
     },
   },
 
@@ -826,24 +847,30 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     name: 'knowledge_ingest_document',
     serverName: 'OmniRAG Core Knowledge MCP Server',
     description:
-      'جلب محتوى من رابط ويب أو نص مباشر ومعالجته وفهرسته داخل قاعدة معرفة المؤسسة (تجزيء دلالي + فهرسة متجهية)',
+      'جلب محتوى من ملف مرفوع أو رابط ويب أو نص مباشر، ومعالجته إلى Markdown، وتسجيله كمصدر، وفهرسته داخل قاعدة معرفة المؤسسة (تجزيء دلالي + فهرسة متجهية)',
     category: 'knowledge',
     hasSideEffect: true,
     requireConfirmation: true,
     simulated: false,
-    timeoutMs: 30000,
+    timeoutMs: 150000,
     parameters: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'رابط الصفحة/الوثيقة المراد جلبها وفهرستها (أو استخدم نص مباشر)' },
-        text: { type: 'string', description: 'نص جاهز للفهرسة بدل الجلب من رابط (اختياري)' },
-        title: { type: 'string', description: 'عنوان الوثيقة في قاعدة المعرفة' },
+        fileData: {
+          type: 'string',
+          description:
+            'الملف المرفوع كـ Data URL أو Base64 — يُحوَّل عبر خط Unstructured Transform إلى Markdown (أو استخدم url/text)',
+        },
+        fileName: { type: 'string', description: 'اسم الملف الأصلي مع الامتداد عند تمرير fileData (مثل contract.pdf)' },
+        url: { type: 'string', description: 'رابط الصفحة/الوثيقة المراد جلبها وفهرستها' },
+        text: { type: 'string', description: 'نص جاهز للفهرسة بدل الجلب من ملف أو رابط (اختياري)' },
+        title: { type: 'string', description: 'عنوان الوثيقة في قاعدة المعرفة والمصادر' },
         collectionIds: { type: 'string', description: 'معرفات المجموعات مفصولة بفواصل (اختياري)' },
       },
       required: [],
     },
     execute: async (args, ctx) => {
-      const { url, text, title, collectionIds } = args;
+      const { fileData, fileName = 'document.pdf', url, text, title, collectionIds } = args;
       const collections = String(collectionIds || '')
         .split(',')
         .map((s) => s.trim())
@@ -851,7 +878,42 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
 
       let content = typeof text === 'string' && text.trim() ? text.trim() : '';
       let fetchedFrom = 'direct-text';
+      let sourceType: 'file' | 'url' = text ? 'file' : 'url';
 
+      // 1) Uploaded file -> shared Unstructured Transform pipeline -> Markdown
+      if (!content && fileData && typeof fileData === 'string') {
+        const buffer = await resolveDocumentBuffer(
+          fileData.startsWith('data:') || /^https?:\/\//i.test(fileData) ? fileData : fileData,
+        );
+        if (buffer.length === 0) {
+          throw new Error('محتوى الملف فارغ أو غير صالح');
+        }
+        let parsed;
+        try {
+          parsed = await dispatchFile(buffer, fileName, normalizeMimeType(fileName), { preferredEngine: 'auto' });
+        } catch (err: any) {
+          return {
+            success: false,
+            simulated: false,
+            fileName,
+            error: `فشل تحويل الملف إلى نص: ${err?.message || err}`,
+          };
+        }
+        if (!parsed.success || !parsed.text?.trim()) {
+          return {
+            success: false,
+            simulated: false,
+            fileName,
+            engineUsed: parsed.engineUsed,
+            error: 'لم يتم استخراج أي محتوى قابل للفهرسة من الملف',
+          };
+        }
+        content = parsed.text.trim();
+        fetchedFrom = `file:${fileName} (${parsed.engineUsed})`;
+        sourceType = 'file';
+      }
+
+      // 2) URL fetch with SSRF guard
       if (!content && url) {
         const fetched = await safeFetchText(url, { timeoutMs: 12000, maxBytes: 1024 * 1024 });
         if (!fetched.ok) {
@@ -865,13 +927,33 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         const isHtml = fetched.contentType.includes('text/html') || /^\s*<(!doctype|html)/i.test(fetched.text);
         content = isHtml ? htmlToText(fetched.text) : fetched.text.trim();
         fetchedFrom = url;
+        sourceType = 'url';
       }
 
       if (!content || content.length < 20) {
-        throw new Error('لا يوجد محتوى كافٍ للفهرسة: مرّر رابطاً صالحاً أو نصاً لا يقل عن 20 حرفاً');
+        throw new Error('لا يوجد محتوى كافٍ للفهرسة: مرّر ملفاً صالحاً أو رابطاً أو نصاً لا يقل عن 20 حرفاً');
       }
 
-      const docTitle = title || (url ? `وثيقة مستجلبة من ${safeHost(url)}` : 'نص مفهرس عبر MCP');
+      const docTitle = title || (fileData ? fileName : url ? `وثيقة مستجلبة من ${safeHost(url)}` : 'نص مفهرس عبر MCP');
+
+      // Register the ingested item as a SOURCE so it appears in the Sources
+      // dashboard with its own lifecycle, then attach the document to it.
+      const now = new Date().toISOString();
+      const sourceId = `src-mcp-${Date.now().toString().slice(-8)}`;
+      await db.addSource({
+        id: sourceId,
+        tenantId: ctx.tenantId,
+        name: docTitle,
+        type: sourceType,
+        status: 'healthy',
+        config: {},
+        syncSchedule: 'manual',
+        lastSyncAt: now,
+        documentCount: 1,
+        collectionIds: collections,
+        createdAt: now,
+      } as any);
+
       const docId = `doc-mcp-ingest-${Date.now().toString().slice(-8)}`;
       const chunkTextList = chunkDocument(content);
 
@@ -880,12 +962,12 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         tenantId: ctx.tenantId,
         title: docTitle,
         content,
-        sourceType: 'integration',
+        sourceType,
         language: 'ar',
         status: 'indexed',
         chunkCount: chunkTextList.length,
-        createdAt: new Date().toISOString(),
-        metadata: { ingestedVia: 'mcp_tool', origin: fetchedFrom },
+        createdAt: now,
+        metadata: { ingestedVia: 'mcp_tool', origin: fetchedFrom, sourceId },
         collectionIds: collections,
       } as any;
       await db.addDocument(newDoc);
@@ -915,20 +997,81 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         resourceType: 'document',
         resourceId: docId,
         status: indexResult.success ? 'success' : 'error',
-        details: `تم عبر أداة MCP جلب ومعالجة وفهرسة وثيقة (${docTitle}) بعدد ${chunkTextList.length} مقطعاً دلالياً.`,
-        timestamp: new Date().toISOString(),
+        details: `تم عبر أداة MCP جلب ومعالجة وفهرسة وثيقة (${docTitle}) بعدد ${chunkTextList.length} مقطعاً دلالياً وتخزينها في المصادر (${sourceId}).`,
+        timestamp: now,
       });
 
       return {
         success: indexResult.success,
         simulated: false,
         documentId: docId,
+        sourceId,
         title: docTitle,
         fetchedFrom,
         charactersProcessed: content.length,
         chunksIndexed: chunkTextList.length,
         vectorIndexErrors: indexResult.errors,
       };
+    },
+  },
+
+  youtube_fetch_transcript: {
+    name: 'youtube_fetch_transcript',
+    serverName: 'YouTube Intelligence MCP Server',
+    description:
+      'جلب تفريغ نصي كامل (Transcript) لفيديو يوتيوب مع العنوان والقناة والمدة — جاهز للتلخيص أو الفهرسة في قاعدة المعرفة',
+    category: 'knowledge',
+    hasSideEffect: false,
+    requireConfirmation: false,
+    simulated: false,
+    timeoutMs: 60000,
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'رابط فيديو يوتيوب (https://www.youtube.com/watch?v=...)' },
+        language: { type: 'string', description: 'رمز لغة التفريغ المفضلة (افتراضي: ar)' },
+      },
+      required: ['url'],
+    },
+    execute: async (args) => {
+      const { url, language = 'ar' } = args;
+      if (!url || typeof url !== 'string') {
+        throw new Error('رابط فيديو يوتيوب (url) مطلوب');
+      }
+
+      try {
+        const result = await processYoutubeTranscript(url, language);
+        if (!result.transcript || result.transcript.trim().length === 0) {
+          return {
+            success: false,
+            simulated: false,
+            url,
+            videoId: result.videoId,
+            title: result.title,
+            error:
+              'لم يتوفر تفريغ نصي لهذا الفيديو (قد تكون الترجمة المغلقة معطلة أو الفيديو مقيداً). يمكن فهرسته بدلاً من ذلك عبر knowledge_ingest_document.',
+          };
+        }
+        return {
+          success: true,
+          simulated: false,
+          videoId: result.videoId,
+          title: result.title,
+          channel: result.channel,
+          duration: result.duration,
+          wordCount: result.wordCount,
+          extractionMethod: result.extractionMethod,
+          transcriptUrl: result.videoUrl,
+          markdown: `# ${result.title}\n\n**القناة:** ${result.channel} | **المدة:** ${result.duration}\n\n${result.transcript}`,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          simulated: false,
+          url,
+          error: err?.message || 'فشل جلب التفريغ النصي للفيديو',
+        };
+      }
     },
   },
 

@@ -122,6 +122,70 @@ export async function safeFetchText(
   }
 }
 
+export interface SafeFetchBinaryResult {
+  ok: boolean;
+  status: number;
+  contentType: string;
+  bytes: Buffer;
+  truncated: boolean;
+  error?: string;
+}
+
+/**
+ * Binary variant of safeFetchText for documents (PDF/DOCX/images) referenced
+ * by URL. Same policy guards: public http(s) only, timeout, size cap.
+ */
+export async function safeFetchBinary(
+  rawUrl: string,
+  opts: { timeoutMs?: number; maxBytes?: number; headers?: Record<string, string> } = {},
+): Promise<SafeFetchBinaryResult> {
+  const url = assertPublicHttpUrl(rawUrl);
+  const { timeoutMs = 30000, maxBytes = 20 * 1024 * 1024 } = opts;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url.href, {
+      method: 'GET',
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'OmniRAG-MCP-Gateway/2.0 (+document-fetch)',
+        ...(opts.headers || {}),
+      },
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const truncated = buffer.byteLength > maxBytes;
+
+    return {
+      ok: res.ok && !truncated,
+      status: res.status,
+      contentType,
+      bytes: truncated ? buffer.subarray(0, maxBytes) : buffer,
+      truncated,
+      error: !res.ok
+        ? `HTTP ${res.status}: ${res.statusText}`
+        : truncated
+          ? `تجاوز حجم الملف الحد المسموح (${maxBytes} بايت)`
+          : undefined,
+    };
+  } catch (err: any) {
+    const aborted = err?.name === 'AbortError';
+    return {
+      ok: false,
+      status: 0,
+      contentType: '',
+      bytes: Buffer.alloc(0),
+      truncated: false,
+      error: aborted ? `تجاوز المهلة (${timeoutMs}ms)` : err?.message || 'فشل الطلب',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const HTML_ENTITIES: Record<string, string> = {
   '&amp;': '&',
   '&lt;': '<',

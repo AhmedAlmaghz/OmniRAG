@@ -120,6 +120,67 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
     fetchServers();
   }, [tenantId]);
 
+  // Server catalog (famous MCP presets) state
+  interface McpServerPresetView {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    enabledTools: string[];
+    requireConfirmationTools: string[];
+    anyOfEnv?: string[];
+    ready: boolean;
+    missingEnv: string[];
+    installed: boolean;
+    docsUrl?: string;
+  }
+  const [presets, setPresets] = useState<McpServerPresetView[]>([]);
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [installingPresetId, setInstallingPresetId] = useState<string | null>(null);
+
+  const fetchPresets = async () => {
+    try {
+      const res = await fetchWithAuth('/api/v1/mcp/presets');
+      const data = await res.json();
+      if (data.presets) setPresets(data.presets);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    fetchPresets();
+  }, [tenantId]);
+
+  const installPreset = async (presetId: string) => {
+    setInstallingPresetId(presetId);
+    try {
+      const res = await fetchWithAuth('/api/v1/mcp/presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presetId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setPingNotice(
+          lang === 'ar'
+            ? `تم تثبيت الخادم من الكتالوج بنجاح وأصبحت أدواته متاحة للدردشة والمعرفة.`
+            : `Server installed from catalog — its tools are now available to chat & knowledge.`,
+        );
+        setTimeout(() => setPingNotice(null), 3500);
+        fetchServers();
+        fetchPresets();
+      } else {
+        setPingNotice(data?.error || (lang === 'ar' ? 'فشل تثبيت القالب.' : 'Failed to install preset.'));
+        setTimeout(() => setPingNotice(null), 4000);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setInstallingPresetId(null);
+    }
+  };
+
   const toggleServerActiveStatus = async (server: MCPServerConfig) => {
     const isCurrentlyActive = server.status === 'healthy';
     const newStatus = isCurrentlyActive ? 'down' : 'healthy';
@@ -622,6 +683,135 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Server Catalog — famous MCP presets, one-click install */}
+      <div className="bg-gradient-to-br from-slate-900 to-indigo-950 border border-slate-800 rounded-2xl shadow-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowCatalog((v) => !v)}
+          className="w-full flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-white/5 transition"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center">
+              <Layers className="w-4.5 h-4.5 text-indigo-300" />
+            </div>
+            <div className="text-right">
+              <h3 className="text-sm font-bold text-white tracking-tight">
+                {lang === 'ar' ? 'كتالوج الخوادم الجاهزة' : 'Server Catalog'}
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                {lang === 'ar'
+                  ? 'أشهر خوادم MCP المفيدة — أضفها بضغطة واحدة لتصبح أدواتها متاحة للدردشة والمعرفة فوراً.'
+                  : 'Famous, useful MCP servers — one click to make their tools available to chat & knowledge.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-bold">
+              {presets.length} {lang === 'ar' ? 'خادماً' : 'servers'}
+            </span>
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-slate-500 transition-transform ${showCatalog ? 'rotate-180' : ''}`}
+            />
+          </div>
+        </button>
+
+        {showCatalog && (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 px-4 pb-4">
+            {presets.map((preset) => {
+              const categoryIcon =
+                preset.category === 'documents'
+                  ? Layers
+                  : preset.category === 'search'
+                    ? Globe
+                    : preset.category === 'communication'
+                      ? MessageSquare
+                      : preset.category === 'development'
+                        ? GitBranch
+                        : preset.category === 'database'
+                          ? Database
+                          : Sparkles;
+              const CategoryIcon = categoryIcon;
+              return (
+                <div
+                  key={preset.id}
+                  className="flex flex-col justify-between p-4 rounded-xl bg-white/5 border border-slate-700/60 hover:border-indigo-500/50 transition"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
+                        <CategoryIcon className="w-4 h-4 text-amber-400" />
+                      </div>
+                      {preset.installed ? (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          {lang === 'ar' ? 'مُثبّت' : 'Installed'}
+                        </span>
+                      ) : preset.ready ? (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold">
+                          {lang === 'ar' ? 'جاهز' : 'Ready'}
+                        </span>
+                      ) : (
+                        <span
+                          className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[10px] font-bold flex items-center gap-1"
+                          title={preset.missingEnv.join(' / ')}
+                        >
+                          <KeyRound className="w-3 h-3" />
+                          {lang === 'ar' ? 'يتطلب مفتاحاً' : 'Needs Key'}
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-sm font-bold text-white mb-1">{preset.name}</h4>
+                    <p className="text-[11px] text-slate-400 leading-relaxed line-clamp-3 mb-2">{preset.description}</p>
+                    <div className="flex flex-wrap gap-1">
+                      {preset.enabledTools.slice(0, 3).map((tool) => (
+                        <span
+                          key={tool}
+                          className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[9px]"
+                        >
+                          {tool}
+                        </span>
+                      ))}
+                      {preset.enabledTools.length > 3 && (
+                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[9px]">
+                          +{preset.enabledTools.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={preset.installed || installingPresetId === preset.id}
+                    onClick={() => installPreset(preset.id)}
+                    className={`mt-3 w-full py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed ${
+                      preset.installed
+                        ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/40'
+                        : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-900/40'
+                    }`}
+                  >
+                    {installingPresetId === preset.id ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        {lang === 'ar' ? 'جارٍ التثبيت...' : 'Installing...'}
+                      </>
+                    ) : preset.installed ? (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {lang === 'ar' ? 'مثبّت للمستأجر' : 'Already Installed'}
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3.5 h-3.5" />
+                        {lang === 'ar' ? 'إضافة الخادم' : 'Add Server'}
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Empty State Illustration when no connectors are detected or match filters */}
