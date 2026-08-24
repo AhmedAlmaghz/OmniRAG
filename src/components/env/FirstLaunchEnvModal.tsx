@@ -25,6 +25,15 @@ import {
   Info,
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { Modal } from '@/components/ui/Modal';
+import {
+  loadEnvStatus as loadEnvStatusApi,
+  persistFormValue,
+  testEnvKey,
+  saveEnvsToServer,
+  copyDotEnvTemplate,
+  EnvVarItem,
+} from './envShared';
 
 interface FirstLaunchEnvModalProps {
   lang: 'ar' | 'en';
@@ -33,67 +42,29 @@ interface FirstLaunchEnvModalProps {
   onComplete?: () => void;
 }
 
-interface EnvVarItem {
-  key: string;
-  category: 'ai' | 'database' | 'vector' | 'docai' | 'ingress';
-  categoryTitleAr: string;
-  categoryTitleEn: string;
-  nameAr: string;
-  nameEn: string;
-  descAr: string;
-  descEn: string;
-  required: boolean;
-  isConfigured: boolean;
-  isInjectedBySystem: boolean;
-  maskedPreview: string;
-  docsUrl: string;
-}
-
-export default function FirstLaunchEnvModal({
-  lang,
-  isOpen,
-  onClose,
-  onComplete,
-}: FirstLaunchEnvModalProps) {
+export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete }: FirstLaunchEnvModalProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [loading, setLoading] = useState(true);
   const [envList, setEnvList] = useState<EnvVarItem[]>([]);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [testingKeys, setTestingKeys] = useState<Record<string, boolean>>({});
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; latencyMs?: number }>>({});
+  const [testResults, setTestResults] = useState<
+    Record<string, { success: boolean; message: string; latencyMs?: number }>
+  >({});
   const [readinessScore, setReadinessScore] = useState(100);
   const [copiedEnv, setCopiedEnv] = useState(false);
 
-  // Fetch current environment status from API
+  // Fetch current environment status via the SHARED loader
   const loadEnvStatus = async () => {
     setLoading(true);
-    try {
-      const res = await fetchWithAuth('/api/v1/env-config');
-      if (res.ok) {
-        const data = await res.json();
-        setEnvList(data.envList || []);
-        setReadinessScore(data.readinessPercentage || 100);
-
-        // Initialize local form values
-        const initialVals: Record<string, string> = {};
-        (data.envList || []).forEach((item: EnvVarItem) => {
-          if (typeof window !== 'undefined') {
-            const savedLocal = localStorage.getItem(`omnirag_env_${item.key}`);
-            if (savedLocal && !savedLocal.includes('•')) {
-              initialVals[item.key] = savedLocal;
-            } else {
-              initialVals[item.key] = '';
-            }
-          }
-        });
-        setFormValues(initialVals);
-      }
-    } catch (err) {
-      console.error('Failed to load env status:', err);
-    } finally {
-      setLoading(false);
+    const payload = await loadEnvStatusApi();
+    if (payload) {
+      setEnvList(payload.envList);
+      setReadinessScore(payload.readinessScore);
+      setFormValues(payload.formValues);
     }
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -106,11 +77,7 @@ export default function FirstLaunchEnvModal({
 
   const handleInputChange = (key: string, val: string) => {
     setFormValues((prev) => ({ ...prev, [key]: val }));
-    if (typeof window !== 'undefined') {
-      if (!val.includes('•')) {
-        localStorage.setItem(`omnirag_env_${key}`, val);
-      }
-    }
+    persistFormValue(key, val);
   };
 
   const toggleVisibility = (key: string) => {
@@ -119,39 +86,9 @@ export default function FirstLaunchEnvModal({
 
   const testSingleKey = async (key: string) => {
     setTestingKeys((prev) => ({ ...prev, [key]: true }));
-    try {
-      const val = formValues[key];
-      const cleanVal = val && !val.includes('•') ? val.trim() : '';
-      const res = await fetchWithAuth('/api/v1/env-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'test',
-          key,
-          value: cleanVal,
-        }),
-      });
-
-      const data = await res.json();
-      setTestResults((prev) => ({
-        ...prev,
-        [key]: {
-          success: data.success,
-          message: data.message,
-          latencyMs: data.latencyMs,
-        },
-      }));
-    } catch (err: any) {
-      setTestResults((prev) => ({
-        ...prev,
-        [key]: {
-          success: false,
-          message: `خطأ في الاتصال: ${err.message}`,
-        },
-      }));
-    } finally {
-      setTestingKeys((prev) => ({ ...prev, [key]: false }));
-    }
+    const result = await testEnvKey(key, formValues[key]);
+    setTestResults((prev) => ({ ...prev, [key]: result }));
+    setTestingKeys((prev) => ({ ...prev, [key]: false }));
   };
 
   const testAllKeys = async () => {
@@ -203,8 +140,8 @@ export default function FirstLaunchEnvModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 overflow-y-auto animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] my-auto relative">
+    <Modal open={isOpen} onClose={onClose} maxWidthClass="max-w-4xl" ariaLabelledBy="first-launch-title">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[85vh] relative">
         {/* Modal Header */}
         <div className="bg-slate-900 text-white p-6 sm:p-8 flex items-start justify-between relative overflow-hidden shrink-0">
           <div className="absolute -right-12 -bottom-12 w-64 h-64 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
@@ -222,9 +159,7 @@ export default function FirstLaunchEnvModal({
             </div>
 
             <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-white">
-              {lang === 'ar'
-                ? 'تهيئة متغيرات البيئة ومحركات النظام'
-                : 'Configure System Environment Variables'}
+              {lang === 'ar' ? 'تهيئة متغيرات البيئة ومحركات النظام' : 'Configure System Environment Variables'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
               {lang === 'ar'
@@ -306,7 +241,9 @@ export default function FirstLaunchEnvModal({
             <div className="py-16 text-center space-y-3">
               <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
               <p className="text-xs text-slate-500 font-bold">
-                {lang === 'ar' ? 'جاري فحص متغيرات البيئة والحالة الحالية...' : 'Auditing system environment variables...'}
+                {lang === 'ar'
+                  ? 'جاري فحص متغيرات البيئة والحالة الحالية...'
+                  : 'Auditing system environment variables...'}
               </p>
             </div>
           ) : (
@@ -369,14 +306,23 @@ export default function FirstLaunchEnvModal({
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-300">
                       {envList.map((item) => (
-                        <div key={item.key} className="flex items-center justify-between p-2 bg-slate-800/60 rounded-lg">
+                        <div
+                          key={item.key}
+                          className="flex items-center justify-between p-2 bg-slate-800/60 rounded-lg"
+                        >
                           <span className="text-slate-400 font-bold">{item.key}:</span>
                           <span
                             className={`font-mono font-bold ${
                               item.isConfigured ? 'text-emerald-400' : 'text-amber-400'
                             }`}
                           >
-                            {item.isConfigured ? (lang === 'ar' ? 'مكوّن ✅' : 'Configured ✅') : (lang === 'ar' ? 'مفقود ⚠️' : 'Missing ⚠️')}
+                            {item.isConfigured
+                              ? lang === 'ar'
+                                ? 'مكوّن ✅'
+                                : 'Configured ✅'
+                              : lang === 'ar'
+                                ? 'مفقود ⚠️'
+                                : 'Missing ⚠️'}
                           </span>
                         </div>
                       ))}
@@ -413,8 +359,20 @@ export default function FirstLaunchEnvModal({
                       onClick={copyDotEnvTemplate}
                       className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-indigo-100 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5 shrink-0 transition cursor-pointer"
                     >
-                      {copiedEnv ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedEnv ? (lang === 'ar' ? 'تم النسخ!' : 'Copied!') : (lang === 'ar' ? 'نسخ .env' : 'Copy .env')}</span>
+                      {copiedEnv ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {copiedEnv
+                          ? lang === 'ar'
+                            ? 'تم النسخ!'
+                            : 'Copied!'
+                          : lang === 'ar'
+                            ? 'نسخ .env'
+                            : 'Copy .env'}
+                      </span>
                     </button>
                   </div>
 
@@ -479,8 +437,8 @@ export default function FirstLaunchEnvModal({
                                   item.isConfigured
                                     ? item.maskedPreview
                                     : item.key.includes('URL')
-                                    ? 'https://...'
-                                    : 'ey...'
+                                      ? 'https://...'
+                                      : 'ey...'
                                 }
                                 className="w-full pl-3 pr-10 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono focus:outline-none focus:border-indigo-500"
                               />
@@ -578,7 +536,9 @@ export default function FirstLaunchEnvModal({
 
                   <div className="p-4 bg-slate-900 text-white rounded-2xl max-w-lg mx-auto space-y-3 font-mono text-xs">
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                      <span className="text-slate-400">{lang === 'ar' ? 'مؤشر الجاهزية التشغيلية:' : 'Readiness Index:'}</span>
+                      <span className="text-slate-400">
+                        {lang === 'ar' ? 'مؤشر الجاهزية التشغيلية:' : 'Readiness Index:'}
+                      </span>
                       <span className="text-emerald-400 font-bold">{readinessScore}%</span>
                     </div>
 
@@ -588,7 +548,11 @@ export default function FirstLaunchEnvModal({
                       className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition cursor-pointer text-xs"
                     >
                       <Activity className="w-4 h-4" />
-                      <span>{lang === 'ar' ? 'إعادة فحص واختبار جميع الاتصالات المباشرة' : 'Run Full Connection Healthcheck'}</span>
+                      <span>
+                        {lang === 'ar'
+                          ? 'إعادة فحص واختبار جميع الاتصالات المباشرة'
+                          : 'Run Full Connection Healthcheck'}
+                      </span>
                     </button>
                   </div>
 
@@ -616,6 +580,6 @@ export default function FirstLaunchEnvModal({
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

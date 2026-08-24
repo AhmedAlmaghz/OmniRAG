@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Layers, 
+import {
+  Layers,
   MessageSquare,
   BookOpen,
   Plug,
@@ -16,7 +16,7 @@ import {
   Globe,
   Sun,
   Moon,
-  Check
+  Check,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -48,6 +48,42 @@ export default function Header({
 }: HeaderProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Live profile from Settings → Profile (localStorage per email). The
+  // settings screen dispatches omnirag_profile_changed on save so the header
+  // reflects the new name/color instantly without a reload.
+  const [profileName, setProfileName] = useState('');
+  const [profileColor, setProfileColor] = useState('indigo');
+
+  useEffect(() => {
+    const loadProfile = () => {
+      if (!userEmail) return;
+      try {
+        setProfileName(localStorage.getItem(`omnirag_profile_name_${userEmail}`) || '');
+        setProfileColor(localStorage.getItem(`omnirag_profile_color_${userEmail}`) || 'indigo');
+      } catch {
+        /* storage unavailable */
+      }
+    };
+    loadProfile();
+    window.addEventListener('storage', loadProfile);
+    window.addEventListener('omnirag_profile_changed', loadProfile);
+    return () => {
+      window.removeEventListener('storage', loadProfile);
+      window.removeEventListener('omnirag_profile_changed', loadProfile);
+    };
+  }, [userEmail]);
+
+  const AVATAR_GRADIENTS: Record<string, string> = {
+    indigo: 'from-indigo-600 to-violet-500',
+    teal: 'from-teal-500 to-cyan-500',
+    rose: 'from-rose-500 to-pink-500',
+    emerald: 'from-emerald-500 to-teal-500',
+    amber: 'from-amber-500 to-orange-500',
+    violet: 'from-violet-500 to-purple-500',
+  };
+  const avatarGradient = AVATAR_GRADIENTS[profileColor] || AVATAR_GRADIENTS.indigo;
+  const shownInitial = (profileName || userEmail || 'U').charAt(0).toUpperCase();
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -102,7 +138,9 @@ export default function Header({
           </div>
           <div className="hidden sm:block">
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-lg tracking-tight text-white group-hover:text-indigo-300 transition-colors">OmniRAG</span>
+              <span className="font-extrabold text-lg tracking-tight text-white group-hover:text-indigo-300 transition-colors">
+                OmniRAG
+              </span>
             </div>
             <p className="text-xs text-slate-400 hidden lg:block">
               {lang === 'ar' ? 'منصة وكلاء الاسترجاع المعزز والتحكم الحتمي' : 'Agentic RAG & MCP Security Gateway'}
@@ -144,8 +182,10 @@ export default function Header({
               title={userEmail || (lang === 'ar' ? 'حساب المستخدم' : 'User Account')}
             >
               {userEmail ? (
-                <div className="w-full h-full rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white flex items-center justify-center font-bold text-sm uppercase shadow-inner">
-                  {userEmail.charAt(0)}
+                <div
+                  className={`w-full h-full rounded-full bg-gradient-to-tr ${avatarGradient} text-white flex items-center justify-center font-bold text-sm uppercase shadow-inner`}
+                >
+                  {shownInitial}
                 </div>
               ) : (
                 <div className="w-full h-full rounded-full bg-slate-800 flex items-center justify-center text-slate-300 hover:text-white">
@@ -156,7 +196,7 @@ export default function Header({
 
             {/* Dropdown Menu */}
             {dropdownOpen && (
-              <div 
+              <div
                 className={`absolute mt-2 w-64 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-3 duration-150 ${
                   lang === 'ar' ? 'left-0 origin-top-left' : 'right-0 origin-top-right'
                 }`}
@@ -164,11 +204,20 @@ export default function Header({
                 {/* Profile Header section */}
                 <div className="px-4 py-3 border-b border-slate-800/65">
                   <p className="text-[10px] font-mono font-bold tracking-wider text-indigo-400 uppercase">
-                    {userEmail ? (lang === 'ar' ? 'حساب نشط' : 'ACTIVE ACCOUNT') : (lang === 'ar' ? 'مستخدم زائر' : 'GUEST SESSION')}
+                    {userEmail
+                      ? lang === 'ar'
+                        ? 'حساب نشط'
+                        : 'ACTIVE ACCOUNT'
+                      : lang === 'ar'
+                        ? 'مستخدم زائر'
+                        : 'GUEST SESSION'}
                   </p>
                   <p className="text-sm font-semibold text-white truncate mt-1">
-                    {userEmail || (lang === 'ar' ? 'جلسة تجريبية آمنة' : 'Secure Demo Session')}
+                    {profileName || userEmail || (lang === 'ar' ? 'جلسة تجريبية آمنة' : 'Secure Demo Session')}
                   </p>
+                  {profileName && userEmail && (
+                    <p className="text-[10px] text-slate-400 font-mono truncate">{userEmail}</p>
+                  )}
                   {userEmail && currentTenantName && (
                     <p className="text-xs text-slate-400 mt-1 truncate">
                       {lang === 'ar' ? 'مساحة:' : 'Space:'} {currentTenantName}
@@ -198,8 +247,8 @@ export default function Header({
                       type="button"
                       onClick={() => handleDropdownAction(() => onLangChange('ar'))}
                       className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
-                        lang === 'ar' 
-                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                        lang === 'ar'
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
                           : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
                       }`}
                     >
@@ -210,8 +259,8 @@ export default function Header({
                       type="button"
                       onClick={() => handleDropdownAction(() => onLangChange('en'))}
                       className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
-                        lang === 'en' 
-                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                        lang === 'en'
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
                           : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
                       }`}
                     >
@@ -231,8 +280,8 @@ export default function Header({
                       type="button"
                       onClick={() => onThemeChange && handleDropdownAction(() => onThemeChange('light'))}
                       className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
-                        theme === 'light' 
-                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                        theme === 'light'
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
                           : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
                       }`}
                     >
@@ -243,8 +292,8 @@ export default function Header({
                       type="button"
                       onClick={() => onThemeChange && handleDropdownAction(() => onThemeChange('dark'))}
                       className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition ${
-                        theme === 'dark' 
-                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30' 
+                        theme === 'dark'
+                          ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
                           : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
                       }`}
                     >
@@ -269,14 +318,16 @@ export default function Header({
                     <div className="space-y-1">
                       <button
                         type="button"
-                        onClick={() => handleDropdownAction(() => {
-                          if (typeof window !== 'undefined') {
-                            const url = new URL(window.location.href);
-                            url.searchParams.set('auth', 'login');
-                            window.history.pushState({}, '', url.toString());
-                          }
-                          onNavigateTab('chat');
-                        })}
+                        onClick={() =>
+                          handleDropdownAction(() => {
+                            if (typeof window !== 'undefined') {
+                              const url = new URL(window.location.href);
+                              url.searchParams.set('auth', 'login');
+                              window.history.pushState({}, '', url.toString());
+                            }
+                            onNavigateTab('chat');
+                          })
+                        }
                         className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-indigo-400 hover:text-white hover:bg-indigo-950/40 transition cursor-pointer text-start"
                       >
                         <LogIn className="w-4 h-4 text-indigo-400" />
@@ -284,14 +335,16 @@ export default function Header({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleDropdownAction(() => {
-                          if (typeof window !== 'undefined') {
-                            const url = new URL(window.location.href);
-                            url.searchParams.set('auth', 'register');
-                            window.history.pushState({}, '', url.toString());
-                          }
-                          onNavigateTab('chat');
-                        })}
+                        onClick={() =>
+                          handleDropdownAction(() => {
+                            if (typeof window !== 'undefined') {
+                              const url = new URL(window.location.href);
+                              url.searchParams.set('auth', 'register');
+                              window.history.pushState({}, '', url.toString());
+                            }
+                            onNavigateTab('chat');
+                          })
+                        }
                         className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer text-start"
                       >
                         <UserPlus className="w-4 h-4 text-slate-400" />
@@ -331,4 +384,3 @@ export default function Header({
     </header>
   );
 }
-

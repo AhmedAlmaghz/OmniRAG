@@ -23,41 +23,32 @@ import {
   Lock,
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import {
+  loadEnvStatus as loadEnvStatusApi,
+  persistFormValue,
+  testEnvKey,
+  saveEnvsToServer,
+  copyDotEnvTemplate,
+  EnvVarItem,
+} from './envShared';
 
 interface EnvVariablesManagerProps {
   lang: 'ar' | 'en';
   onOpenWizard?: () => void;
 }
 
-interface EnvVarItem {
-  key: string;
-  category: 'ai' | 'database' | 'vector' | 'docai' | 'ingress';
-  categoryTitleAr: string;
-  categoryTitleEn: string;
-  nameAr: string;
-  nameEn: string;
-  descAr: string;
-  descEn: string;
-  required: boolean;
-  isConfigured: boolean;
-  isInjectedBySystem: boolean;
-  maskedPreview: string;
-  docsUrl: string;
-}
-
-export default function EnvVariablesManager({
-  lang,
-  onOpenWizard,
-}: EnvVariablesManagerProps) {
+export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariablesManagerProps) {
   const [loading, setLoading] = useState(true);
   const [envList, setEnvList] = useState<EnvVarItem[]>([]);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [testingKeys, setTestingKeys] = useState<Record<string, boolean>>({});
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string; latencyMs?: number }>>({});
+  const [testResults, setTestResults] = useState<
+    Record<string, { success: boolean; message: string; latencyMs?: number }>
+  >({});
   const [readinessScore, setReadinessScore] = useState(100);
   const [copiedEnv, setCopiedEnv] = useState(false);
-  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Filter state
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -65,31 +56,13 @@ export default function EnvVariablesManager({
 
   const loadEnvStatus = async () => {
     setLoading(true);
-    try {
-      const res = await fetchWithAuth('/api/v1/env-config');
-      if (res.ok) {
-        const data = await res.json();
-        setEnvList(data.envList || []);
-        setReadinessScore(data.readinessPercentage || 100);
-
-        const initialVals: Record<string, string> = {};
-        (data.envList || []).forEach((item: EnvVarItem) => {
-          if (typeof window !== 'undefined') {
-            const savedLocal = localStorage.getItem(`omnirag_env_${item.key}`);
-            if (savedLocal && !savedLocal.includes('•')) {
-              initialVals[item.key] = savedLocal;
-            } else {
-              initialVals[item.key] = '';
-            }
-          }
-        });
-        setFormValues(initialVals);
-      }
-    } catch (err) {
-      console.error('Failed to load env status:', err);
-    } finally {
-      setLoading(false);
+    const payload = await loadEnvStatusApi();
+    if (payload) {
+      setEnvList(payload.envList);
+      setReadinessScore(payload.readinessScore);
+      setFormValues(payload.formValues);
     }
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -98,11 +71,7 @@ export default function EnvVariablesManager({
 
   const handleInputChange = (key: string, val: string) => {
     setFormValues((prev) => ({ ...prev, [key]: val }));
-    if (typeof window !== 'undefined') {
-      if (!val.includes('•')) {
-        localStorage.setItem(`omnirag_env_${key}`, val);
-      }
-    }
+    persistFormValue(key, val);
   };
 
   const toggleVisibility = (key: string) => {
@@ -111,79 +80,39 @@ export default function EnvVariablesManager({
 
   const testSingleKey = async (key: string) => {
     setTestingKeys((prev) => ({ ...prev, [key]: true }));
-    try {
-      const val = formValues[key];
-      const cleanVal = val && !val.includes('•') ? val.trim() : '';
-      const res = await fetchWithAuth('/api/v1/env-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'test',
-          key,
-          value: cleanVal,
-        }),
-      });
-
-      const data = await res.json();
-      setTestResults((prev) => ({
-        ...prev,
-        [key]: {
-          success: data.success,
-          message: data.message,
-          latencyMs: data.latencyMs,
-        },
-      }));
-    } catch (err: any) {
-      setTestResults((prev) => ({
-        ...prev,
-        [key]: {
-          success: false,
-          message: `خطأ أثناء الاتصال: ${err.message}`,
-        },
-      }));
-    } finally {
-      setTestingKeys((prev) => ({ ...prev, [key]: false }));
-    }
+    const result = await testEnvKey(key, formValues[key]);
+    setTestResults((prev) => ({ ...prev, [key]: result }));
+    setTestingKeys((prev) => ({ ...prev, [key]: false }));
   };
 
+  // Honest outcome: production can BLOCK env writes - the old version
+  // swallowed that and always showed a success banner.
   const handleSaveAll = async () => {
-    const envsToSave: Record<string, string> = {};
-    Object.entries(formValues).forEach(([k, v]) => {
-      if (v && !v.includes('•') && v.trim() !== '') {
-        envsToSave[k] = v.trim();
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(`omnirag_env_${k}`, v.trim());
-        }
-      }
-    });
-
-    try {
-      await fetchWithAuth('/api/v1/env-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'save',
-          envs: envsToSave,
-        }),
-      });
-    } catch (e) {}
-
+    const ok = await saveEnvsToServer(formValues);
     setSaveNotice(
-      lang === 'ar'
-        ? 'تم حفظ وتأكيد تهيئة متغيرات البيئة ببيئة الخادم وبقية المحركات بنجاح.'
-        : 'All environment variables saved and synced to backend server runtime successfully.'
+      ok
+        ? {
+            ok: true,
+            text:
+              lang === 'ar'
+                ? 'تم حفظ متغيرات البيئة ومزامنتها مع بيئة الخادم بنجاح.'
+                : 'Environment variables saved and synced to the server runtime.',
+          }
+        : {
+            ok: false,
+            text:
+              lang === 'ar'
+                ? 'فشل الحفظ على الخادم (قد تكون الكتابة معطّلة في الإنتاج). بقيت القيم محفوظة محلياً في هذا المتصفح.'
+                : 'Server save failed (writes may be blocked in production). Values remain saved locally in this browser.',
+          },
     );
-    setTimeout(() => setSaveNotice(null), 4000);
+    setTimeout(() => setSaveNotice(null), 5000);
     loadEnvStatus();
   };
 
-  const copyDotEnvTemplate = () => {
-    const lines = envList.map((item) => {
-      const val = formValues[item.key] || '';
-      return `${item.key}="${val.replace(/"/g, '\\"')}"`;
-    });
-    const fullText = `# OmniRAG Production Environment Configuration\n${lines.join('\n')}`;
-    navigator.clipboard.writeText(fullText);
+  const handleCopyTemplate = async () => {
+    const ok = await copyDotEnvTemplate(envList, formValues);
+    if (!ok) return;
     setCopiedEnv(true);
     setTimeout(() => setCopiedEnv(false), 2500);
   };
@@ -235,11 +164,13 @@ export default function EnvVariablesManager({
 
               <button
                 type="button"
-                onClick={copyDotEnvTemplate}
+                onClick={handleCopyTemplate}
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-2 border border-slate-700 transition cursor-pointer"
               >
                 {copiedEnv ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedEnv ? (lang === 'ar' ? 'تم النسخ!' : 'Copied!') : (lang === 'ar' ? 'نسخ .env' : 'Copy .env')}</span>
+                <span>
+                  {copiedEnv ? (lang === 'ar' ? 'تم النسخ!' : 'Copied!') : lang === 'ar' ? 'نسخ .env' : 'Copy .env'}
+                </span>
               </button>
             </div>
           </div>
@@ -267,9 +198,20 @@ export default function EnvVariablesManager({
       </div>
 
       {saveNotice && (
-        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{saveNotice}</span>
+        <div
+          role={saveNotice.ok ? 'status' : 'alert'}
+          className={`p-4 rounded-2xl border text-xs font-semibold flex items-center gap-2 animate-fadeIn ${
+            saveNotice.ok
+              ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+              : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+          }`}
+        >
+          {saveNotice.ok ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : (
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          )}
+          <span>{saveNotice.text}</span>
         </div>
       )}
 
@@ -283,6 +225,7 @@ export default function EnvVariablesManager({
             { id: 'database', nameAr: 'قواعد البيانات', nameEn: 'Databases' },
             { id: 'vector', nameAr: 'المتجهات Qdrant', nameEn: 'Vector DB' },
             { id: 'docai', nameAr: 'مستندات OCR', nameEn: 'Document AI' },
+            { id: 'ingress', nameAr: 'بوابات الدخول', nameEn: 'Ingress' },
           ].map((cat) => (
             <button
               key={cat.id}
@@ -316,7 +259,9 @@ export default function EnvVariablesManager({
       {loading ? (
         <div className="py-12 text-center space-y-2">
           <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
-          <p className="text-xs text-slate-500 font-bold">{lang === 'ar' ? 'جاري التحقق من متغيرات البيئة...' : 'Auditing environment parameters...'}</p>
+          <p className="text-xs text-slate-500 font-bold">
+            {lang === 'ar' ? 'جاري التحقق من متغيرات البيئة...' : 'Auditing environment parameters...'}
+          </p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -334,9 +279,7 @@ export default function EnvVariablesManager({
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-slate-900 dark:text-white">
-                        {item.key}
-                      </span>
+                      <span className="font-mono text-xs font-bold text-slate-900 dark:text-white">{item.key}</span>
 
                       {item.required ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
@@ -391,11 +334,7 @@ export default function EnvVariablesManager({
                       value={val}
                       onChange={(e) => handleInputChange(item.key, e.target.value)}
                       placeholder={
-                        item.isConfigured
-                          ? item.maskedPreview
-                          : item.key.includes('URL')
-                          ? 'https://...'
-                          : 'ey...'
+                        item.isConfigured ? item.maskedPreview : item.key.includes('URL') ? 'https://...' : 'ey...'
                       }
                       className="w-full pl-3 pr-10 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono focus:outline-none focus:border-indigo-500"
                     />

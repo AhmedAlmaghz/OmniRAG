@@ -32,6 +32,21 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const body = await req.json();
+
+    // Reset action: clear the persisted cookie so non-header requests fall
+    // back to DEFAULT_AI_MODELS instead of a stale year-long config. The
+    // client-side reset previously cleared localStorage only, leaving this
+    // cookie serving outdated models to any request without the header.
+    if (body?.action === 'reset') {
+      const response = NextResponse.json({
+        success: true,
+        message: 'تمت إعادة ضبط إعدادات النماذج إلى الافتراضية',
+        config: { ...DEFAULT_AI_MODELS },
+      });
+      response.cookies.delete(MODEL_CONFIG_COOKIE);
+      return response;
+    }
+
     // normalizeModelConfig fills any missing field (defaults to DEFAULT_AI_MODELS),
     // so adding new keys (whisper/ocr/fallbackModels) needs no special handling.
     const updatedConfig: AIModelConfig = normalizeModelConfig({

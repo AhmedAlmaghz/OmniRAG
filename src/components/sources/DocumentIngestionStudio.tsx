@@ -323,9 +323,15 @@ export function DocumentIngestionStudio({
   const [parsingEngine, setParsingEngine] = useState<'mistral_ocr' | 'unstructured_mcp' | 'native_ast' | 'pdf_layout'>(
     'mistral_ocr',
   );
-  const [chunkStrategy, setChunkStrategy] = useState<'semantic' | 'markdown' | 'code' | 'sliding'>('semantic');
-  const [chunkSize, setChunkSize] = useState<number>(512);
-  const [chunkOverlap, setChunkOverlap] = useState<number>(20);
+  // Seeded from the global ingestion settings store (Settings → Ingestion)
+  // so the configured DEFAULTS are actually applied per new document.
+  // Strategy values MUST stay within the backend chunker's union — the old
+  // 'code'/'sliding' options were rejected server-side by zod validation.
+  const [chunkStrategy, setChunkStrategy] = useState<'semantic' | 'markdown' | 'recursive'>(
+    () => getIngestionSettings().chunkStrategy,
+  );
+  const [chunkSize, setChunkSize] = useState<number>(() => getIngestionSettings().chunkSize);
+  const [chunkOverlap, setChunkOverlap] = useState<number>(() => getIngestionSettings().chunkOverlap);
   const [selectedColIds, setSelectedColIds] = useState<string[]>([]);
 
   // Processing state
@@ -626,9 +632,9 @@ export function DocumentIngestionStudio({
               const totalPages = srcDoc.getPageCount();
 
               if (totalPages > 0) {
-                // Determine pages per chunk on the client
-                // 15 pages per chunk is excellent for performance & timeout safety
-                const pagesPerChunk = 15;
+                // Honor the user-configured batch size instead of a hardcoded
+                // 15 that silently ignored the Ingestion settings screen.
+                const pagesPerChunk = Math.max(5, currentPagesPerChunk);
                 const totalChunks = Math.ceil(totalPages / pagesPerChunk);
                 const chunkTexts: string[] = [];
 
@@ -680,7 +686,7 @@ export function DocumentIngestionStudio({
                             ? 'unstructured'
                             : 'auto',
                       pagesPerChunk: pagesPerChunk,
-                      maxFileSizeMb: 30,
+                      maxFileSizeMb: currentMaxFileSizeMb,
                     }),
                   });
 
@@ -1767,12 +1773,13 @@ export function DocumentIngestionStudio({
                 onChange={(e) => setChunkStrategy(e.target.value as any)}
                 className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
-                <option value="semantic">{lang === 'ar' ? 'تقطيع دلالي ذكي (Semantic)' : 'Semantic Boundary'}</option>
+                <option value="semantic">{lang === 'ar' ? 'تقطيع دلالي ذكي (Semantic)' : 'Semantic Boundaries'}</option>
                 <option value="markdown">
                   {lang === 'ar' ? 'تقسيم الترويسات (Markdown Headings)' : 'Markdown Headings'}
                 </option>
-                <option value="code">{lang === 'ar' ? 'هيكل الشفرة (Code AST)' : 'Code AST Structure'}</option>
-                <option value="sliding">{lang === 'ar' ? 'نافذة متداخلة (Sliding Window)' : 'Sliding Window'}</option>
+                <option value="recursive">
+                  {lang === 'ar' ? 'تقسيم تكراري بالفواصل (Recursive)' : 'Recursive Splitting'}
+                </option>
               </select>
             </div>
 

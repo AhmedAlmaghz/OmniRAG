@@ -798,6 +798,17 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
   animation: fadeIn 0.18s ease-out both;
 }
 
+/* Slow rotation used by decorative gear icons (SettingsView). Previously the
+   class was used but never defined, so it silently did nothing. */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: spin-slow 2.5s linear infinite;
+}
+
 /* Toast notifications: slide up on enter, fade down on exit. */
 @keyframes toast-enter {
   from {
