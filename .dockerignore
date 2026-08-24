@@ -1,0 +1,40 @@
+# Never bake secrets into the image — they are injected at runtime.
+.env
+.env.*
+!.env.example
+
+# Version control & CI
+.git
+.github
+.husky
+.zcode
+.kilo
+
+# Build artifacts & caches (rebuilt inside the image)
+node_modules
+.next
+dist
+coverage
+*.tsbuildinfo
+
+# Local runtime artifacts
+terminal_logs
+*.log
+
+# Not needed inside the image (docs, local experiments, dev-only tooling).
+# NOTE: config files (tsconfig.json, postcss/eslint/vitest configs) and the
+# *.traineddata OCR models ARE required — the build stage type-checks with
+# tsconfig, compiles Tailwind via postcss, and bakes the traineddata files.
+SDLC
+assets
+scripts
+dev-server.js
+COMPREHENSIVE_REPORT.md
+REPORT_AND_PLAN.md
+REPORT_AND_PLAN_2026-08-15.md
+todo.md
+.todo.json
+test-*.js
+test-*.ts
+seed_patch.cjs
+metadata.json

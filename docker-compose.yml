@@ -1,0 +1,62 @@
+# OmniRAG — full self-hosted stack.
+#
+#   docker compose up -d --build
+#
+# Brings up the app + PostgreSQL + Qdrant with persistent volumes. All cloud
+# API keys (GEMINI_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, …) are read from a
+# local .env file — see .env.example. DATABASE_URL and QDRANT_URL below are
+# intentionally overridden to point at the internal containers, so values in
+# .env for those two never leak into the compose network.
+
+services:
+  app:
+    build:
+      context: .
+    image: omnirag
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Internal service addresses (override anything coming from .env).
+      DATABASE_URL: postgresql://omnirag:omnirag@postgres:5432/omnirag
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omnirag
+      POSTGRES_PASSWORD: omnirag
+      POSTGRES_DB: omnirag
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Exposed so `npx drizzle-kit push` can run from the host; remove the
+    # mapping on internet-facing servers.
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnirag -d omnirag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  pgdata:
+  qdrant_data:
