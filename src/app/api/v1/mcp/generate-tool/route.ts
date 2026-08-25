@@ -1,22 +1,14 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
-import { GoogleGenAI, Type } from '@google/genai';
+import { generateObject } from 'ai';
+import { z } from 'zod';
 import { db } from '@/lib/storage/db';
 import { getAiModel, parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { google, resolveGeminiApiKey } from '@/lib/rag/googleProvider';
 
 export const dynamic = 'force-dynamic';
-
-// The GoogleGenAI client MUST be constructed inside the handler, not at module
-// load. Building it at module top level froze `process.env.GEMINI_API_KEY` to
-// whatever was set at cold start, so env keys provisioned at runtime (via
-// x-env headers or POST /env-config) were never picked up by this route and
-// tool generation silently failed with an empty/invalid key. Constructing per
-// request is cheap (no network on construction) and reads the current env.
-function buildAiClient() {
-  return new GoogleGenAI({ apiKey: getEnv('GEMINI_API_KEY') || process.env.GEMINI_API_KEY });
-}
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   // Load client-supplied dynamic environment keys from headers into process.env
@@ -40,66 +32,40 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         }
 
         const modelName = getAiModel('chatModel');
-        const ai = buildAiClient();
 
         const systemInstruction = `أنت مهندس أدوات وأنظمة خوادم بروتوكول MCP (Model Context Protocol) للذكاء الاصطناعي.
 مهمتك تحويل الوصف النصي المعطى بلغة طبيعية (عربية أو إنجليزية) إلى مصفوفة تعريف أداة برمجة قياسية (MCP Tool Schema) متوافقة تماماً مع معايير Gemini Function Calling و MCP Protocol.
 
-يجب أن ترجع المخرجات بنفس هيكل JSON الموضح أدناه:
+يجب أن تعبّئ الحقول التالية بدقة:
 - toolName: اسم الأداة بلغة البرمجة بصيغة snake_case باللغة الإنجليزية وبصيغة دقيقة تعبر عن الفعل (مثل get_stock_price, check_order_status).
 - description: شرح دقيق ومفصل لمهمة الأداة باللغة العربية.
-- properties: كائن يحتوي جميع المدخلات/المعاملات المقبولة (parameters) بحيث يحدد نوع كل معامل (STRING, NUMBER, BOOLEAN) وشرحه بالعربية.
+- properties: كائن يحتوي جميع المدخلات/المعاملات المقبولة (parameters) بحيث يحدد نوع كل معامل (STRING / NUMBER / BOOLEAN) وشرحه بالعربية.
 - required: مصفوفة بأسماء المعاملات الإلزامية التي لا يمكن للأداة العمل بدونها.
 - sampleResponse: كائن JSON يمثل النتيجة المرتجعة المتوقعة من تشغيل الأداة توضيحياً.`;
 
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: `قم بتحويل وصف الأداة التالي إلى مخطط أداة MCP دقيق ورسمي:\n\n${prompt}` }],
-            },
-          ],
-          config: {
-            systemInstruction,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                toolName: { type: Type.STRING, description: 'اسم الأداة بالإنجليزية بصيغة snake_case' },
-                description: { type: Type.STRING, description: 'شرح وتوثيق الأداة باللغة العربية' },
-                properties: {
-                  type: Type.OBJECT,
-                  description: 'خريطة المعاملات والمدخلات مع أنواعها وشرحها',
-                },
-                required: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: 'أسماء المعاملات الإلزامية',
-                },
-                sampleResponse: {
-                  type: Type.OBJECT,
-                  description: 'استجابة افتراضية توضيحية لنتيجة تنفيذ الأداة',
-                },
-              },
-              required: ['toolName', 'description', 'properties', 'required'],
-            },
-          },
+        // AI SDK v7 structured output — schema-constrained generation replaces
+        // the old responseMimeType/responseSchema JSON parsing dance. The key
+        // resolves through the shared provider so runtime-provisioned secrets
+        // (x-env headers / env-config store) work exactly like host secrets.
+        const { object: generatedSchema } = await generateObject({
+          model: google(modelName),
+          system: systemInstruction,
+          prompt: `قم بتحويل وصف الأداة التالي إلى مخطط أداة MCP دقيق ورسمي:
+
+${prompt}`,
+          schema: z.object({
+            toolName: z.string().describe('اسم الأداة بالإنجليزية بصيغة snake_case'),
+            description: z.string().describe('شرح وتوثيق الأداة باللغة العربية'),
+            properties: z.record(z.string(), z.any()).describe('خريطة المعاملات والمدخلات مع أنواعها وشرحها'),
+            required: z.array(z.string()).describe('أسماء المعاملات الإلزامية'),
+            sampleResponse: z.any().optional().describe('استجابة افتراضية توضيحية لنتيجة تنفيذ الأداة'),
+          }),
         });
 
-        const responseText = response.text || '{}';
-        let parsedSchema: any;
-        try {
-          parsedSchema = JSON.parse(responseText);
-        } catch {
-          parsedSchema = {
-            toolName: `custom_tool_${Date.now()}`,
-            description: prompt,
-            properties: { query: { type: 'STRING', description: 'مدخل الاستعلام العام' } },
-            required: ['query'],
-            sampleResponse: { success: true, message: 'تم التنفيذ بنجاح' },
-          };
-        }
+        const parsedSchema = {
+          ...generatedSchema,
+          sampleResponse: (generatedSchema as any).sampleResponse || { success: true, message: 'تم التنفيذ بنجاح' },
+        };
 
         return NextResponse.json({
           success: true,

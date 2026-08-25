@@ -1,20 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
+import { embed } from 'ai';
 import { getAiModel } from '../config/aiModels';
-
-// Singleton AI Client instance
-let aiClientInstance: GoogleGenAI | null = null;
-let currentApiKey: string | null = null;
-
-function getAiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-  if (!apiKey) return null;
-
-  if (!aiClientInstance || currentApiKey !== apiKey) {
-    aiClientInstance = new GoogleGenAI({ apiKey });
-    currentApiKey = apiKey;
-  }
-  return aiClientInstance;
-}
+import { getGoogleProvider, resolveGeminiApiKey } from './googleProvider';
 
 // In-Memory LRU Cache for Embeddings
 const cacheMap = new Map<string, number[]>();
@@ -34,8 +20,12 @@ function setCachedEmbedding(key: string, vector: number[]): void {
 }
 
 /**
- * Generates a vector embedding for the given text
- * using @google/genai SDK embedding models with LRU Caching & deterministic fallback.
+ * Generates a vector embedding for the given text using the Vercel AI SDK v7
+ * (`embed` + the shared @ai-sdk/google provider) with LRU caching and a
+ * deterministic fallback. The API key resolves through the shared provider
+ * (runtime-env aware), and the model chain walks configured primary → known
+ * Gemini embedding models so one deprecated/renamed model doesn't break
+ * ingestion.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const normalizedText = text.trim();
@@ -51,8 +41,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     return cached;
   }
 
-  const ai = getAiClient();
-  if (!ai) {
+  if (!resolveGeminiApiKey()) {
     // No API key (dev/sandbox): return the deterministic fallback WITHOUT
     // caching it — otherwise the hash vector would be pinned until LRU
     // eviction even after a real key becomes available.
@@ -63,17 +52,16 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     new Set([primaryModel, 'gemini-embedding-2', 'text-embedding-004', 'embedding-001']),
   );
 
+  const provider = getGoogleProvider();
   for (const modelName of candidateModels) {
     try {
-      const response = await ai.models.embedContent({
-        model: modelName,
-        contents: normalizedText,
+      const { embedding } = await embed({
+        model: (provider as any).embeddingModel(modelName),
+        value: normalizedText,
       });
 
-      const res = response as any;
-      const embeddingValues = res.embeddings?.[0]?.values || res.embedding?.values;
-      if (embeddingValues && Array.isArray(embeddingValues) && embeddingValues.length > 0) {
-        const normalized = normalizeTo3072(embeddingValues);
+      if (embedding && Array.isArray(embedding) && embedding.length > 0) {
+        const normalized = normalizeTo3072(embedding);
         setCachedEmbedding(cacheKey, normalized);
         return normalized;
       }

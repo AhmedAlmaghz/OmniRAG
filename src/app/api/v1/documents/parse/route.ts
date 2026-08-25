@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { isTenantObjectKey, downloadS3Object, deleteS3Object } from '@/lib/uploads/directUpload';
-import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { processFileBuffer, archiveUploadedFile, normalizeMimeType } from '@/lib/services/unstructuredService';
 import { serverErrorResponse } from '@/lib/api/safeError';

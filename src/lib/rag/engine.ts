@@ -1,16 +1,17 @@
 import { google } from './googleProvider';
-import { generateText } from 'ai';
+import { generateText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
 import { SearchQuery, SearchResult, DocumentChunk, Citation, MCPToolCall } from '../types/omnirag';
 import { db } from '../storage/db';
 import { searchPostgresLexical, normalizeArabicForSearch } from '../storage/postgres';
 import { searchQdrantSemantic } from '../storage/qdrant';
 import { generateEmbedding } from './embedding';
 import { rerankChunks } from './reranker';
-import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { getAiModel } from '../config/aiModels';
 import { getEnv } from '../env/runtimeEnv';
+import { resolveGeminiApiKey } from './googleProvider';
+import { generateTextResilient } from '../ai/resilientGenerate';
 import { SYSTEM_CONFIG } from '../config/systemConfig';
-import { MCPToolDefinition, getToolDefinition } from '../mcp/registry/tools';
+import { buildTenantMcpTools, type CustomToolSchema } from '../mcp/aiSdkTools';
 import { ToolExecutionOutcome, executeMcpToolCall } from '../mcp/dispatcher';
 
 /**
@@ -39,61 +40,6 @@ async function runToolSafely(
       simulated: false,
     };
   }
-}
-
-// Singleton AI Client instance for agentic MCP calls
-let globalAiClient: GoogleGenAI | null = null;
-let currentKey: string | null = null;
-
-function getMcpAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || '';
-  if (!globalAiClient || currentKey !== apiKey) {
-    globalAiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-    currentKey = apiKey;
-  }
-  return globalAiClient;
-}
-
-/**
- * Maps a central-registry JSON-schema parameter type onto the Gemini SDK Type
- * enum. The registry (src/lib/mcp/registry/tools.ts) is the single source of
- * truth for tool schemas — the model-facing declarations are DERIVED from it
- * here, so adding a tool never requires touching the chat engine again.
- */
-const REGISTRY_TYPE_TO_GEMINI: Record<string, any> = {
-  string: Type.STRING,
-  number: Type.NUMBER,
-  integer: Type.NUMBER,
-  boolean: Type.BOOLEAN,
-  array: Type.ARRAY,
-  object: Type.OBJECT,
-};
-
-function toGeminiFunctionDeclaration(def: MCPToolDefinition): FunctionDeclaration {
-  const properties: Record<string, any> = {};
-  for (const [propName, prop] of Object.entries(def.parameters.properties || {})) {
-    properties[propName] = {
-      type: REGISTRY_TYPE_TO_GEMINI[prop.type] || Type.STRING,
-      description: prop.description,
-      ...(prop.enum && prop.enum.length > 0 ? { enum: prop.enum } : {}),
-    };
-  }
-  return {
-    name: def.name,
-    description: def.description,
-    parameters: {
-      type: Type.OBJECT,
-      properties,
-      required: def.parameters.required,
-    },
-  };
 }
 
 /**
@@ -139,7 +85,7 @@ export function selectSmartModel(query: string, mode: string): string {
  * HyDE (Hypothetical Document Embeddings) Generator using Vercel AI SDK
  */
 export async function generateHydeDocument(query: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const apiKey = resolveGeminiApiKey();
   if (!apiKey) return query;
 
   try {
@@ -527,18 +473,20 @@ export async function generateRagCompletion(params: {
     .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle} (صفحة ${c.pageNumber || 1})]:\n${c.content}`)
     .join('\n\n');
 
-  // Build conversation memory context (last 10 messages for short-term memory)
+  // Conversation memory becomes REAL multi-turn messages (last 10), letting
+  // the model resolve references like "هذا/ذلك" natively instead of through a
+  // flattened text transcript pasted into one giant prompt.
   const MAX_HISTORY_MESSAGES = 10;
   const recentHistory = conversationHistory.slice(-MAX_HISTORY_MESSAGES);
-  const historyContext =
-    recentHistory.length > 0
-      ? recentHistory.map((msg) => `${msg.role === 'user' ? 'المستخدم' : 'المساعد'}: ${msg.content}`).join('\n')
-      : '';
+  const messages: ModelMessage[] = recentHistory.map((msg) => ({
+    role: (msg.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+    content: msg.content,
+  }));
 
-  let promptText = historyContext
-    ? `سجل المحادثة السابقة:\n${historyContext}\n\n---\n\nالمستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم الحالي: ${query}`
-    : `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}\n\nسؤال المستخدم: ${query}`;
   const alreadyExecutedToolCalls: MCPToolCall[] = [];
+
+  const docsBlock = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}`;
+  let userContent = `${docsBlock}\n\nسؤال المستخدم: ${query}`;
 
   if (approvedToolCall) {
     // Human-approved side-effect call — executed through the SAME unified MCP
@@ -558,24 +506,26 @@ export async function generateRagCompletion(params: {
       timestamp: new Date().toISOString(),
     });
 
-    promptText = `${promptText}\n\n[تأكيد تنفيذ أداة الـ MCP]: تمت الموافقة البشرية بنجاح وتم إرجاع نتيجة الأداة (${approvedToolCall.scopedToolName}):\n${JSON.stringify(outcome.result, null, 2)}\n\nيرجى دمج هذه البيانات وصياغة الرد النهائي للمستخدم.${
+    userContent += `\n\n[تأكيد تنفيذ أداة الـ MCP]: تمت الموافقة البشرية بنجاح وتم إرجاع نتيجة الأداة (${approvedToolCall.scopedToolName}):\n${JSON.stringify(outcome.result, null, 2)}\n\nيرجى دمج هذه البيانات وصياغة الرد النهائي للمستخدم.${
       outcome.isError ? '\nملاحظة: فشل تنفيذ الأداة — وضّح ذلك للمستخدم بلطف واقترح بديلاً.' : ''
     }`;
   }
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const apiKey = resolveGeminiApiKey();
 
   if (apiKey) {
     try {
-      const aiClient = getMcpAiClient();
       const modelAlias = modelToUse || (mode === 'analysis' ? getAiModel('analysisModel') : getAiModel('chatModel'));
 
-      // Fetch Tenant MCP configuration to extract enabled/approved tools
+      // Fetch Tenant MCP configuration to extract enabled/approved tools and
+      // custom (AI-generated / remote) tool schemas.
       const servers = await db.getMcpServers(tenantId);
       const enabledTools: string[] = [];
       const requireApprovalTools: string[] = [];
+      const customSchemas: Record<string, CustomToolSchema> = {};
 
       for (const server of servers) {
+        Object.assign(customSchemas, ((server as any).customToolSchemas || {}) as Record<string, CustomToolSchema>);
         if (server.status === 'healthy') {
           for (const tool of server.enabledTools) {
             enabledTools.push(tool);
@@ -616,128 +566,93 @@ export async function generateRagCompletion(params: {
 3. لا تضع قائمة منفصلة للمصادر في نهاية الرد — فقط الأرقام المضمنة في النص.
 ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحالي مغلق وخاص بالكامل (Private Mode). تم إيقاف وتصفية جميع أدوات الـ MCP الخارجية لشبكة الويب أو الخدمات الخارجية للطرف الثالث حماية لسرية بيانات المستأجر.' : ''}`;
 
-      const functionDeclarations: FunctionDeclaration[] = [];
-      const seenToolNames = new Set<string>();
+      // Native AI SDK tool loop: registry-derived zod schemas + custom JSON
+      // Schema tools, executed through the unified MCP dispatcher.
+      let aiTools: ToolSet | undefined;
+      const pendingApprovalRef: { value: MCPToolCall | null } = { value: null };
 
-      if (!approvedToolCall) {
-        for (const toolName of toolsToOffer) {
-          if (seenToolNames.has(toolName)) continue;
-          seenToolNames.add(toolName);
-
-          // Schemas are derived from the central MCP registry — a single
-          // source of truth shared with the protocol gateway.
-          const def = getToolDefinition(toolName);
-          if (def) {
-            functionDeclarations.push(toGeminiFunctionDeclaration(def));
-          }
-        }
+      if (!approvedToolCall && toolsToOffer.length > 0) {
+        aiTools = buildTenantMcpTools(toolsToOffer, customSchemas, {
+          tenantId,
+          requireApprovalTools,
+          runSafely: (toolName, args) => runToolSafely(tenantId, toolName, args),
+          onAutoExecuted: (info) => {
+            alreadyExecutedToolCalls.push({
+              id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              tenantId,
+              scopedToolName: info.toolName,
+              inputParams: info.args,
+              outputResult: info.outputResult,
+              latencyMs: info.latencyMs,
+              status: info.isError ? 'failed' : 'completed',
+              hasSideEffect: info.hasSideEffect,
+              timestamp: new Date().toISOString(),
+            });
+          },
+          onPendingApproval: (toolName, args) => {
+            pendingApprovalRef.value = {
+              id: `tc-${Date.now()}`,
+              tenantId,
+              scopedToolName: toolName,
+              inputParams: args,
+              latencyMs: 0,
+              status: 'pending',
+              hasSideEffect: true,
+              timestamp: new Date().toISOString(),
+            };
+          },
+        });
       }
 
-      const response = await aiClient.models.generateContent({
-        model: modelAlias,
-        contents: promptText,
-        config: {
-          systemInstruction: systemInstruction,
-          temperature: 0.2,
-          tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
-        },
+      console.log(
+        `[Agentic RAG] generateText via ${modelAlias} with ${aiTools ? Object.keys(aiTools).length : 0} MCP tools...`,
+      );
+      const response = await generateText({
+        model: google(modelAlias),
+        system: systemInstruction,
+        messages: [...messages, { role: 'user', content: userContent }],
+        ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),
+        stopWhen: stepCountIs(5),
+        temperature: 0.2,
       });
-
-      const functionCalls = response.functionCalls;
-      if (functionCalls && functionCalls.length > 0) {
-        const fc = functionCalls[0];
-        const toolName = fc.name || '';
-        const args = (fc.args || {}) as Record<string, any>;
-        const toolDef = getToolDefinition(toolName);
-
-        // Approval gate: per-server confirmation list OR the registry's own
-        // side-effect declaration for the tool.
-        const isApprovalRequired = requireApprovalTools.includes(toolName) || (toolDef?.requireConfirmation ?? false);
-
-        if (isApprovalRequired) {
-          const pendingCall: MCPToolCall = {
-            id: `tc-${Date.now()}`,
-            tenantId,
-            scopedToolName: toolName,
-            inputParams: args,
-            latencyMs: 0,
-            status: 'pending',
-            hasSideEffect: toolDef?.hasSideEffect ?? true,
-            timestamp: new Date().toISOString(),
-          };
-
-          return {
-            text: `⚠️ [بوابة موافقة الأدوات MCP]: يقترح المساعد تشغيل الأداة (${toolName}) بمدخلات: ${JSON.stringify(args)}. تتطلب هذه الأداة موافقة بشرية قبل التنفيذ. يرجى تأكيد العملية في القائمة الجانبية للمتابعة.`,
-            citations: [],
-            modelUsed: modelToUse,
-            tokensUsed: { input: 200, output: 80 },
-            pendingToolCall: pendingCall,
-          };
-        } else {
-          // Auto-executed read-only call — same unified dispatcher as the
-          // gateway (timeouts, audit persistence, simulation stamping).
-          const outcome = await runToolSafely(tenantId, toolName, args);
-
-          const secondPrompt = `${promptText}\n\n[أداة الـ MCP المنفذة تلقائياً]: تم استدعاء الأداة (${toolName}) وإرجاع المخرجات التالية:\n${JSON.stringify(outcome.result, null, 2)}\n\n${
-            outcome.isError
-              ? 'فشل تنفيذ الأداة — اعتذر للمستخدم بلطف، اشرح سبب الفشل باختصار، واقترح خطوة بديلة دون اختلاق نتائج.'
-              : 'يرجى صياغة الاستجابة النهائية للمستخدم بناءً على هذه المخرجات والمستندات المتاحة.'
-          }`;
-
-          const secondResponse = await aiClient.models.generateContent({
-            model: modelAlias,
-            contents: secondPrompt,
-            config: {
-              systemInstruction: systemInstruction,
-              temperature: 0.2,
-            },
-          });
-
-          const citations: Citation[] = buildCitations(contextChunks);
-
-          return {
-            text: secondResponse.text || 'تم استدعاء الأداة بنجاح ولكن لم يتم توليد رد نهائي.',
-            citations,
-            modelUsed: modelToUse,
-            tokensUsed: {
-              input: Math.floor(secondPrompt.length / 4),
-              output: Math.floor((secondResponse.text || '').length / 4),
-            },
-            toolCalls: [
-              {
-                id: `tc-${Date.now()}`,
-                tenantId,
-                scopedToolName: toolName,
-                inputParams: args,
-                outputResult: outcome.result,
-                latencyMs: outcome.latencyMs,
-                status: outcome.isError ? 'failed' : 'completed',
-                hasSideEffect: toolDef?.hasSideEffect ?? false,
-                timestamp: new Date().toISOString(),
-              },
-            ],
-          };
-        }
-      }
 
       const citations: Citation[] = buildCitations(contextChunks);
 
-      // AI-powered contextual follow-up suggestions
+      // Approval gate hit mid-loop → surface the pending call with the exact
+      // same contract as before; the marker transcript is never exposed.
+      const pendingCall = pendingApprovalRef.value;
+      if (pendingCall) {
+        return {
+          text: `⚠️ [بوابة موافقة الأدوات MCP]: يقترح المساعد تشغيل الأداة (${pendingCall.scopedToolName}) بمدخلات: ${JSON.stringify(pendingCall.inputParams)}. تتطلب هذه الأداة موافقة بشرية قبل التنفيذ. يرجى تأكيد العملية في القائمة الجانبية للمتابعة.`,
+          citations: [],
+          modelUsed: modelToUse,
+          tokensUsed: { input: 200, output: 80 },
+          pendingToolCall: pendingCall,
+        };
+      }
+
+      const usageAny: any = (response as any).usage || {};
+      const tokensUsed = {
+        input:
+          usageAny.inputTokens ??
+          usageAny.promptTokens ??
+          Math.floor((messages.reduce((n, m) => n + String(m.content).length, 0) + userContent.length) / 4),
+        output: usageAny.outputTokens ?? usageAny.completionTokens ?? Math.floor((response.text || '').length / 4),
+      };
+
+      // AI-powered contextual follow-up suggestions (central resilient helper)
       let suggestions: string[] | undefined;
       if (generateSuggestions && response.text) {
         try {
-          const suggestionsResponse = await aiClient.models.generateContent({
+          const suggestionsResult = await generateTextResilient({
             model: modelAlias,
-            contents: `بناءً على الإجابة التالية والمحادثة، اقترح 3 أسئلة متابعة سياقية قصيرة ومفيدة يمكن للمستخدم أن يسألها. أعد الأسئلة فقط، كل سؤال في سطر منفصل، بدون ترقيم أو نقاط:\n\nالإجابة: ${response.text.substring(0, 500)}\n\nسؤال المستخدم: ${query}`,
-            config: {
-              systemInstruction:
-                'أنت مساعد يولد أسئلة متابعة سياقية ذكية. أجب بـ 3 أسئلة فقط، كل سؤال في سطر منفصل، بدون أي نص إضافي أو ترقيم أو رموز.',
-              temperature: 0.7,
-              maxOutputTokens: 200,
-            },
+            system:
+              'أنت مساعد يولد أسئلة متابعة سياقية ذكية. أجب بـ 3 أسئلة فقط، كل سؤال في سطر منفصل، بدون أي نص إضافي أو ترقيم أو رموز.',
+            prompt: `بناءً على الإجابة التالية والمحادثة، اقترح 3 أسئلة متابعة سياقية قصيرة ومفيدة يمكن للمستخدم أن يسألها. أعد الأسئلة فقط، كل سؤال في سطر منفصل، بدون ترقيم أو نقاط:\n\nالإجابة: ${response.text.substring(0, 500)}\n\nسؤال المستخدم: ${query}`,
+            temperature: 0.7,
+            maxRetries: 1,
           });
-          const suggestionsText = suggestionsResponse.text || '';
-          suggestions = suggestionsText
+          suggestions = (suggestionsResult?.text || '')
             .split('\n')
             .map((s) => s.replace(/^[\d\.\-\*\s]+/, '').trim())
             .filter((s) => s.length > 10 && s.length < 150)
@@ -751,15 +666,12 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         text: response.text || 'لم يتم استخراج نص من النموذج.',
         citations,
         modelUsed: modelToUse,
-        tokensUsed: {
-          input: Math.floor(promptText.length / 4),
-          output: Math.floor((response.text || '').length / 4),
-        },
+        tokensUsed,
         toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined,
         suggestions,
       };
     } catch (err: any) {
-      console.error('AI SDK/Google GenAI execution error, using deterministic fallback:', err);
+      console.error('AI SDK execution error, using deterministic fallback:', err);
     }
   }
 

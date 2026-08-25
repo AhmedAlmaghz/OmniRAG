@@ -2,9 +2,16 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import mammoth from 'mammoth';
-import { FileState, type GoogleGenAI, type Part } from '@google/genai';
-import { generateContentWithResilience, getResilientAiClient } from '../gemini/resilientGemini';
-import { getAiModel } from '../config/aiModels';
+import { generateText, transcribe, uploadFile } from 'ai';
+import { getAiModel, getFallbackModels } from '../config/aiModels';
+import { google, getGoogleProvider, resolveGeminiApiKey } from '../rag/googleProvider';
+import { generateTextResilient } from '../ai/resilientGenerate';
+import {
+  groqTranscriptionModel,
+  mistralTranscriptionModel,
+  resolveGroqApiKey,
+  resolveMistralApiKey,
+} from '../ai/providers';
 import { ensureLongHttpTimeouts } from '../http/longHttpTimeouts';
 
 export interface FileTypeClassification {
@@ -234,9 +241,11 @@ export async function mistralOcr(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
-  apiKey: string,
+  apiKey?: string,
 ): Promise<DispatchResult> {
+  const resolvedKey = apiKey || resolveMistralApiKey();
   try {
+    if (!resolvedKey) throw new Error('MISTRAL_API_KEY is not configured.');
     const base64Data = fileBuffer.toString('base64');
     const resolvedMime = normalizeMimeType(fileName, mimeType);
 
@@ -245,7 +254,7 @@ export async function mistralOcr(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${resolvedKey}`,
       },
       body: JSON.stringify({
         model: getAiModel('ocrModel'),
@@ -547,41 +556,29 @@ export async function transcribeWithGroqWhisper(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
-  apiKey: string,
+  apiKey?: string,
 ): Promise<DispatchResult> {
+  const engineUsed = 'Groq Whisper-3 (whisper-large-v3) ⚡';
   try {
-    const resolvedMime = normalizeMimeType(fileName, mimeType);
-    console.log(
-      `[Groq Whisper] Calling Whisper-3 (${getAiModel('whisperModel')}) for ${fileName} (${resolvedMime})...`,
-    );
-
-    // Standard Web/Node Blob and FormData for modern Next.js 15+ environment
-    const blob = new Blob([fileBuffer as any], { type: resolvedMime });
-    const formData = new FormData();
-    formData.append('file', blob, fileName);
-    formData.append('model', getAiModel('whisperModel'));
-    formData.append('response_format', 'json');
-
-    const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: formData,
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Groq Whisper API returned HTTP ${res.status}: ${errText}`);
+    if (!apiKey && !resolveGroqApiKey()) {
+      throw new Error('GROQ_API_KEY is not configured.');
     }
 
-    const data = await res.json();
-    const transcriptionText = data.text || '';
+    const modelId = getAiModel('whisperModel');
+    console.log(`[Groq Whisper] Transcribing ${fileName} via AI SDK (${modelId})...`);
 
-    if (transcriptionText.trim().length > 0) {
+    // AI SDK v7 native transcription over the shared Groq provider — replaces
+    // the hand-rolled multipart fetch to api.groq.com.
+    const { text } = await transcribe({
+      model: groqTranscriptionModel(modelId),
+      audio: new Uint8Array(fileBuffer),
+      maxRetries: 2,
+    });
+
+    if (text && text.trim().length > 0) {
       return {
-        text: transcriptionText.trim(),
-        engineUsed: 'Groq Whisper-3 (whisper-large-v3) ⚡',
+        text: text.trim(),
+        engineUsed,
         success: true,
       };
     }
@@ -591,7 +588,51 @@ export async function transcribeWithGroqWhisper(
     console.error('[Unstructured Service] Groq Whisper transcription error:', error);
     return {
       text: '',
-      engineUsed: 'Groq Whisper-3 (whisper-large-v3) ⚡',
+      engineUsed,
+      success: false,
+      metadata: { error: error.message },
+    };
+  }
+}
+
+/**
+ * Transcribes audio with Mistral Voxtral via the AI SDK (`@ai-sdk/mistral`) —
+ * an independent second speech-to-text vendor between Groq Whisper and the
+ * Gemini multimodal fallback, so a single provider outage never blocks
+ * ingestion.
+ */
+export async function transcribeWithMistralVoxtral(
+  fileBuffer: Buffer,
+  fileName: string,
+  mimeType: string,
+): Promise<DispatchResult> {
+  const engineUsed = 'Mistral Voxtral (voxtral-mini-latest) ⚡';
+  try {
+    if (!resolveMistralApiKey()) {
+      throw new Error('MISTRAL_API_KEY is not configured.');
+    }
+
+    console.log(`[Mistral Voxtral] Transcribing ${fileName} via AI SDK...`);
+    const { text } = await transcribe({
+      model: mistralTranscriptionModel(),
+      audio: new Uint8Array(fileBuffer),
+      maxRetries: 2,
+    });
+
+    if (text && text.trim().length > 0) {
+      return {
+        text: text.trim(),
+        engineUsed,
+        success: true,
+      };
+    }
+
+    throw new Error('Mistral Voxtral returned empty transcription text.');
+  } catch (error: any) {
+    console.error('[Unstructured Service] Mistral Voxtral transcription error:', error);
+    return {
+      text: '',
+      engineUsed,
       success: false,
       metadata: { error: error.message },
     };
@@ -606,10 +647,6 @@ export async function transcribeWithGroqWhisper(
  */
 const GEMINI_INLINE_MEDIA_LIMIT_BYTES = 14 * 1024 * 1024;
 
-/** Max time to wait for an uploaded file to become ACTIVE on the Gemini Files API. */
-const GEMINI_FILE_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
-const GEMINI_FILE_POLL_INTERVAL_MS = 4000;
-
 const AUDIO_TRANSCRIPTION_INSTRUCTION =
   'You are an expert audio transcription model. Listen carefully to this audio file, and transcribe all spoken words (speech-to-text) verbatim. If the speech is in Arabic, write it exactly as spoken with proper punctuation. Output ONLY the transcribed text directly without adding any commentary, preambles, or explanations.';
 
@@ -617,31 +654,86 @@ const VIDEO_TRANSCRIPTION_INSTRUCTION =
   'You are an expert video transcriber and analyzer. Listen to the audio track and watch the video frames. Transcribe all spoken speech verbatim, and if there is any visible text, subtitles, or slides shown in the video frames, extract and merge them chronologically. If the content is in Arabic, preserve it perfectly. Output ONLY the transcription and extracted text directly without adding any preamble or extra commentary.';
 
 /**
- * Polls the Gemini Files API until the uploaded file finishes processing.
+ * Runs a media-transcription prompt through the AI SDK v7 (`generateText` with
+ * the shared @ai-sdk/google provider), walking the configured primary model
+ * plus fallback chain so one dead/quota-limited model doesn't kill the job.
+ * Returns an honest failure result carrying the last underlying error.
  */
-async function waitForGeminiFileActive(ai: GoogleGenAI, name: string): Promise<{ uri: string }> {
-  const deadline = Date.now() + GEMINI_FILE_PROCESSING_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const file = await ai.files.get({ name });
-    if (file.state === FileState.FAILED) {
-      throw new Error(`Gemini file processing failed: ${file.error?.message || 'unknown error'}`);
-    }
-    if (file.state === FileState.ACTIVE && file.uri) {
-      return { uri: file.uri };
-    }
-    await new Promise((resolve) => setTimeout(resolve, GEMINI_FILE_POLL_INTERVAL_MS));
+async function runTranscriptionWithModelChain(
+  mediaPart: {
+    type: 'file';
+    mediaType: string;
+    filename?: string;
+    data: { type: 'data'; data: Uint8Array } | { type: 'url'; url: URL } | { type: 'reference'; reference: any };
+  },
+  systemInstruction: string,
+  engineUsed: string,
+  options: { model?: string } = {},
+): Promise<DispatchResult> {
+  if (!resolveGeminiApiKey()) {
+    return {
+      text: '',
+      engineUsed,
+      success: false,
+      metadata: { error: 'GEMINI_API_KEY is not configured.' },
+    };
   }
-  throw new Error('Timed out waiting for Gemini to finish processing the uploaded media file.');
+
+  const modelsToTry = [options.model || getAiModel('documentParseModel'), ...getFallbackModels()].filter(
+    (m, i, arr) => m && arr.indexOf(m) === i,
+  );
+
+  let lastError = '';
+  for (const modelId of modelsToTry) {
+    try {
+      console.log(`[Gemini Transcriber] Transcribing via ${modelId} (${mediaPart.mediaType})...`);
+      const { text } = await generateText({
+        model: google(modelId),
+        messages: [
+          {
+            role: 'user',
+            content: [
+              mediaPart,
+              {
+                type: 'text',
+                text: systemInstruction,
+              },
+            ],
+          },
+        ],
+        // AI SDK built-in retry per model; then we move to the next fallback.
+        maxRetries: 2,
+        // Long recordings take minutes of server-side processing.
+        abortSignal: AbortSignal.timeout(10 * 60 * 1000),
+      });
+
+      if (text && text.trim().length > 0) {
+        return { text: text.trim(), engineUsed, success: true };
+      }
+      lastError = `${modelId}: returned an empty transcription`;
+    } catch (err: any) {
+      lastError = `${modelId}: ${err?.message || err}`;
+      console.warn(`[Gemini Transcriber] Model ${modelId} failed — trying next fallback:`, lastError);
+    }
+  }
+
+  console.error('[Gemini Transcriber] All models failed:', lastError);
+  return {
+    text: '',
+    engineUsed,
+    success: false,
+    metadata: { error: lastError },
+  };
 }
 
 /**
- * Transcribes audio/video media using Gemini's multimodal models — genuine
- * speech-to-text over the real media (never fabricated text).
+ * Transcribes audio/video buffers using Gemini multimodal models via the
+ * AI SDK v7 — genuine speech-to-text over the real media (never fabricated
+ * text).
  *
- * Small files are sent inline (base64); anything above the inline limit is
- * uploaded through the Gemini Files API and referenced by URI, which makes
- * long recordings (e.g. hour-long YouTube audio) work too. Uploaded files are
- * always deleted again after transcription, even on failure.
+ * Small files are sent inline; anything above the inline limit is uploaded
+ * through the AI SDK Files API and referenced by provider reference, which
+ * makes long recordings work too (uploads expire per provider policy).
  */
 export async function transcribeWithGemini(
   fileBuffer: Buffer,
@@ -656,9 +748,10 @@ export async function transcribeWithGemini(
     (isVideo
       ? 'Gemini Multimodal Video Speech & Frames Transcriber'
       : 'Gemini Audio Speech-to-Text Transcription Engine');
+  const systemInstruction =
+    options.systemInstruction || (isVideo ? VIDEO_TRANSCRIPTION_INSTRUCTION : AUDIO_TRANSCRIPTION_INSTRUCTION);
 
-  const ai = getResilientAiClient();
-  if (!ai) {
+  if (!resolveGeminiApiKey()) {
     return {
       text: '',
       engineUsed,
@@ -667,66 +760,77 @@ export async function transcribeWithGemini(
     };
   }
 
-  const systemInstruction =
-    options.systemInstruction || (isVideo ? VIDEO_TRANSCRIPTION_INSTRUCTION : AUDIO_TRANSCRIPTION_INSTRUCTION);
-  let uploadedFileName: string | null = null;
-
-  try {
-    let mediaPart: Part;
-
-    if (fileBuffer.length <= GEMINI_INLINE_MEDIA_LIMIT_BYTES) {
-      mediaPart = { inlineData: { mimeType: resolvedMime, data: fileBuffer.toString('base64') } };
-    } else {
-      console.log(
-        `[Gemini Transcriber] ${fileName} (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB) exceeds the inline limit — uploading via Gemini Files API...`,
-      );
-      const blob = new Blob([fileBuffer as any], { type: resolvedMime });
-      const uploaded = await ai.files.upload({
-        file: blob,
-        config: { mimeType: resolvedMime, displayName: fileName },
-      });
-      if (!uploaded.name || !uploaded.uri) {
-        throw new Error('Gemini Files API did not return a usable file reference.');
-      }
-      uploadedFileName = uploaded.name;
-
-      const activeFile = await waitForGeminiFileActive(ai, uploaded.name);
-      mediaPart = { fileData: { fileUri: activeFile.uri, mimeType: resolvedMime } };
-    }
-
-    console.log(
-      `[Gemini Transcriber] Transcribing ${fileName} (${resolvedMime}) with ${options.model || getAiModel('documentParseModel')}...`,
+  if (fileBuffer.length <= GEMINI_INLINE_MEDIA_LIMIT_BYTES) {
+    return runTranscriptionWithModelChain(
+      {
+        type: 'file',
+        mediaType: resolvedMime,
+        filename: fileName,
+        data: { type: 'data', data: new Uint8Array(fileBuffer) },
+      },
+      systemInstruction,
+      engineUsed,
+      options,
     );
-    const response = await generateContentWithResilience({
-      model: options.model || getAiModel('documentParseModel'),
-      contents: [mediaPart, systemInstruction],
-      maxRetriesPerModel: 2,
+  }
+
+  // Large media: upload through the AI SDK (`uploadFile` over the shared
+  // Google provider's Files API) and reference it by provider reference.
+  // Uploaded media expires automatically per the provider retention policy.
+  console.log(
+    `[Gemini Transcriber] ${fileName} (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB) exceeds the inline limit — uploading via AI SDK uploadFile...`,
+  );
+  try {
+    const { providerReference } = await uploadFile({
+      api: getGoogleProvider(),
+      data: new Uint8Array(fileBuffer),
+      mediaType: resolvedMime,
+      filename: fileName,
     });
 
-    if (response?.text && response.text.trim().length > 0) {
-      return {
-        text: response.text.trim(),
-        engineUsed,
-        success: true,
-      };
-    }
-
-    throw new Error('Gemini returned an empty transcription.');
+    return await runTranscriptionWithModelChain(
+      {
+        type: 'file',
+        mediaType: resolvedMime,
+        filename: fileName,
+        data: { type: 'reference', reference: providerReference },
+      },
+      systemInstruction,
+      engineUsed,
+      options,
+    );
   } catch (err: any) {
-    console.error('[Gemini Transcriber] Transcription failed:', err);
+    console.error('[Gemini Transcriber] Files API path failed:', err);
     return {
       text: '',
       engineUsed,
       success: false,
       metadata: { error: err?.message },
     };
-  } finally {
-    if (uploadedFileName) {
-      ai.files.delete({ name: uploadedFileName }).catch((cleanupErr: any) => {
-        console.warn(`[Gemini Transcriber] Could not delete uploaded file ${uploadedFileName}:`, cleanupErr?.message);
-      });
-    }
   }
+}
+
+/**
+ * Transcribes a YouTube video by passing its URL DIRECTLY to Gemini — no local
+ * download involved. Gemini fetches and watches the video itself, which works
+ * even when YouTube blocks audio downloads from this host (bot detection /
+ * signature changes), making it the robust fallback for caption-less videos.
+ */
+export async function transcribeYoutubeUrlWithGemini(
+  videoUrl: string,
+  options: { model?: string } = {},
+): Promise<DispatchResult> {
+  return runTranscriptionWithModelChain(
+    {
+      type: 'file',
+      mediaType: 'video/mp4',
+      filename: 'youtube-video',
+      data: { type: 'url', url: new URL(videoUrl) },
+    },
+    VIDEO_TRANSCRIPTION_INSTRUCTION,
+    'Gemini Direct YouTube Video Transcription',
+    options,
+  );
 }
 
 /**
@@ -740,15 +844,23 @@ export async function transcribeAudioVideo(
   mimeType: string,
   options: DispatchOptions = {},
 ): Promise<DispatchResult> {
-  const groqKey = options.groqApiKey || process.env.GROQ_API_KEY;
+  // Vendor ladder for uploaded media: Groq Whisper (fastest) → Mistral
+  // Voxtral (independent second STT vendor) → Gemini multimodal (universal).
+  const groqKey = options.groqApiKey || resolveGroqApiKey();
   if (groqKey) {
     const groqResult = await transcribeWithGroqWhisper(fileBuffer, fileName, mimeType, groqKey);
     if (groqResult.success) {
       return groqResult;
     }
-    console.warn(
-      '[Unstructured Service] Groq Whisper transcription failed, falling back to Gemini audio/video transcriber...',
-    );
+    console.warn('[Unstructured Service] Groq Whisper failed, trying Mistral Voxtral...');
+  }
+
+  if (resolveMistralApiKey()) {
+    const voxtralResult = await transcribeWithMistralVoxtral(fileBuffer, fileName, mimeType);
+    if (voxtralResult.success) {
+      return voxtralResult;
+    }
+    console.warn('[Unstructured Service] Mistral Voxtral failed, falling back to Gemini audio/video transcriber...');
   }
 
   return transcribeWithGemini(fileBuffer, fileName, mimeType, { model: options.model });
@@ -939,10 +1051,9 @@ export async function dispatchFile(
     console.warn('[Unstructured Service] Partition workflow failed, falling back to Gemini OCR parser...');
   }
 
-  // 5. Default Fallback / Gemini High-Precision Multimodal OCR / Extraction
+  // 5. Default Fallback / Gemini High-Precision Multimodal OCR / Extraction (AI SDK v7)
   try {
     const model = options.model || getAiModel('documentParseModel');
-    const base64Data = fileBuffer.toString('base64');
     let systemInstruction =
       'You are an expert multilingual document extractor. Extract, transcribe, and structure all readable text, tables, slide contents, spreadsheets, audio speech transcription, or visual elements from this file. IMPORTANT: If the file contains Arabic (العربية), extract it perfectly. Maintain correct spelling, grammar, RTL (Right-to-Left) formatting, and paragraphs. Do NOT translate any Arabic text. Output ONLY the extracted text directly without adding preamble or extra commentary.';
     let engineUsed = 'Gemini Multimodal Document Extractor Fallback';
@@ -965,23 +1076,28 @@ export async function dispatchFile(
       engineUsed = 'Gemini PowerPoint Slide Parser';
     }
 
-    const response = await generateContentWithResilience({
+    const result = await generateTextResilient({
       model,
-      contents: [
+      messages: [
         {
-          inlineData: {
-            mimeType: resolvedMime,
-            data: base64Data,
-          },
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              mediaType: resolvedMime,
+              filename: fileName,
+              data: { type: 'data', data: new Uint8Array(fileBuffer) },
+            },
+            { type: 'text', text: systemInstruction },
+          ],
         },
-        systemInstruction,
       ],
-      maxRetriesPerModel: 2,
+      maxRetries: 2,
     });
 
-    if (response?.text && response.text.trim().length > 0) {
+    if (result?.text) {
       return {
-        text: response.text.trim(),
+        text: result.text,
         engineUsed,
         success: true,
       };

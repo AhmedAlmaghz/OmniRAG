@@ -21,6 +21,9 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.39",
+    "@ai-sdk/groq": "^4.0.31",
+    "@ai-sdk/mcp": "^2.0.37",
+    "@ai-sdk/mistral": "^4.0.33",
     "@distube/ytdl-core": "^4.16.12",
     "@google/genai": "^2.17.1",
     "@node-rs/argon2": "^2.1.0",

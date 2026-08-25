@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { generateContentWithResilience } from '../gemini/resilientGemini';
+import { generateTextResilient } from '../ai/resilientGenerate';
 import { getAiModel, getFallbackModels } from '../config/aiModels';
 import { ensureLongHttpTimeouts } from '../http/longHttpTimeouts';
 
@@ -111,7 +111,10 @@ export async function parsePdfChunkWithMistral(
   chunk: PdfChunkInfo,
   apiKey?: string,
 ): Promise<{ text: string; pages: { pageNumber: number; text: string }[] } | null> {
-  const token = apiKey || process.env.MISTRAL_API_KEY;
+  // OCR is a specialized Mistral endpoint not covered by @ai-sdk/mistral;
+  // the key still resolves through the shared runtime-env-aware module.
+  const { resolveMistralApiKey } = await import('../ai/providers');
+  const token = apiKey || resolveMistralApiKey();
   if (!token) return null;
 
   try {
@@ -197,33 +200,40 @@ export async function parsePdfChunkWithUnstructured(
 }
 
 /**
- * Gemini Multimodal Document Parser
+ * Gemini Multimodal Document Parser (AI SDK v7)
  */
 export async function parsePdfChunkWithGemini(chunk: PdfChunkInfo, model?: string): Promise<{ text: string } | null> {
   // Resolve the model: explicit per-call override > request-bound config
   // (via AsyncLocalStorage set by parse/route.ts) > DEFAULT_AI_MODELS.
   const resolvedModel = model || getAiModel('documentParseModel');
   try {
-    const response = await generateContentWithResilience({
+    const result = await generateTextResilient({
       model: resolvedModel,
       fallbackModels: getFallbackModels(),
-      contents: [
+      messages: [
         {
-          inlineData: {
-            mimeType: 'application/pdf',
-            data: chunk.base64Data,
-          },
-        },
-        `Extract and transcribe the complete text content from pages ${chunk.startPage} to ${chunk.endPage} of this document.
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              mediaType: 'application/pdf',
+              filename: `chunk_${chunk.chunkIndex}.pdf`,
+              data: { type: 'data', data: new Uint8Array(chunk.pdfBuffer) },
+            },
+            {
+              type: 'text',
+              text: `Extract and transcribe the complete text content from pages ${chunk.startPage} to ${chunk.endPage} of this document.
 Preserve the logical document structure, headings, markdown tables, code snippets, lists, and order.
 Maintain accurate Arabic text if present. Output ONLY the extracted text with clear section headers.`,
+            },
+          ],
+        },
       ],
-      maxRetriesPerModel: 2,
-      initialDelayMs: 400,
+      maxRetries: 2,
     });
 
-    if (response?.text && response.text.trim().length > 0) {
-      return { text: response.text.trim() };
+    if (result?.text) {
+      return { text: result.text };
     }
   } catch (err: any) {
     console.warn(`[Gemini PDF Parser] Chunk ${chunk.chunkIndex} error:`, err?.message || err);

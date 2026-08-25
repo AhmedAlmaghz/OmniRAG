@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
+import { generateTextResilient } from '@/lib/ai/resilientGenerate';
 import { parseModelConfigFromRequest, getAiModel, getFallbackModels } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
@@ -32,16 +32,16 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props
     }
 
     return await runWithModelConfig(modelConfig, async () => {
-      const response = await generateContentWithResilience({
+      const result = await generateTextResilient({
         model: getAiModel('chatModel'),
         fallbackModels: getFallbackModels(),
-        contents: `You are an expert Next.js and TypeScript architect. The user prompt is: "${prompt}". Provide a concise, high quality response in ${locale === 'ar' ? 'Arabic' : 'English'} with clean TypeScript / React code snippets.`,
-        maxRetriesPerModel: 2,
+        prompt: `You are an expert Next.js and TypeScript architect. The user prompt is: "${prompt}". Provide a concise, high quality response in ${locale === 'ar' ? 'Arabic' : 'English'} with clean TypeScript / React code snippets.`,
+        maxRetries: 2,
       });
 
       return NextResponse.json({
         status: 'success',
-        result: response?.text || 'No response generated',
+        result: result?.text || 'No response generated',
       });
     });
   } catch (error: any) {

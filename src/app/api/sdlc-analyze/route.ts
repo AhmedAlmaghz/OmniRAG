@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
+import { generateTextResilient } from '@/lib/ai/resilientGenerate';
 import { parseModelConfigFromRequest, getAiModel, getFallbackModels } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
@@ -47,17 +47,17 @@ Return a strictly valid JSON response without markdown formatting with this sche
 }`;
 
         // Bind the request's model config so getAiModel/getFallbackModels inside
-        // generateContentWithResilience resolve to the client's configured models.
-        const response = await runWithModelConfig(modelConfig, () =>
-          generateContentWithResilience({
+        // generateTextResilient resolve to the client's configured models.
+        const result = await runWithModelConfig(modelConfig, () =>
+          generateTextResilient({
             model: getAiModel('chatModel'),
             fallbackModels: getFallbackModels(),
-            contents: prompt,
-            maxRetriesPerModel: 2,
+            prompt,
+            maxRetries: 2,
           }),
         );
 
-        const text = response?.text || '';
+        const text = result?.text || '';
         if (text) {
           const cleaned = text
             .replace(/```json/g, '')
