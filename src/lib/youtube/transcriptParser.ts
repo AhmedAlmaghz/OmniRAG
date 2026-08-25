@@ -2,7 +2,14 @@ import { YoutubeTranscript } from 'youtube-transcript';
 // @ts-expect-error — youtube-captions-scraper ships no bundled types
 import { getSubtitles } from 'youtube-captions-scraper';
 import ytdl from '@distube/ytdl-core';
-import { transcribeWithGroqWhisper, transcribeWithGemini } from '../services/unstructuredService';
+import {
+  transcribeWithGroqWhisper,
+  transcribeWithMistralVoxtral,
+  transcribeWithGemini,
+  transcribeYoutubeUrlWithGemini,
+} from '../services/unstructuredService';
+import { resolveMistralApiKey } from '../ai/providers';
+import { resolveGeminiApiKey } from '../rag/googleProvider';
 
 /**
  * Extracts standard 11-character YouTube video ID from various URL formats.
@@ -427,22 +434,28 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
     }
   }
 
-  // 5. Strategy 4: Speech-to-text over the REAL downloaded audio track when
-  //    no captions exist. Order: Groq Whisper (fast/cheap, ≤25 MB) then
-  //    Gemini multimodal transcription (handles any audio length via the
-  //    Files API). The audio is downloaded once and shared by both engines.
-  const groqKey = process.env.GROQ_API_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  // 5. Strategy 4: Speech-to-text when no captions exist. Ladder:
+  //    a. download the audio once → Groq Whisper (fast/cheap, ≤25 MB)
+  //    b. → Gemini multimodal transcription of the downloaded audio
+  //    c. → Gemini DIRECT on the video URL (no download needed — Google
+  //       fetches and watches the video itself), which still works when
+  //       YouTube blocks audio downloads from this host.
+  const groqKey = process.env.GROQ_API_KEY || '';
+  const hasVoxtral = !!resolveMistralApiKey();
+  const hasGemini = !!resolveGeminiApiKey();
+  const failureNotes: string[] = [];
 
-  if (!transcriptText && (groqKey || geminiKey)) {
+  if (!transcriptText && (groqKey || hasVoxtral || hasGemini)) {
     let audioResult: { buffer: Buffer; fileName: string; mimeType: string } | null = null;
     try {
       audioResult = await downloadYoutubeAudio(videoId);
     } catch (downloadError: any) {
-      // Audio streams may be blocked by YouTube bot-detection on data-center IPs.
-      console.log(
-        `[YouTube Transcription] Audio stream not extractable on this host: ${downloadError?.message || downloadError}`,
-      );
+      // Audio streams are frequently blocked by YouTube bot-detection or
+      // signature changes — record it honestly and fall through to the
+      // direct-URL Gemini path instead of blaming missing keys.
+      const reason = String(downloadError?.message || downloadError || 'unknown download error');
+      failureNotes.push(`تعذر تنزيل صوت الفيديو من هذا الخادم (${reason})`);
+      console.log(`[YouTube Transcription] Audio stream not extractable on this host: ${reason}`);
     }
 
     if (audioResult && audioResult.buffer && audioResult.buffer.length > 0) {
@@ -466,25 +479,53 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
         }
       }
 
-      // 5b. Gemini multimodal speech-to-text — universal fallback, any audio length.
-      if (!transcriptText && geminiKey) {
+      // 5a2. Mistral Voxtral — independent second speech-to-text vendor.
+      if (!transcriptText && hasVoxtral) {
+        const voxtralResult = await transcribeWithMistralVoxtral(
+          audioResult.buffer,
+          audioResult.fileName,
+          audioResult.mimeType,
+        );
+        if (voxtralResult && voxtralResult.success && voxtralResult.text) {
+          transcriptText = voxtralResult.text;
+          extractionMethod = voxtralResult.engineUsed;
+        }
+      }
+
+      // 5b. Gemini multimodal speech-to-text over the downloaded audio.
+      if (!transcriptText && hasGemini) {
         const geminiResult = await transcribeWithGemini(audioResult.buffer, audioResult.fileName, audioResult.mimeType);
         if (geminiResult && geminiResult.success && geminiResult.text) {
           transcriptText = geminiResult.text;
           extractionMethod = geminiResult.engineUsed;
+        } else if (geminiResult?.metadata?.error) {
+          failureNotes.push(`فشل تفريغ الصوت عبر Gemini (${geminiResult.metadata.error})`);
         }
+      }
+    }
+
+    // 5c. Gemini DIRECT on the YouTube URL — bypasses local downloads
+    // entirely, so it works even when YouTube blocks this host's requests.
+    if (!transcriptText && hasGemini) {
+      console.log('[YouTube Transcription] Trying Gemini direct video-URL transcription...');
+      const urlResult = await transcribeYoutubeUrlWithGemini(targetUrl);
+      if (urlResult && urlResult.success && urlResult.text) {
+        transcriptText = urlResult.text;
+        extractionMethod = urlResult.engineUsed;
+      } else if (urlResult?.metadata?.error) {
+        failureNotes.push(`فشل التفريغ المباشر للفيديو عبر Gemini (${urlResult.metadata.error})`);
       }
     }
   }
 
-  // 6. Honest failure: no captions and no transcribable audio available.
-  // Note: the Gemini step above performs genuine speech-to-text over the real
-  // audio track. What we still refuse is fabricating a "transcript" from the
-  // video title/description — invented text indexed as ground truth poisons
-  // retrieval, so we fail loudly instead.
+  // 6. Honest failure listing the REAL causes observed during extraction.
+  // The Gemini steps above perform genuine speech-to-text over the actual
+  // media. What we never do is fabricate a "transcript" from the title or
+  // description — invented text indexed as ground truth poisons retrieval.
   if (!transcriptText || transcriptText.trim().length === 0) {
+    const notesPart = failureNotes.length > 0 ? ` الأسباب الفعلية: ${failureNotes.join('؛ ')}.` : '';
     throw new TranscriptExtractionError(
-      'لا يحتوي هذا الفيديو على ترجمات متاحة، وتعذر التفريغ الصوتي التلقائي. تأكد من أن الفيديو يدعم الترجمة (CC)، أو فعّل مفتاح GEMINI_API_KEY (أو GROQ_API_KEY) لتمكين تفريغ الصوت بالذكاء الاصطناعي.',
+      `لا يحتوي هذا الفيديو على ترجمات متاحة وتعذر التفريغ الصوتي التلقائي.${notesPart} تأكد من أن الفيديو عام ومتاح، وأن مفتاح GEMINI_API_KEY صالح ومفعّل.`,
       'TRANSCRIPT_UNAVAILABLE',
     );
   }

@@ -45,6 +45,8 @@ async function loadParser(mocks: {
   ytdl: ReturnType<typeof vi.fn>;
   groq: ReturnType<typeof vi.fn>;
   gemini: ReturnType<typeof vi.fn>;
+  geminiUrl: ReturnType<typeof vi.fn>;
+  voxtral: ReturnType<typeof vi.fn>;
 }) {
   vi.doMock('youtube-transcript', () => ({
     YoutubeTranscript: { fetchTranscript: mocks.fetchTranscript },
@@ -53,7 +55,20 @@ async function loadParser(mocks: {
   vi.doMock('@distube/ytdl-core', () => ({ default: mocks.ytdl }));
   vi.doMock('@/lib/services/unstructuredService', () => ({
     transcribeWithGroqWhisper: mocks.groq,
+    transcribeWithMistralVoxtral: mocks.voxtral,
     transcribeWithGemini: mocks.gemini,
+    transcribeYoutubeUrlWithGemini: mocks.geminiUrl,
+  }));
+  // Key presence is driven by env vars so tests can toggle vendors.
+  vi.doMock('@/lib/ai/providers', () => ({
+    resolveGroqApiKey: () => process.env.GROQ_API_KEY || '',
+    resolveMistralApiKey: () => process.env.MISTRAL_API_KEY || '',
+    groqTranscriptionModel: (m?: string) => ({ provider: 'groq', modelId: m }),
+    mistralTranscriptionModel: () => ({ provider: 'mistral', modelId: 'voxtral-mini-latest' }),
+  }));
+  // Key presence is driven by GEMINI_API_KEY so tests can toggle it.
+  vi.doMock('@/lib/rag/googleProvider', () => ({
+    resolveGeminiApiKey: () => process.env.GEMINI_API_KEY || '',
   }));
   return import('../lib/youtube/transcriptParser');
 }
@@ -64,6 +79,8 @@ describe('YouTube transcript extraction ladder', () => {
   let ytdl: ReturnType<typeof vi.fn>;
   let groq: ReturnType<typeof vi.fn>;
   let gemini: ReturnType<typeof vi.fn>;
+  let geminiUrl: ReturnType<typeof vi.fn>;
+  let voxtral: ReturnType<typeof vi.fn>;
   let savedGroqKey: string | undefined;
   let savedGeminiKey: string | undefined;
 
@@ -74,6 +91,8 @@ describe('YouTube transcript extraction ladder', () => {
     ytdl = vi.fn();
     groq = vi.fn();
     gemini = vi.fn();
+    geminiUrl = vi.fn();
+    voxtral = vi.fn();
     savedGroqKey = process.env.GROQ_API_KEY;
     savedGeminiKey = process.env.GEMINI_API_KEY;
 
@@ -92,6 +111,7 @@ describe('YouTube transcript extraction ladder', () => {
     else process.env.GROQ_API_KEY = savedGroqKey;
     if (savedGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = savedGeminiKey;
+    delete process.env.MISTRAL_API_KEY;
     vi.unstubAllGlobals();
     vi.doUnmock('youtube-transcript');
     vi.doUnmock('youtube-captions-scraper');
@@ -102,7 +122,15 @@ describe('YouTube transcript extraction ladder', () => {
 
   it('uses available captions and never downloads audio', async () => {
     fetchTranscript.mockResolvedValue([{ offset: 5000, text: 'مرحبا بكم' }]);
-    const { processYoutubeTranscript } = await loadParser({ fetchTranscript, getSubtitles, ytdl, groq, gemini });
+    const { processYoutubeTranscript } = await loadParser({
+      fetchTranscript,
+      getSubtitles,
+      ytdl,
+      groq,
+      gemini,
+      geminiUrl,
+      voxtral,
+    });
 
     const result = await processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar');
 
@@ -119,7 +147,7 @@ describe('YouTube transcript extraction ladder', () => {
     process.env.GEMINI_API_KEY = 'gemini-test-key';
     fetchTranscript.mockRejectedValue(new Error('Transcript not found'));
     getSubtitles.mockRejectedValue(new Error('Could not get subtitles'));
-    ytdl.mockReturnValue(makeFakeYtdlStream({ data: Buffer.from('fake-audio-bytes') }));
+    ytdl.mockImplementation(() => makeFakeYtdlStream({ data: Buffer.from('fake-audio-bytes') }));
     groq.mockResolvedValue({ text: '', engineUsed: 'groq', success: false });
     gemini.mockResolvedValue({
       text: 'تفريغ حقيقي من صوت الفيديو',
@@ -127,7 +155,15 @@ describe('YouTube transcript extraction ladder', () => {
       success: true,
     });
 
-    const { processYoutubeTranscript } = await loadParser({ fetchTranscript, getSubtitles, ytdl, groq, gemini });
+    const { processYoutubeTranscript } = await loadParser({
+      fetchTranscript,
+      getSubtitles,
+      ytdl,
+      groq,
+      gemini,
+      geminiUrl,
+      voxtral,
+    });
     const result = await processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar');
 
     expect(result.success).toBe(true);
@@ -143,10 +179,18 @@ describe('YouTube transcript extraction ladder', () => {
     process.env.GEMINI_API_KEY = 'gemini-test-key';
     fetchTranscript.mockRejectedValue(new Error('Transcript not found'));
     getSubtitles.mockRejectedValue(new Error('Could not get subtitles'));
-    ytdl.mockReturnValue(makeFakeYtdlStream({ data: Buffer.from('fake-audio-bytes') }));
+    ytdl.mockImplementation(() => makeFakeYtdlStream({ data: Buffer.from('fake-audio-bytes') }));
     groq.mockResolvedValue({ text: 'groq transcript', engineUsed: 'groq', success: true });
 
-    const { processYoutubeTranscript } = await loadParser({ fetchTranscript, getSubtitles, ytdl, groq, gemini });
+    const { processYoutubeTranscript } = await loadParser({
+      fetchTranscript,
+      getSubtitles,
+      ytdl,
+      groq,
+      gemini,
+      geminiUrl,
+      voxtral,
+    });
     const result = await processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar');
 
     expect(result.transcript).toBe('groq transcript');
@@ -159,14 +203,22 @@ describe('YouTube transcript extraction ladder', () => {
     process.env.GEMINI_API_KEY = 'gemini-test-key';
     fetchTranscript.mockRejectedValue(new Error('Transcript not found'));
     getSubtitles.mockRejectedValue(new Error('Could not get subtitles'));
-    ytdl.mockReturnValue(makeFakeYtdlStream({ data: Buffer.from('fake-audio-bytes') }));
+    ytdl.mockImplementation(() => makeFakeYtdlStream({ data: Buffer.from('fake-audio-bytes') }));
     gemini.mockResolvedValue({
       text: 'gemini transcript',
       engineUsed: 'Gemini Audio Speech-to-Text Transcription Engine',
       success: true,
     });
 
-    const { processYoutubeTranscript } = await loadParser({ fetchTranscript, getSubtitles, ytdl, groq, gemini });
+    const { processYoutubeTranscript } = await loadParser({
+      fetchTranscript,
+      getSubtitles,
+      ytdl,
+      groq,
+      gemini,
+      geminiUrl,
+      voxtral,
+    });
     const result = await processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar');
 
     expect(result.transcript).toBe('gemini transcript');
@@ -186,6 +238,8 @@ describe('YouTube transcript extraction ladder', () => {
       ytdl,
       groq,
       gemini,
+      geminiUrl,
+      voxtral,
     });
 
     await expect(processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar')).rejects.toMatchObject({
@@ -197,17 +251,106 @@ describe('YouTube transcript extraction ladder', () => {
     expect(TranscriptExtractionError).toBeDefined();
   });
 
-  it('throws TRANSCRIPT_UNAVAILABLE when audio download fails and captions are missing', async () => {
+  it('uses Mistral Voxtral as the second vendor when Groq is unavailable', async () => {
+    process.env.GROQ_API_KEY = '';
+    process.env.MISTRAL_API_KEY = 'mistral-test-key';
     process.env.GEMINI_API_KEY = 'gemini-test-key';
     fetchTranscript.mockRejectedValue(new Error('Transcript not found'));
     getSubtitles.mockRejectedValue(new Error('Could not get subtitles'));
-    ytdl.mockReturnValue(makeFakeYtdlStream({ error: new Error('bot detection') }));
+    ytdl.mockImplementation(() => makeFakeYtdlStream({ data: Buffer.from('fake-audio-bytes') }));
+    voxtral.mockResolvedValue({
+      text: 'voxtral transcript',
+      engineUsed: 'Mistral Voxtral (voxtral-mini-latest) ⚡',
+      success: true,
+    });
 
-    const { processYoutubeTranscript } = await loadParser({ fetchTranscript, getSubtitles, ytdl, groq, gemini });
+    const { processYoutubeTranscript } = await loadParser({
+      fetchTranscript,
+      getSubtitles,
+      ytdl,
+      groq,
+      gemini,
+      geminiUrl,
+      voxtral,
+    });
+
+    const result = await processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar');
+
+    expect(result.success).toBe(true);
+    expect(result.transcript).toBe('voxtral transcript');
+    expect(result.extractionMethod).toContain('Voxtral');
+    expect(voxtral).toHaveBeenCalledTimes(1);
+    expect(gemini).not.toHaveBeenCalled();
+    expect(geminiUrl).not.toHaveBeenCalled();
+  });
+
+  it('falls back to Gemini DIRECT video-URL transcription when the audio download is blocked', async () => {
+    process.env.GEMINI_API_KEY = 'gemini-test-key';
+    fetchTranscript.mockRejectedValue(new Error('Transcript not found'));
+    getSubtitles.mockRejectedValue(new Error('Could not get subtitles'));
+    ytdl.mockImplementation(() => makeFakeYtdlStream({ error: new Error('Failed to find any playable formats') }));
+    geminiUrl.mockResolvedValue({
+      text: 'transcript straight from the video URL',
+      engineUsed: 'Gemini Direct YouTube Video Transcription',
+      success: true,
+    });
+
+    const { processYoutubeTranscript } = await loadParser({
+      fetchTranscript,
+      getSubtitles,
+      ytdl,
+      groq,
+      gemini,
+      geminiUrl,
+      voxtral,
+    });
+
+    const result = await processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar');
+
+    expect(result.success).toBe(true);
+    expect(result.transcript).toBe('transcript straight from the video URL');
+    expect(result.extractionMethod).toContain('Gemini Direct YouTube');
+    // The buffer-based engines were never reached because the download failed.
+    expect(groq).not.toHaveBeenCalled();
+    expect(gemini).not.toHaveBeenCalled();
+    expect(geminiUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws TRANSCRIPT_UNAVAILABLE listing real causes when every path fails', async () => {
+    process.env.GEMINI_API_KEY = 'gemini-test-key';
+    fetchTranscript.mockRejectedValue(new Error('Transcript not found'));
+    getSubtitles.mockRejectedValue(new Error('Could not get subtitles'));
+    ytdl.mockImplementation(() => makeFakeYtdlStream({ error: new Error('bot detection') }));
+    geminiUrl.mockResolvedValue({
+      text: '',
+      engineUsed: 'Gemini Direct YouTube Video Transcription',
+      success: false,
+      metadata: { error: 'model: unsupported url' },
+    });
+
+    const { processYoutubeTranscript } = await loadParser({
+      fetchTranscript,
+      getSubtitles,
+      ytdl,
+      groq,
+      gemini,
+      geminiUrl,
+      voxtral,
+    });
 
     await expect(processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar')).rejects.toMatchObject({
       code: 'TRANSCRIPT_UNAVAILABLE',
     });
     expect(gemini).not.toHaveBeenCalled();
+
+    // Capture the thrown error and verify it names the REAL causes.
+    let message = '';
+    try {
+      await processYoutubeTranscript('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'ar');
+    } catch (e: any) {
+      message = e.message;
+    }
+    expect(message).toContain('bot detection');
+    expect(message).toContain('unsupported url');
   });
 });
