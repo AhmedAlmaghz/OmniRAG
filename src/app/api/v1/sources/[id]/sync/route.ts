@@ -1,10 +1,11 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 
-// Syncs can download remote files and run OCR/transcription pipelines
-// (web_file / youtube connectors), which takes minutes on large media.
+// The background sync keeps running after the response is sent (Next `after`).
+// On serverless hosts this budget covers the whole invocation, including the
+// post-response work; generous because OCR/transcription can take minutes.
 export const maxDuration = 300;
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
@@ -25,11 +26,31 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { para
     return NextResponse.json({ error: 'Source connector not found' }, { status: 404 });
   }
 
-  const result = await db.syncSource(id, tenantId);
+  // Syncs can download remote files and run OCR/transcription/embedding
+  // pipelines that take MINUTES on large or scanned files. Blocking the HTTP
+  // request that long makes gateways/proxies time out and answer with HTML
+  // error pages (surfaced in the UI as "Non-JSON response from server").
+  // So: mark the connector as syncing, respond immediately, and run the real
+  // sync after the response — the UI follows progress via source status and
+  // sync logs.
+  await db.updateSource(id, { status: 'syncing' }, tenantId);
+
+  after(async () => {
+    try {
+      await db.syncSource(id, tenantId);
+    } catch (err) {
+      console.error(`[sources/sync] Background sync failed for ${id}:`, err);
+      try {
+        await db.updateSource(id, { status: 'error', lastError: (err as Error)?.message || String(err) }, tenantId);
+      } catch {
+        /* best effort */
+      }
+    }
+  });
 
   return NextResponse.json({
-    message: `المزامنة مكتملة للمصدر ${source.name}`,
-    result,
+    message: `بدأت مزامنة المصدر ${source.name} في الخلفية — تابع حالة الموصل وسجل المزامنة`,
+    started: true,
     source: await db.getSourceById(id, tenantId),
   });
 });

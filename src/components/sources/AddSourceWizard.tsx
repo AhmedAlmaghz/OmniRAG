@@ -275,6 +275,18 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
       });
 
       if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data?.syncStarted) {
+          // Ingestion runs after the response now (OCR/embedding can take
+          // minutes) — tell the user instead of implying everything finished.
+          toast({
+            title:
+              lang === 'ar'
+                ? 'تم تفعيل الموصل — بدأت المزامنة والفهرسة في الخلفية'
+                : 'Connector activated — syncing & indexing started in the background',
+            variant: 'success',
+          });
+        }
         onCompleted();
       } else {
         const err = await res.json().catch(() => ({}));

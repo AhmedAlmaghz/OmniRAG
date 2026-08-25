@@ -1,5 +1,5 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
@@ -8,6 +8,10 @@ import { getEnv } from '@/lib/env/runtimeEnv';
 import { encryptSourceConfig, redactSourceConfig } from '@/lib/storage/sourceConfigCrypto';
 
 export const dynamic = 'force-dynamic';
+
+// Covers the post-response background ingestion on serverless hosts, where
+// the initial sync (download + OCR + embedding) can run for minutes.
+export const maxDuration = 300;
 
 /**
  * Source connector creation payload. `type` was previously accepted as any
@@ -127,19 +131,30 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     await db.addSource(newSource);
 
-    // Also trigger initial ingestion for this source to populate documents
-    const syncResult = await db.syncSource(id, tenantId);
+    // Initial ingestion runs AFTER the response: connector syncs can download
+    // remote files and run OCR/transcription/embedding pipelines that take
+    // minutes on large or scanned files. Blocking the creation request that
+    // long makes gateways/proxies time out and answer with HTML error pages
+    // (surfaced in the UI as "Non-JSON response from server"). The UI follows
+    // progress via source status ('syncing' → 'healthy'/'degraded') and logs.
+    after(async () => {
+      try {
+        await db.syncSource(id, tenantId);
+      } catch (err) {
+        console.error(`[sources POST] Background initial sync failed for ${id}:`, err);
+        try {
+          await db.updateSource(id, { status: 'error', lastError: (err as Error)?.message || String(err) }, tenantId);
+        } catch {
+          /* best effort */
+        }
+      }
+    });
 
     return NextResponse.json(
       {
-        message: syncResult.success
-          ? 'Source connector registered and indexed successfully'
-          : 'Source connector registered, but initial indexing reported errors',
-        syncResult,
-        source: {
-          ...(await db.getSourceById(id, tenantId)),
-          config: redactSourceConfig((await db.getSourceById(id, tenantId))?.config || {}),
-        },
+        message: 'Source connector registered — initial indexing started in the background',
+        syncStarted: true,
+        source: { ...newSource, config: redactSourceConfig(newSource.config) },
       },
       { status: 201 },
     );

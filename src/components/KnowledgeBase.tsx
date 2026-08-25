@@ -313,6 +313,18 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
     };
   }, [hasProcessingDocs, tenantId]);
 
+  // Background connector sync: syncs now run AFTER the HTTP response (they can
+  // take minutes on large/scanned files), so while any connector is 'syncing'
+  // poll every 4s to reflect the outcome (new document + healthy/degraded
+  // status) without requiring a manual refresh.
+  const hasSyncingSources = useMemo(() => sources.some((s) => s.status === 'syncing'), [sources]);
+
+  useEffect(() => {
+    if (!hasSyncingSources) return;
+    const interval = setInterval(() => fetchKnowledgeData({ silent: true }), 4000);
+    return () => clearInterval(interval);
+  }, [hasSyncingSources, fetchKnowledgeData]);
+
   // Sync single source — with per-connector busy state so each card's Sync
   // button shows its own spinner (previously only "Sync All" had one).
   const handleSyncSource = async (sourceId: string) => {
@@ -325,15 +337,24 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        const syncOk = data?.result?.success !== false;
-        toast({
-          title: syncOk
-            ? isRtl
-              ? 'تمت المزامنة بنجاح'
-              : 'Sync completed'
-            : data?.result?.message || (isRtl ? 'اكتملت المزامنة مع أخطاء' : 'Sync finished with errors'),
-          variant: syncOk ? 'success' : 'warning',
-        });
+        if (data?.started) {
+          // Sync runs in the background now — the connector card shows the
+          // 'syncing' status until the polling refresh picks the outcome up.
+          toast({
+            title: isRtl ? 'بدأت المزامنة في الخلفية — تابع حالة الموصل' : 'Sync started in the background',
+            variant: 'success',
+          });
+        } else {
+          const syncOk = data?.result?.success !== false;
+          toast({
+            title: syncOk
+              ? isRtl
+                ? 'تمت المزامنة بنجاح'
+                : 'Sync completed'
+              : data?.result?.message || (isRtl ? 'اكتملت المزامنة مع أخطاء' : 'Sync finished with errors'),
+            variant: syncOk ? 'success' : 'warning',
+          });
+        }
         fetchKnowledgeData({ silent: true });
       } else {
         toast({ title: isRtl ? 'فشلت المزامنة' : 'Sync failed', variant: 'error' });
@@ -360,7 +381,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         ),
       );
       toast({
-        title: isRtl ? `تمت مزامنة ${sources.length} موصل` : `Synced ${sources.length} connectors`,
+        title: isRtl ? `بدأت مزامنة ${sources.length} موصل في الخلفية` : `Started syncing ${sources.length} connectors`,
         variant: 'success',
       });
       await fetchKnowledgeData({ silent: true });
