@@ -228,6 +228,7 @@ export interface AuditLogEntry {
 
 export type SourceType =
   | 'file'
+  | 'web_file'
   | 'url'
   | 'rss'
   | 'youtube'
@@ -247,6 +248,7 @@ export type SourceType =
  */
 export const SOURCE_TYPE_VALUES: SourceType[] = [
   'file',
+  'web_file',
   'url',
   'rss',
   'youtube',

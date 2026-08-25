@@ -2,7 +2,7 @@ import { YoutubeTranscript } from 'youtube-transcript';
 // @ts-expect-error — youtube-captions-scraper ships no bundled types
 import { getSubtitles } from 'youtube-captions-scraper';
 import ytdl from '@distube/ytdl-core';
-import { transcribeWithGroqWhisper } from '../services/unstructuredService';
+import { transcribeWithGroqWhisper, transcribeWithGemini } from '../services/unstructuredService';
 
 /**
  * Extracts standard 11-character YouTube video ID from various URL formats.
@@ -268,6 +268,8 @@ export class TranscriptExtractionError extends Error {
 
 /**
  * Downloads audio stream of a YouTube video as a Buffer.
+ * The generous timeout covers long videos: with the Gemini Files API path,
+ * hour-long recordings are transcribable, so the download may be larger.
  */
 async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
@@ -282,8 +284,8 @@ async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       stream.destroy();
-      reject(new Error('YouTube audio download timed out after 35 seconds'));
-    }, 35000);
+      reject(new Error('YouTube audio download timed out after 120 seconds'));
+    }, 120000);
 
     stream.on('data', (chunk) => {
       chunks.push(chunk);
@@ -316,12 +318,16 @@ async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; 
  *   1. `youtube-transcript` package captions
  *   2. `youtube-captions-scraper` captions
  *   3. YouTube Player-Response XML caption track
- *   4. Groq Whisper transcription of the downloaded audio (needs GROQ_API_KEY)
+ *   4. Speech-to-text over the downloaded audio track:
+ *      a. Groq Whisper (fast/cheap, needs GROQ_API_KEY, files ≤ 25 MB)
+ *      b. Gemini multimodal transcription (needs GEMINI_API_KEY, any length
+ *         — long recordings go through the Gemini Files API)
  *
- * When NONE of them yields text the function THROWS a
- * {@link TranscriptExtractionError} — it never generates an AI-invented
- * "transcript" from the video title/description, because fabricated text
- * indexed as ground truth poisons retrieval and misleads users.
+ * Every step yields text derived from the REAL video (captions or actual
+ * audio). The function THROWS a {@link TranscriptExtractionError} when none
+ * of them succeeds — it never fabricates a "transcript" from the video
+ * title/description, because invented text indexed as ground truth poisons
+ * retrieval and misleads users.
  */
 export async function processYoutubeTranscript(url: string, lang: string = 'ar') {
   if (!url) {
@@ -421,16 +427,30 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
     }
   }
 
-  // 5. Strategy 4: Try Groq Whisper-3 Audio Extraction if native captions were not present and GROQ_API_KEY is configured
+  // 5. Strategy 4: Speech-to-text over the REAL downloaded audio track when
+  //    no captions exist. Order: Groq Whisper (fast/cheap, ≤25 MB) then
+  //    Gemini multimodal transcription (handles any audio length via the
+  //    Files API). The audio is downloaded once and shared by both engines.
   const groqKey = process.env.GROQ_API_KEY;
-  if (!transcriptText && groqKey) {
-    try {
-      const audioResult = await downloadYoutubeAudio(videoId);
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 
-      if (audioResult && audioResult.buffer && audioResult.buffer.length > 0) {
+  if (!transcriptText && (groqKey || geminiKey)) {
+    let audioResult: { buffer: Buffer; fileName: string; mimeType: string } | null = null;
+    try {
+      audioResult = await downloadYoutubeAudio(videoId);
+    } catch (downloadError: any) {
+      // Audio streams may be blocked by YouTube bot-detection on data-center IPs.
+      console.log(
+        `[YouTube Transcription] Audio stream not extractable on this host: ${downloadError?.message || downloadError}`,
+      );
+    }
+
+    if (audioResult && audioResult.buffer && audioResult.buffer.length > 0) {
+      // 5a. Groq Whisper — fastest option when the key is present and the file is small enough.
+      if (groqKey) {
         if (audioResult.buffer.length > 25 * 1024 * 1024) {
           console.log(
-            `[YouTube Transcription] Audio size ${(audioResult.buffer.length / 1024 / 1024).toFixed(2)}MB exceeds Whisper 25MB limit.`,
+            `[YouTube Transcription] Audio size ${(audioResult.buffer.length / 1024 / 1024).toFixed(2)}MB exceeds Whisper 25MB limit — deferring to Gemini transcription.`,
           );
         } else {
           const whisperResult = await transcribeWithGroqWhisper(
@@ -445,21 +465,26 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
           }
         }
       }
-    } catch (whisperError: any) {
-      // Audio stream may be blocked by YouTube bot-detection in data-center IPs; silently proceed to AI Transcript Engine
-      console.log(
-        '[YouTube Transcription] Audio stream not directly extractable on this host, utilizing AI Transcription Engine...',
-      );
+
+      // 5b. Gemini multimodal speech-to-text — universal fallback, any audio length.
+      if (!transcriptText && geminiKey) {
+        const geminiResult = await transcribeWithGemini(audioResult.buffer, audioResult.fileName, audioResult.mimeType);
+        if (geminiResult && geminiResult.success && geminiResult.text) {
+          transcriptText = geminiResult.text;
+          extractionMethod = geminiResult.engineUsed;
+        }
+      }
     }
   }
 
-  // 5. Honest failure: no captions and no transcribable audio available.
-  // The previous fallback "generated a realistic timestamped transcript" with
-  // Gemini and fabricated [mm:ss] stamps over the video description — that
-  // invented text was then indexed as ground truth. We refuse instead.
+  // 6. Honest failure: no captions and no transcribable audio available.
+  // Note: the Gemini step above performs genuine speech-to-text over the real
+  // audio track. What we still refuse is fabricating a "transcript" from the
+  // video title/description — invented text indexed as ground truth poisons
+  // retrieval, so we fail loudly instead.
   if (!transcriptText || transcriptText.trim().length === 0) {
     throw new TranscriptExtractionError(
-      'لا يحتوي هذا الفيديو على ترجمات متاحة، وتعذر تنزيل الصوت للتفريغ الآلي. تأكد من أن الفيديو يدعم الترجمة (CC) أو فعّل مفتاح GROQ_API_KEY للتفريغ الصوتي.',
+      'لا يحتوي هذا الفيديو على ترجمات متاحة، وتعذر التفريغ الصوتي التلقائي. تأكد من أن الفيديو يدعم الترجمة (CC)، أو فعّل مفتاح GEMINI_API_KEY (أو GROQ_API_KEY) لتمكين تفريغ الصوت بالذكاء الاصطناعي.',
       'TRANSCRIPT_UNAVAILABLE',
     );
   }

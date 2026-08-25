@@ -1020,12 +1020,15 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     name: 'youtube_fetch_transcript',
     serverName: 'YouTube Intelligence MCP Server',
     description:
-      'جلب تفريغ نصي كامل (Transcript) لفيديو يوتيوب مع العنوان والقناة والمدة — جاهز للتلخيص أو الفهرسة في قاعدة المعرفة',
+      'جلب تفريغ نصي كامل (Transcript) لفيديو يوتيوب مع العنوان والقناة والمدة — يستخدم الترجمة المتاحة إن وُجدت، وإلا يفرّغ الصوت تلقائياً عبر Gemini — جاهز للتلخيص أو الفهرسة في قاعدة المعرفة',
     category: 'knowledge',
     hasSideEffect: false,
     requireConfirmation: false,
     simulated: false,
-    timeoutMs: 60000,
+    // Caption fetches are quick, but the audio-transcription fallback
+    // (download + Gemini Files API upload + processing + generation) can
+    // take several minutes on long videos.
+    timeoutMs: 300000,
     parameters: {
       type: 'object',
       properties: {

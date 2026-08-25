@@ -956,7 +956,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         tenantId,
         title: newDocTitle,
         content: extractedContent,
-        sourceType: source.type === 'file' ? 'file' : 'integration',
+        sourceType: source.type === 'file' || source.type === 'web_file' ? 'file' : 'integration',
         language: 'ar',
         status: 'processing',
         chunkCount: 0,

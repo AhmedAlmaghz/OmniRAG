@@ -163,8 +163,9 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
         });
         return;
       }
-    } else if (selectedType === 'url' || selectedType === 'rss') {
-      const url = fieldsState.url || '';
+    } else if (selectedType === 'url' || selectedType === 'rss' || selectedType === 'web_file') {
+      const url =
+        selectedType === 'web_file' ? fieldsState.fileUrl || '' : fieldsState.url || fieldsState.feedUrl || '';
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
         setTestDiagnostics({
           step: 1,

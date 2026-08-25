@@ -3,11 +3,13 @@
  *
  * Historically ONLY `youtube` and `file` sources had real pipelines; every
  * other advertised connector indexed fabricated placeholder text. This module
- * adds REAL server-side extraction for the three no-auth connector types:
+ * adds REAL server-side extraction for the no-auth connector types:
  *
- *   - `url`    : SSRF-guarded page fetch → readable plain text
- *   - `rss`    : RSS/Atom feed fetch → recent entries as structured sections
- *   - `github` : repository metadata + README (raw markdown) via api.github.com
+ *   - `url`      : SSRF-guarded page fetch → readable plain text
+ *   - `rss`      : RSS/Atom feed fetch → recent entries as structured sections
+ *   - `github`   : repository metadata + README (raw markdown) via api.github.com
+ *   - `web_file` : SSRF-guarded file download → shared ingestion pipeline
+ *                  (Mistral Document AI / Unstructured Transform / auto)
  *
  * All outbound requests go through lib/mcp/net.ts guards (scheme allow-list,
  * private-host SSRF deny-list, timeouts, response size caps). Types that still
@@ -16,7 +18,8 @@
  * instead of inventing data.
  */
 
-import { safeFetchText, htmlToText } from '../mcp/net';
+import { safeFetchText, safeFetchBinary, htmlToText } from '../mcp/net';
+import { processFileBuffer } from '../services/unstructuredService';
 
 export interface ConnectorExtraction {
   /** Document title derived from the source payload (feed title, repo name…). */
@@ -301,12 +304,89 @@ export async function extractFromGithubRepo(config: Record<string, any>): Promis
   };
 }
 
+// ---------------------------------------------------------------------------
+// Web-file connector (file URL → shared ingestion pipeline)
+// ---------------------------------------------------------------------------
+
+/** Same size cap as the upload studio parse route (MAX_ALLOWED_FILE_SIZE_MB_CAP). */
+const WEB_FILE_MAX_BYTES = 50 * 1024 * 1024;
+const WEB_FILE_TIMEOUT_MS = 60_000;
+
+/** Derives a clean file name from a URL's last path segment. */
+export function fileNameFromUrl(rawUrl: string, fallback: string = 'downloaded-file'): string {
+  try {
+    const parsed = new URL((rawUrl || '').trim());
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length === 0) return fallback;
+    let last = '';
+    try {
+      last = decodeURIComponent(segments[segments.length - 1]);
+    } catch {
+      last = segments[segments.length - 1];
+    }
+    // Accept only values that look like a real file name with an extension.
+    if (last && /^[\w.\-() ]{1,200}\.[a-z0-9]{1,10}$/i.test(last)) return last.trim();
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Normalizes a Content-Type header ("text/html; charset=utf-8" → "text/html"). */
+function bareContentType(contentType: string): string {
+  return (contentType || '').split(';')[0].trim().toLowerCase();
+}
+
+/**
+ * `web_file` connector: downloads a file from a public URL (SSRF-guarded) and
+ * runs it through the SAME processing pipeline as the upload studio —
+ * Mistral Document AI, Unstructured Transform, or automatic routing — then
+ * returns the extracted text ready for chunking and vector indexing.
+ */
+export async function extractFromWebFile(config: Record<string, any>): Promise<ConnectorExtraction> {
+  const fileUrl = typeof config?.fileUrl === 'string' ? config.fileUrl.trim() : '';
+  if (!fileUrl) throw new Error('لا يوجد رابط ملف (fileUrl) في إعدادات هذا الموصل.');
+
+  const engine: 'auto' | 'mistral' | 'unstructured' =
+    config?.engine === 'mistral' || config?.engine === 'unstructured' ? config.engine : 'auto';
+
+  const res = await safeFetchBinary(fileUrl, { timeoutMs: WEB_FILE_TIMEOUT_MS, maxBytes: WEB_FILE_MAX_BYTES });
+  if (!res.ok) {
+    throw new Error(`فشل جلب الملف من الرابط: ${res.error || `HTTP ${res.status}`}`);
+  }
+  if (!res.bytes || res.bytes.length === 0) {
+    throw new Error('الملف المجلوب فارغ — لا يوجد محتوى قابل للمعالجة.');
+  }
+
+  const fileName = (typeof config?.fileName === 'string' && config.fileName.trim()) || fileNameFromUrl(fileUrl);
+  const mimeType = bareContentType(res.contentType) || 'application/octet-stream';
+
+  console.log(
+    `[Web File Connector] Processing ${fileName} (${(res.bytes.length / 1024 / 1024).toFixed(2)} MB, ${mimeType}) with engine: ${engine}...`,
+  );
+  const processed = await processFileBuffer(res.bytes, fileName, mimeType, { preferredEngine: engine });
+
+  if (!processed.text || processed.text.trim().length === 0) {
+    throw new Error(
+      `تم جلب الملف بنجاح لكن تعذر استخراج أي نص منه عبر محرك المعالجة (${processed.engineUsed}). قد يكون الملف تالفاً أو محمياً أو غير مدعوم.`,
+    );
+  }
+
+  const title = `[ملف من رابط] ${fileName}`;
+  return {
+    title,
+    content: `# ${title}\n\nالمصدر: ${fileUrl}\nمحرك المعالجة: ${processed.engineUsed}\n\n${processed.text.trim()}`,
+    sourceUrl: fileUrl,
+    itemsProcessed: 1,
+  };
+}
+
 /**
  * Dispatches extraction for a connector type. Returns undefined for types
  * WITHOUT a live pipeline so the caller applies its honest-failure policy.
  */
 export function supportsLiveSync(type: string): boolean {
-  return ['youtube', 'file', 'url', 'rss', 'github'].includes(type);
+  return ['youtube', 'file', 'url', 'rss', 'github', 'web_file'].includes(type);
 }
 
 export async function extractConnectorContent(
@@ -320,6 +400,8 @@ export async function extractConnectorContent(
       return extractFromRssFeed(config);
     case 'github':
       return extractFromGithubRepo(config);
+    case 'web_file':
+      return extractFromWebFile(config);
     default:
       // youtube/file keep their dedicated pipelines inside the storage layer.
       return undefined;

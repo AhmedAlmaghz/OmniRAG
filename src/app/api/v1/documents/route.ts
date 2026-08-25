@@ -182,7 +182,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       tenantId,
       title,
       content,
-      sourceType: sourceObj.type === 'file' ? 'file' : 'integration',
+      sourceType: sourceObj.type === 'file' || sourceObj.type === 'web_file' ? 'file' : 'integration',
       language,
       // Status lifecycle: the document starts as `processing` and only becomes
       // `indexed` after the vector store confirms the upsert (or `failed`).

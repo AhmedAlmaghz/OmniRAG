@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 
+// Syncs can download remote files and run OCR/transcription pipelines
+// (web_file / youtube connectors), which takes minutes on large media.
+export const maxDuration = 300;
+
 export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
   const tenantId = authCtx.tenantId;

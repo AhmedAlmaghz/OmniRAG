@@ -1,11 +1,10 @@
 import crypto from 'crypto';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
-import { processPdfWithBatchedPipeline } from '@/lib/pdf/pdfChunker';
 import { isTenantObjectKey, downloadS3Object, deleteS3Object } from '@/lib/uploads/directUpload';
 import { generateContentWithResilience } from '@/lib/gemini/resilientGemini';
 import { getEnv } from '@/lib/env/runtimeEnv';
-import { dispatchFile, archiveUploadedFile, normalizeMimeType } from '@/lib/services/unstructuredService';
+import { processFileBuffer, archiveUploadedFile, normalizeMimeType } from '@/lib/services/unstructuredService';
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
@@ -566,51 +565,35 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       let chunksProcessed = 1;
 
       const isPdf = mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
-      if (isPdf) {
-        // Execute batched slicing pipeline with Mistral Document AI & Unstructured MCP tool
-        console.log(
-          `[Document Ingestion] Processing PDF (${fileName}, ${(fileBuffer.length / (1024 * 1024)).toFixed(2)} MB) via ${requestedPagesPerChunk}-page batched pipeline...`,
+      console.log(
+        `[Document Ingestion] Processing ${isPdf ? 'PDF' : 'document'} (${fileName}, ${(fileBuffer.length / (1024 * 1024)).toFixed(2)} MB) via the shared file pipeline (engine: ${requestedEngine})...`,
+      );
+
+      // Shared pipeline with the web-file connector: PDFs go through the
+      // batched page pipeline, everything else through dispatchFile.
+      const processResult = await processFileBuffer(fileBuffer, fileName, mimeType, {
+        preferredEngine: requestedEngine as any,
+        pagesPerChunk: requestedPagesPerChunk,
+        mistralApiKey,
+        unstructuredApiKey,
+        groqApiKey,
+        model: requestedModel,
+      });
+
+      extractedText = processResult.text;
+      totalPages = processResult.totalPages;
+      chunksProcessed = processResult.chunksProcessed;
+      engineUsed = processResult.engineUsed;
+
+      if (isPdf && (!extractedText || extractedText.trim().length === 0)) {
+        return NextResponse.json(
+          {
+            error:
+              'تعذر استخراج النصوص من ملف PDF. يرجى التأكد من أن الملف يحتوي على نصوص قابلة للقراءة أو ليس محميًا بكلمة مرور.',
+            code: '422_PDF_UNREADABLE',
+          },
+          { status: 422 },
         );
-
-        const pipelineResult = await processPdfWithBatchedPipeline(fileBuffer, {
-          preferredEngine: requestedEngine as any,
-          pagesPerChunk: requestedPagesPerChunk,
-          mistralApiKey,
-          unstructuredApiKey,
-          model: requestedModel,
-        });
-
-        extractedText = pipelineResult.text;
-        totalPages = pipelineResult.totalPages;
-        chunksProcessed = pipelineResult.chunksProcessed;
-        engineUsed = pipelineResult.engineUsed;
-
-        if (!extractedText || extractedText.trim().length === 0) {
-          return NextResponse.json(
-            {
-              error:
-                'تعذر استخراج النصوص من ملف PDF. يرجى التأكد من أن الملف يحتوي على نصوص قابلة للقراءة أو ليس محميًا بكلمة مرور.',
-              code: '422_PDF_UNREADABLE',
-            },
-            { status: 422 },
-          );
-        }
-      } else {
-        console.log(
-          `[Document Ingestion] Processing non-PDF document (${fileName}) using Unstructured direct service dispatcher...`,
-        );
-        const dispatchResult = await dispatchFile(fileBuffer, fileName, mimeType, {
-          unstructuredApiKey: unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY,
-          mistralApiKey: mistralApiKey || process.env.MISTRAL_API_KEY,
-          groqApiKey: groqApiKey || process.env.GROQ_API_KEY,
-          geminiApiKey: process.env.GEMINI_API_KEY,
-          model: requestedModel,
-          preferredEngine: requestedEngine as any,
-          strategy: 'hi_res',
-        });
-
-        extractedText = dispatchResult.text;
-        engineUsed = dispatchResult.engineUsed;
       }
 
       // Sanitize extracted text (strip null bytes and bad control characters)

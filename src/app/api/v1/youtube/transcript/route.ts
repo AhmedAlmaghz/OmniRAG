@@ -4,6 +4,10 @@ import { processYoutubeTranscript, TranscriptExtractionError } from '@/lib/youtu
 
 export const dynamic = 'force-dynamic';
 
+// The audio-transcription fallback (download + Gemini Files API upload +
+// processing + generation) can take several minutes on long videos.
+export const maxDuration = 300;
+
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
     const { url, lang = 'ar' } = await req.json();
