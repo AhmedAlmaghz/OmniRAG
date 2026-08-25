@@ -3,6 +3,7 @@ import { MCPToolCall } from '@/lib/types/omnirag';
 import { randomUUID } from 'crypto';
 import { getToolDefinition } from './registry/tools';
 import { assertPublicHttpUrl } from './net';
+import { callRemoteTool } from './remoteClient';
 
 /**
  * Unified MCP tool dispatcher — the SINGLE execution path for every tool call
@@ -88,55 +89,25 @@ function applySimulationStamp(result: any, defaultSimulated = true): any {
  * stateless MCP JSON-RPC protocol. Only public http(s) endpoints are allowed;
  * seeded/dummy or private-network endpoints are rejected by the SSRF guard.
  */
+/**
+ * Real remote dispatch of a custom tool to its owning tenant server through
+ * the official AI SDK MCP package (`@ai-sdk/mcp`). The client performs the
+ * full initialize handshake (which bare `tools/call` posts skipped), then runs
+ * the tool call inside a session that is always closed again. Only public
+ * http(s) endpoints are allowed; seeded/dummy or private-network endpoints are
+ * rejected by the SSRF guard, and tenant OAuth tokens are attached when
+ * provisioned.
+ */
 async function dispatchToRemoteServer(
+  tenantId: string,
   server: { id: string; name: string; endpointUrl: string; headers?: Record<string, string> },
   toolName: string,
   args: Record<string, any>,
   timeoutMs: number,
 ): Promise<any> {
-  const url = assertPublicHttpUrl(server.endpointUrl);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url.href, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        ...(server.headers || {}),
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: `remote-${Date.now()}`,
-        method: 'tools/call',
-        params: { name: toolName, arguments: args },
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`خادم MCP البعيد (${server.name}) أعاد HTTP ${res.status}`);
-    }
-
-    const payload = await res.json().catch(() => null);
-    if (!payload || payload.error) {
-      throw new Error(payload?.error?.message || `استجابة غير صالحة من خادم MCP البعيد (${server.name})`);
-    }
-
-    const content = payload.result?.content;
-    if (Array.isArray(content) && content.length > 0 && content[0]?.type === 'text') {
-      const text = content[0].text;
-      try {
-        return JSON.parse(text);
-      } catch {
-        return { text };
-      }
-    }
-    return payload.result ?? payload;
-  } finally {
-    clearTimeout(timer);
-  }
+  // Keep the guard explicit here so SSRF tests targeting this path fail fast.
+  assertPublicHttpUrl(server.endpointUrl);
+  return callRemoteTool(tenantId, server, toolName, args, timeoutMs);
 }
 
 async function findOwningRemoteServer(tenantId: string, toolName: string) {
@@ -206,7 +177,7 @@ export async function executeMcpToolCall(
           `الأداة (${toolName}) غير معروفة في سجل أدوات OmniRAG ولا مرتبطة بخادم MCP خارجي قابل للتنفيذ`,
         );
       }
-      remoteResult = await dispatchToRemoteServer(server, toolName, args, DEFAULT_TOOL_TIMEOUT_MS);
+      remoteResult = await dispatchToRemoteServer(ctx.tenantId, server, toolName, args, DEFAULT_TOOL_TIMEOUT_MS);
       const stamped = applySimulationStamp(remoteResult, false);
       outcome = {
         toolName,

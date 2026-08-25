@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
 import { mcpClientPool } from '@/lib/mcp/client-pool';
+import { listRemoteTools } from '@/lib/mcp/remoteClient';
 import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const dynamic = 'force-dynamic';
@@ -34,6 +35,24 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props
 
     const probe = await mcpClientPool.probeServer(server, tenantId);
 
+    // TRUE protocol-level capability check: a real MCP session (initialize
+    // handshake + tools/list) against public http(s) endpoints. Goes beyond
+    // the reachability ping and reports honestly on failure without failing
+    // the whole route.
+    let protocolCheck: { ok: boolean; toolCount?: number; tools?: string[]; error?: string } | null = null;
+    if (/^https?:\/\//i.test(server.endpointUrl || '') && !server.endpointUrl.includes('.internal')) {
+      try {
+        const remoteTools = await listRemoteTools(tenantId, server);
+        protocolCheck = {
+          ok: true,
+          toolCount: remoteTools.length,
+          tools: remoteTools.slice(0, 20).map((t) => t.name),
+        };
+      } catch (err: any) {
+        protocolCheck = { ok: false, error: err?.message || 'MCP handshake/listTools failed' };
+      }
+    }
+
     // If an explicit tool call test was requested in body
     let testCallResult: any = null;
     if (body.toolName) {
@@ -48,6 +67,7 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props
       serverId: server.id,
       serverName: server.name,
       probe,
+      protocolCheck,
       testCallResult,
       testedAt: new Date().toISOString(),
     });

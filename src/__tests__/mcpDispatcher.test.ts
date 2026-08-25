@@ -21,23 +21,25 @@ function makeDbMock(servers: any[] = []) {
 
 async function loadDispatcher(dbMock: any) {
   vi.doMock('@/lib/storage/db', () => ({ db: dbMock }));
+  // Remote dispatch now goes through @ai-sdk/mcp client sessions.
+  vi.doMock('@ai-sdk/mcp', () => ({ createMCPClient: createMCPClientMock }));
   return import('../lib/mcp/dispatcher');
 }
 
 const CTX = { tenantId: 'tenant-acme-01', userId: 'user-1' };
 
-describe('MCP unified dispatcher', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+// Module-level so the vi.doMock factory can always resolve it.
+const createMCPClientMock = vi.fn();
 
+describe('MCP unified dispatcher', () => {
   beforeEach(() => {
-    fetchMock = vi.fn();
-    // @ts-expect-error — install a fetch mock for remote-dispatch paths
-    global.fetch = fetchMock;
+    createMCPClientMock.mockReset();
     vi.resetModules();
   });
 
   afterEach(() => {
     vi.doUnmock('@/lib/storage/db');
+    vi.doUnmock('@ai-sdk/mcp');
     vi.resetModules();
     delete process.env.TAVILY_API_KEY;
     delete process.env.SERPER_API_KEY;
@@ -85,15 +87,15 @@ describe('MCP unified dispatcher', () => {
     await expect(d.executeMcpToolCall('hallucinated_tool_x', {}, CTX)).rejects.toThrow(/غير معروفة/);
   });
 
-  it('dispatches custom tools to a public remote MCP server over JSON-RPC', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        jsonrpc: '2.0',
-        id: 1,
-        result: { content: [{ type: 'text', text: '{"custom":true,"value":42}' }] },
-      }),
-    });
+  it('dispatches custom tools to a public remote MCP server over a real client session', async () => {
+    const fakeClient = {
+      callTool: vi.fn(async (_args: any) => ({
+        content: [{ type: 'text', text: '{"custom":true,"value":42}' }],
+      })),
+      listTools: vi.fn(async () => ({ tools: [] })),
+      close: vi.fn(async () => {}),
+    };
+    createMCPClientMock.mockResolvedValue(fakeClient);
 
     const server = {
       id: 'srv-remote',
@@ -116,12 +118,18 @@ describe('MCP unified dispatcher', () => {
     expect(outcome.result.custom).toBe(true);
     expect(outcome.result.value).toBe(42);
 
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://remote.mcp.example.dev/rpc');
-    expect(init.headers.Authorization).toBe('Bearer token-x');
-    const body = JSON.parse(init.body);
-    expect(body.method).toBe('tools/call');
-    expect(body.params).toEqual({ name: 'my_custom_tool', arguments: { input: 'hi' } });
+    // Full protocol handshake against the right endpoint, carrying headers.
+    const config = createMCPClientMock.mock.calls[0][0];
+    expect(config.transport.type).toBe('http');
+    expect(config.transport.url).toBe('https://remote.mcp.example.dev/rpc');
+    expect(config.transport.headers.Authorization).toBe('Bearer token-x');
+
+    const callArgs = fakeClient.callTool.mock.calls[0][0];
+    expect(callArgs.name).toBe('my_custom_tool');
+    expect(callArgs.arguments).toEqual({ input: 'hi' });
+
+    // Session hygiene: always closed.
+    expect(fakeClient.close).toHaveBeenCalledTimes(1);
   });
 
   it('refuses remote dispatch to private/metadata endpoints (SSRF guard)', async () => {
@@ -139,7 +147,8 @@ describe('MCP unified dispatcher', () => {
     const outcome = await d.executeMcpToolCall('steal_credentials', {}, CTX);
 
     expect(outcome.isError).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Guard fires BEFORE any MCP session is opened.
+    expect(createMCPClientMock).not.toHaveBeenCalled();
     expect(dbMock.addToolCall.mock.calls[0][0].status).toBe('failed');
   });
 
