@@ -346,11 +346,19 @@ export function assessNativePdfTextQuality(text: string, pageCount: number): boo
 /**
  * Sequential Knowledge Pipeline Document Processor:
  * Slices PDF into 25-page batches and processes each chunk sequentially.
+ *
+ * Engine ladder per chunk:
+ *  - auto:        native (quality-gated) → Mistral → Unstructured → Gemini → native → Tesseract
+ *  - mistral:     Mistral → Unstructured → Gemini → native → Tesseract
+ *  - unstructured: Unstructured → Gemini → native → Tesseract
+ *  - gemini:      Gemini → native → Tesseract
+ *  - local:       native (quality-gated) → Tesseract → native low-confidence —
+ *                 strictly zero cloud calls.
  */
 export async function processPdfWithBatchedPipeline(
   pdfBuffer: Buffer,
   options: {
-    preferredEngine?: 'mistral' | 'unstructured' | 'gemini' | 'auto';
+    preferredEngine?: 'mistral' | 'unstructured' | 'gemini' | 'auto' | 'local';
     pagesPerChunk?: number;
     mistralApiKey?: string;
     unstructuredApiKey?: string;
@@ -397,6 +405,18 @@ export async function processPdfWithBatchedPipeline(
   const accumulatedTexts: string[] = [];
   let primaryEngineUsed = 'native-pdf-parse';
 
+  // Local-only helper: offline Tesseract OCR over the chunk's page images.
+  const tryLocalTesseract = async (chunk: PdfChunkInfo): Promise<string> => {
+    try {
+      const { ocrPdfLocally } = await import('../services/localOcr');
+      const localText = await ocrPdfLocally(chunk.pdfBuffer);
+      return localText.trim();
+    } catch (ocrErr: any) {
+      console.warn(`[Knowledge Pipeline] Local OCR failed on chunk ${chunk.chunkIndex}:`, ocrErr?.message);
+      return '';
+    }
+  };
+
   for (const chunk of chunks) {
     console.log(
       `[Knowledge Pipeline] Ingesting Chunk ${chunk.chunkIndex}/${chunk.totalChunks} (Pages ${chunk.startPage} - ${chunk.endPage})...`,
@@ -406,8 +426,9 @@ export async function processPdfWithBatchedPipeline(
     // Step A: Fast native PDF extraction (instant, zero network, zero API
     // quota). Gated by the quality assessment: a thin text layer or mojibake
     // scrape must fall through to the OCR engines instead of poisoning the
-    // document with garbage that then blocks better extraction.
-    if (preferredEngine === 'auto') {
+    // document with garbage that then blocks better extraction. The explicit
+    // 'local' engine also starts here — it is the only cloud-free first step.
+    if (preferredEngine === 'auto' || preferredEngine === 'local') {
       const nativeRes = await parsePdfChunkWithNativePdfParse(chunk);
       if (
         nativeRes &&
@@ -451,8 +472,9 @@ export async function processPdfWithBatchedPipeline(
       }
     }
 
-    // Step D: Gemini Multimodal Document Parser (Vision / OCR for scanned PDFs)
-    if (!chunkText) {
+    // Step D: Gemini Multimodal Document Parser (Vision / OCR for scanned
+    // PDFs). Skipped entirely for the explicit 'local' engine — no cloud calls.
+    if (!chunkText && preferredEngine !== 'local') {
       const geminiRes = await parsePdfChunkWithGemini(chunk, model);
       if (geminiRes && geminiRes.text && geminiRes.text.trim().length > 0) {
         chunkText = geminiRes.text.trim();
@@ -463,7 +485,10 @@ export async function processPdfWithBatchedPipeline(
     // Step E: Final native fallback if auto was skipped or preferred non-auto
     // failed. Last resort — accept whatever native yields (low-confidence
     // stream scrape included) since every better engine already failed.
-    if (!chunkText) {
+    // In 'local' mode the low-confidence scrape is deliberately deferred until
+    // AFTER offline Tesseract has had its chance (Step F), because OCR of a
+    // scanned page beats word-soup operator scraping every time.
+    if (!chunkText && preferredEngine !== 'local') {
       const nativeRes = await parsePdfChunkWithNativePdfParse(chunk);
       if (nativeRes && nativeRes.text) {
         chunkText = nativeRes.text.trim();
@@ -475,16 +500,25 @@ export async function processPdfWithBatchedPipeline(
     // Step F: LOCAL offline OCR (Tesseract) — extracts the embedded page
     // images and recognizes them without any cloud API key. Reached only
     // when every engine above failed, i.e. scanned PDFs with no keys set.
+    // It is also the PRIMARY second step of the explicit 'local' engine.
     if (!chunkText) {
-      try {
-        const { ocrPdfLocally } = await import('../services/localOcr');
-        const localText = await ocrPdfLocally(chunk.pdfBuffer);
-        if (localText.trim().length > 0) {
-          chunkText = localText.trim();
-          primaryEngineUsed = 'Local Tesseract OCR (offline ⚡)';
-        }
-      } catch (ocrErr: any) {
-        console.warn(`[Knowledge Pipeline] Local OCR failed on chunk ${chunk.chunkIndex}:`, ocrErr?.message);
+      const tesseractText = await tryLocalTesseract(chunk);
+      if (tesseractText.length > 0) {
+        chunkText = tesseractText;
+        primaryEngineUsed = 'Local Tesseract OCR (offline ⚡)';
+      }
+    }
+
+    // Step G: 'local' absolute last resort — accept even the low-confidence
+    // stream scrape once native text-layer extraction AND offline OCR have
+    // both failed, so an explicitly offline run still returns something
+    // rather than nothing on partially-textual PDFs.
+    if (!chunkText && preferredEngine === 'local') {
+      const nativeRes = await parsePdfChunkWithNativePdfParse(chunk);
+      if (nativeRes && nativeRes.text) {
+        chunkText = nativeRes.text.trim();
+        primaryEngineUsed =
+          nativeRes.confidence === 'high' ? 'Native High-Speed PDF Parser' : 'Native Stream Fallback (low confidence)';
       }
     }
 
@@ -493,8 +527,9 @@ export async function processPdfWithBatchedPipeline(
     }
   }
 
-  // If chunking produced no text, attempt direct processing on full PDF buffer with Gemini Multimodal AI
-  if (accumulatedTexts.length === 0 && pdfBuffer.length > 0) {
+  // If chunking produced no text, attempt direct processing on full PDF buffer
+  // with Gemini Multimodal AI (skipped for the explicit 'local' engine).
+  if (accumulatedTexts.length === 0 && pdfBuffer.length > 0 && preferredEngine !== 'local') {
     console.log('[Knowledge Pipeline] Chunks produced no text. Retrying full PDF buffer directly with Gemini AI...');
     const fullGeminiRes = await parsePdfChunkWithGemini({
       chunkIndex: 1,

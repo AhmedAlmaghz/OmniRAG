@@ -332,6 +332,29 @@ export function fileNameFromUrl(rawUrl: string, fallback: string = 'downloaded-f
   }
 }
 
+/**
+ * RFC 6266/RFC 5987 Content-Disposition filename extraction:
+ *   attachment; filename="report.pdf"
+ *   attachment; filename*=UTF-8''%D8%AA%D9%82%D8%B1%D9%8A%D8%B1.pdf
+ * The extended (filename*) form wins when present because it is the only one
+ * that can carry non-ASCII names such as Arabic titles.
+ */
+export function fileNameFromContentDisposition(header: string | null): string {
+  if (!header) return '';
+  try {
+    const ext = header.match(/filename\*=(?:UTF-8|utf-8)''([^;]+)/);
+    if (ext?.[1]) {
+      const decoded = decodeURIComponent(ext[1].trim().replace(/^["']|["']$/g, ''));
+      if (decoded) return decoded;
+    }
+    const plain = header.match(/filename\s*=\s*"([^"]+)"/i) || header.match(/filename\s*=\s*([^;]+)/i);
+    if (plain?.[1]) return plain[1].trim();
+  } catch {
+    /* malformed header — caller falls back to URL-derived name */
+  }
+  return '';
+}
+
 /** Normalizes a Content-Type header ("text/html; charset=utf-8" → "text/html"). */
 function bareContentType(contentType: string): string {
   return (contentType || '').split(';')[0].trim().toLowerCase();

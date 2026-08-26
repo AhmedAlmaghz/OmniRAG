@@ -222,7 +222,7 @@ export interface DispatchOptions {
   geminiApiKey?: string;
   groqApiKey?: string;
   model?: string;
-  preferredEngine?: 'mistral' | 'unstructured' | 'gemini' | 'groq_whisper' | 'auto';
+  preferredEngine?: 'mistral' | 'unstructured' | 'gemini' | 'groq_whisper' | 'auto' | 'local';
   strategy?: 'hi_res' | 'fast' | 'ocr_only';
 }
 
@@ -867,7 +867,7 @@ export async function transcribeAudioVideo(
 }
 
 export interface FileProcessOptions {
-  preferredEngine?: 'auto' | 'mistral' | 'unstructured' | 'gemini' | 'groq_whisper';
+  preferredEngine?: 'auto' | 'mistral' | 'unstructured' | 'gemini' | 'groq_whisper' | 'local';
   pagesPerChunk?: number;
   mistralApiKey?: string;
   unstructuredApiKey?: string;
@@ -993,6 +993,72 @@ export async function dispatchFile(
     } catch (e: any) {
       console.error('[Document Ingestion] Local Mammoth DOCX parser failed, falling back to other engines...', e);
     }
+  }
+
+  // 1b. LOCAL-ONLY engine ('local'): the explicit "offline libraries" choice
+  // from the web-fetch studio tab. Plain-text, Word, and PPTX inputs were
+  // already served by the local parsers above; what remains here is images
+  // (straight to offline Tesseract instead of cloud OCR), PDFs (routed into
+  // the batched pipeline in local-only mode), and honestly-unsupported media.
+  // Nothing below this branch ever leaves the machine or bills a cloud API.
+  if (enginePref === 'local') {
+    const localUnsupported = (reason: string): DispatchResult => ({
+      text: '',
+      engineUsed: 'Local Libraries Only',
+      success: false,
+      metadata: { error: reason },
+    });
+
+    if (fileClassification.isPdf) {
+      const { processPdfWithBatchedPipeline } = await import('../pdf/pdfChunker');
+      const pipelineResult = await processPdfWithBatchedPipeline(fileBuffer, { preferredEngine: 'local' });
+      if (pipelineResult.text.trim().length > 0) {
+        return {
+          text: pipelineResult.text,
+          engineUsed: pipelineResult.engineUsed,
+          success: true,
+        };
+      }
+      return localUnsupported(
+        'تعذر استخراج النص محلياً من ملف PDF (قد يكون مستنداً ممسوحاً ضوئياً بلا طبقة نصية ويفشل الـ OCR المحلي).',
+      );
+    }
+
+    if (fileClassification.isImage) {
+      try {
+        const { ocrImageBuffer } = await import('./localOcr');
+        const localText = await ocrImageBuffer(fileBuffer);
+        if (localText.length > 0) {
+          return {
+            text: localText,
+            engineUsed: 'Local Tesseract OCR (offline ⚡)',
+            success: true,
+          };
+        }
+      } catch (e: any) {
+        console.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
+      }
+      return localUnsupported('تعذر التعرف الضوئي على نص داخل الصورة عبر المكتبة المحلية (Tesseract).');
+    }
+
+    if (fileClassification.isAudio || fileClassification.isVideo) {
+      return localUnsupported('المكتبة المحلية لا تدعم تفريغ الصوت والفيديو — اختر المحرك التلقائي أو محركاً سحابياً.');
+    }
+
+    // Plain text & CSV remain perfectly serviceable offline.
+    if (fileClassification.isText) {
+      const text = fileBuffer.toString('utf-8');
+      if (text.trim().length > 0) {
+        return {
+          text,
+          engineUsed: 'Direct UTF-8 Text Reader',
+          success: true,
+        };
+      }
+    }
+
+    // Spreadsheets (.xlsx/.xls) and any unrecognized binary have no local parser.
+    return localUnsupported('لا تتوفر مكتبة محلية لهذه الصيغة — استخدم الوضع التلقائي أو محركاً سحابياً.');
   }
 
   // 2. Audio & Video transcription workflow

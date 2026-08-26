@@ -126,6 +126,8 @@ export interface SafeFetchBinaryResult {
   ok: boolean;
   status: number;
   contentType: string;
+  /** Raw Content-Disposition response header (for server-suggested filenames). */
+  contentDisposition: string;
   bytes: Buffer;
   truncated: boolean;
   error?: string;
@@ -156,6 +158,7 @@ export async function safeFetchBinary(
     });
 
     const contentType = res.headers.get('content-type') || '';
+    const contentDisposition = res.headers.get('content-disposition') || '';
     const buffer = Buffer.from(await res.arrayBuffer());
     const truncated = buffer.byteLength > maxBytes;
 
@@ -163,6 +166,7 @@ export async function safeFetchBinary(
       ok: res.ok && !truncated,
       status: res.status,
       contentType,
+      contentDisposition,
       bytes: truncated ? buffer.subarray(0, maxBytes) : buffer,
       truncated,
       error: !res.ok
@@ -177,6 +181,7 @@ export async function safeFetchBinary(
       ok: false,
       status: 0,
       contentType: '',
+      contentDisposition: '',
       bytes: Buffer.alloc(0),
       truncated: false,
       error: aborted ? `تجاوز المهلة (${timeoutMs}ms)` : err?.message || 'فشل الطلب',

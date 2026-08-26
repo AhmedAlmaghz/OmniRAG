@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Collection } from '@/lib/types/omnirag';
 import { getIngestionSettings } from '@/lib/config/ingestionSettings';
 import { useDocumentCache } from '@/hooks/useDocumentCache';
-import { validateUploadedFile, validateYoutubeUrl } from './documentIngestionHelpers';
+import { validateUploadedFile, validateYoutubeUrl, validateWebFileUrl } from './documentIngestionHelpers';
 import {
   Upload,
   FileText,
@@ -104,8 +104,63 @@ interface DocumentIngestionStudioProps {
   lang: 'ar' | 'en';
   onIngestionCompleted: (createdSourceId?: string) => void;
   onNavigateTab?: (tab: string) => void;
-  initialTab?: 'upload' | 'youtube' | 'text' | 'sample';
+  initialTab?: 'upload' | 'youtube' | 'web' | 'text' | 'sample';
 }
+
+/**
+ * Extraction-engine choices for the web-fetch tab. `value` is the wire format
+ * understood by /api/v1/documents/web-fetch and the shared processFileBuffer
+ * pipeline; the UI ids keep the studio's *_ocr/_mcp naming for consistency
+ * with the upload-tab parsingEngine selector.
+ */
+type WebFetchEngineChoice = 'auto' | 'mistral_ocr' | 'unstructured_mcp' | 'local';
+
+const WEB_ENGINE_API_VALUES: Record<WebFetchEngineChoice, 'auto' | 'mistral' | 'unstructured' | 'local'> = {
+  auto: 'auto',
+  mistral_ocr: 'mistral',
+  unstructured_mcp: 'unstructured',
+  local: 'local',
+};
+
+const WEB_ENGINE_OPTIONS: Array<{
+  id: WebFetchEngineChoice;
+  labelAr: string;
+  labelEn: string;
+  descAr: string;
+  descEn: string;
+  badge?: string;
+}> = [
+  {
+    id: 'auto',
+    labelAr: 'تلقائي (الأفضل)',
+    labelEn: 'Auto (Best Fit)',
+    descAr: 'يختار التطبيق المحرك الأنسب تلقائياً حسب نوع الملف والمفاتيح المتاحة',
+    descEn: 'The app picks the best engine per file type and available keys',
+    badge: 'SMART',
+  },
+  {
+    id: 'mistral_ocr',
+    labelAr: 'Mistral Document AI',
+    labelEn: 'Mistral Document AI',
+    descAr: 'تعرف ضوئي بصري دقيق يحافظ على التخطيط والجداول والمعادلات',
+    descEn: 'High-precision visual OCR preserving layout, tables & formulas',
+  },
+  {
+    id: 'unstructured_mcp',
+    labelAr: 'MCP Transform (Unstructured)',
+    labelEn: 'MCP Transform (Unstructured)',
+    descAr: 'منصة Unstructured Transform لتفكيك البنية المعقدة للمستندات والعناصر',
+    descEn: 'Unstructured Transform platform for complex document layouts & elements',
+  },
+  {
+    id: 'local',
+    labelAr: 'المكتبة المحلية (دون اتصال)',
+    labelEn: 'Local Libraries (Offline)',
+    descAr: 'pdf-parse وmammoth وPPTX XML وTesseract — بدون أي مفاتيح API أو نداءات سحابية',
+    descEn: 'pdf-parse, mammoth, PPTX XML & Tesseract — zero API keys or cloud calls',
+    badge: 'FREE',
+  },
+];
 
 const SAMPLE_DOCS = [
   {
@@ -209,7 +264,7 @@ export function DocumentIngestionStudio({
   onNavigateTab,
   initialTab = 'upload',
 }: DocumentIngestionStudioProps) {
-  const [inputTab, setInputTab] = useState<'upload' | 'youtube' | 'text' | 'sample'>(initialTab);
+  const [inputTab, setInputTab] = useState<'upload' | 'youtube' | 'web' | 'text' | 'sample'>(initialTab);
 
   // Document OCR Cache Hook
   const { getCache, saveCache } = useDocumentCache();
@@ -251,6 +306,23 @@ export function DocumentIngestionStudio({
     thumbnail: string;
     wordCount: number;
     method?: string;
+  } | null>(null);
+
+  // Web File Fetch State (fetch-from-URL tab)
+  const [webFileUrl, setWebFileUrl] = useState('');
+  const [webEngine, setWebEngine] = useState<WebFetchEngineChoice>('auto');
+  const [isFetchingWeb, setIsFetchingWeb] = useState(false);
+  const [webElapsedMs, setWebElapsedMs] = useState(0);
+  const [webFetchMeta, setWebFetchMeta] = useState<{
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    engineUsed: string;
+    requestedEngine: WebFetchEngineChoice;
+    charCount: number;
+    wordCount: number;
+    totalPages: number;
+    sourceUrl: string;
   } | null>(null);
 
   // Extract YouTube Transcript Handler
@@ -316,6 +388,87 @@ export function DocumentIngestionStudio({
       });
     } finally {
       setIsExtractingYoutube(false);
+    }
+  };
+
+  // Fetch a file from a public URL, extract its text via the chosen engine,
+  // and drop the result into the shared editor ready for chunking/indexing.
+  const handleFetchWebFile = async () => {
+    const validation = validateWebFileUrl(webFileUrl);
+    if (!validation.isValid) {
+      setStatusMessage({
+        type: 'error',
+        text: lang === 'ar' ? validation.errorAr! : validation.errorEn!,
+      });
+      return;
+    }
+
+    setIsFetchingWeb(true);
+    setWebFetchMeta(null);
+    setStatusMessage(null);
+    const startedAt = Date.now();
+    setWebElapsedMs(0);
+    const ticker = registerInterval(
+      setInterval(() => {
+        setWebElapsedMs(Date.now() - startedAt);
+      }, 200),
+    );
+
+    try {
+      const res = await fetchWithAuth('/api/v1/documents/web-fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: webFileUrl.trim(),
+          engine: WEB_ENGINE_API_VALUES[webEngine],
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.text) {
+        setDocContent(data.text);
+        if (!docTitle.trim()) {
+          setDocTitle(String(data.fileName || '').replace(/\.[^/.]+$/, '') || webFileUrl.trim());
+        }
+        setSelectedFileName(data.fileName || 'web-file');
+        setFileSizeStr(`${((data.sizeBytes || 0) / 1024).toFixed(1)} KB`);
+        setWebFetchMeta({
+          fileName: data.fileName || 'web-file',
+          mimeType: data.mimeType || 'application/octet-stream',
+          sizeBytes: data.sizeBytes || 0,
+          engineUsed: data.engineUsed || '',
+          requestedEngine: webEngine,
+          charCount: data.charCount || data.text.length,
+          wordCount: data.wordCount || 0,
+          totalPages: data.totalPages || 1,
+          sourceUrl: webFileUrl.trim(),
+        });
+
+        setStatusMessage({
+          type: 'success',
+          text:
+            lang === 'ar'
+              ? `تم جلب الملف من الإنترنت واستخراج نصه بنجاح عبر [${data.engineUsed}] (${data.wordCount || 0} كلمة)! جاهز للتقسيم والفهرسة.`
+              : `File fetched from the web and extracted successfully via [${data.engineUsed}] (${data.wordCount || 0} words)! Ready for chunking and vector indexing.`,
+        });
+      } else {
+        throw new Error(
+          data.error ||
+            (lang === 'ar' ? 'فشل جلب الملف من الرابط أو معالجته' : 'Failed to fetch or process the file from the URL'),
+        );
+      }
+    } catch (err: any) {
+      console.error('Web file fetch error:', err);
+      setStatusMessage({
+        type: 'error',
+        text:
+          lang === 'ar'
+            ? `خطأ أثناء جلب الملف ومعالجته: ${err.message}`
+            : `Web file fetch & extraction failed: ${err.message}`,
+      });
+    } finally {
+      unregisterInterval(ticker);
+      setIsFetchingWeb(false);
     }
   };
 
@@ -1086,6 +1239,16 @@ export function DocumentIngestionStudio({
           duration: youtubeVideoMeta?.duration,
           thumbnail: youtubeVideoMeta?.thumbnail,
         };
+      } else if (inputTab === 'web') {
+        // Keyed as `fileUrl` (+ engine) so the created connector is directly
+        // re-syncable by the existing web_file live connector pipeline.
+        determinedSourceType = 'web_file';
+        sourceConfig = {
+          fileUrl: webFileUrl.trim(),
+          fileName: selectedFileName,
+          engine: WEB_ENGINE_API_VALUES[webEngine],
+          fetchedAt: webFetchMeta ? new Date().toISOString() : undefined,
+        };
       } else if (selectedFileName?.toLowerCase().endsWith('.pdf')) {
         determinedSourceType = 'pdf';
         sourceConfig = { fileName: selectedFileName, fileSize: fileSizeStr };
@@ -1276,6 +1439,11 @@ export function DocumentIngestionStudio({
                 setDocTitle('');
                 setDocContent('');
                 setSelectedFileName(null);
+                setYoutubeUrl('');
+                setYoutubeVideoMeta(null);
+                setWebFileUrl('');
+                setWebFetchMeta(null);
+                setFileSizeStr('');
                 setSteps(INITIAL_STEPS);
                 setStatusMessage(null);
               }}
@@ -1328,6 +1496,17 @@ export function DocumentIngestionStudio({
           >
             <MonitorPlay className="w-3.5 h-3.5 text-rose-600" />
             <span>{lang === 'ar' ? 'فيديو يوتيوب' : 'YouTube Video'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setInputTab('web')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              inputTab === 'web' ? 'bg-white text-sky-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5 text-sky-600" />
+            <span>{lang === 'ar' ? 'جلب من الإنترنت' : 'Web File Fetch'}</span>
           </button>
 
           <button
@@ -1626,6 +1805,177 @@ export function DocumentIngestionStudio({
                     <span>⏱ {youtubeVideoMeta.duration}</span>
                     <span>📝 {youtubeVideoMeta.wordCount} كلمة</span>
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2.5: FETCH & PROCESS A FILE FROM THE WEB */}
+        {inputTab === 'web' && (
+          <div className="p-6 bg-slate-50/80 rounded-3xl border border-sky-100/80 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center">
+                <Globe className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  {lang === 'ar' ? 'جلب ومعالجة ملف من الإنترنت (Web File Fetch)' : 'Fetch & Process File from the Web'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {lang === 'ar'
+                    ? 'ضع رابطاً مباشراً لملف (PDF، DOCX، PPTX، صورة…) وسيقوم التطبيق بجلبه واستخراج نصوصه عبر المحرك الذي تختاره'
+                    : 'Paste a direct file URL (PDF, DOCX, PPTX, image…) — the app downloads it and extracts text via your chosen engine'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="url"
+                dir="ltr"
+                value={webFileUrl}
+                onChange={(e) => setWebFileUrl(e.target.value)}
+                disabled={isFetchingWeb}
+                placeholder={
+                  lang === 'ar' ? 'https://example.com/files/report.pdf' : 'https://example.com/files/report.pdf'
+                }
+                className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:border-sky-500 text-xs bg-white text-slate-900 font-mono"
+              />
+              <button
+                type="button"
+                onClick={handleFetchWebFile}
+                disabled={isFetchingWeb || !webFileUrl.trim()}
+                className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-xs shrink-0"
+              >
+                {isFetchingWeb ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>
+                      {lang === 'ar'
+                        ? `جاري الجلب والمعالجة (${(webElapsedMs / 1000).toFixed(1)} ث)...`
+                        : `Fetching & Processing (${(webElapsedMs / 1000).toFixed(1)}s)...`}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-sky-200" />
+                    <span>{lang === 'ar' ? 'جلب الملف واستخراج النص' : 'Fetch File & Extract Text'}</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Live URL validation indicator */}
+            {webFileUrl.trim().length > 0 && !isFetchingWeb && (
+              <div className="pt-1">
+                {(() => {
+                  const check = validateWebFileUrl(webFileUrl);
+                  return check.isValid ? (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>
+                        {lang === 'ar'
+                          ? 'رابط صالح وجاهز للجلب الآمن (http/HTTPS عام)'
+                          : 'Valid public http(s) URL — ready for a safe fetch'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                      <span>{lang === 'ar' ? check.errorAr : check.errorEn}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Extraction engine choice cards */}
+            <div className="space-y-2 pt-1">
+              <label className="text-xs font-bold text-slate-700 block">
+                {lang === 'ar' ? 'محرك الاستخراج والمعالجة:' : 'Extraction & Processing Engine:'}
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                {WEB_ENGINE_OPTIONS.map((engineOpt) => {
+                  const isActive = webEngine === engineOpt.id;
+                  return (
+                    <button
+                      key={engineOpt.id}
+                      type="button"
+                      onClick={() => setWebEngine(engineOpt.id)}
+                      disabled={isFetchingWeb}
+                      className={`text-right p-3 rounded-2xl border transition cursor-pointer space-y-1.5 ${
+                        isActive
+                          ? 'bg-sky-50 border-sky-400 ring-1 ring-sky-300 shadow-xs'
+                          : 'bg-white border-slate-200 hover:border-sky-300 opacity-90 hover:opacity-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className={`text-[11px] font-extrabold ${isActive ? 'text-sky-700' : 'text-slate-800'}`}>
+                          {lang === 'ar' ? engineOpt.labelAr : engineOpt.labelEn}
+                        </span>
+                        {isActive && <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0" />}
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-relaxed line-clamp-3">
+                        {lang === 'ar' ? engineOpt.descAr : engineOpt.descEn}
+                      </p>
+                      {engineOpt.badge && (
+                        <span
+                          className={`inline-block text-[8px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                            isActive
+                              ? 'bg-sky-100 text-sky-700 border-sky-200'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}
+                        >
+                          {engineOpt.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Fetched-file meta card */}
+            {webFetchMeta && (
+              <div className="p-3.5 bg-white rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center gap-3.5 shadow-3xs">
+                <div className="w-14 h-14 rounded-xl bg-sky-50 border border-sky-100 text-sky-600 flex items-center justify-center shrink-0">
+                  <FileCheck className="w-6 h-6" />
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-100/80 inline-flex items-center gap-1 max-w-full">
+                      <Sparkles className="w-3 h-3 text-violet-500 shrink-0" />
+                      <span className="truncate">{webFetchMeta.engineUsed}</span>
+                    </span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-mono">
+                      {webFetchMeta.mimeType}
+                    </span>
+                    {(webEngine === 'auto' || webFetchMeta.requestedEngine !== webEngine) && (
+                      <span className="text-[9px] font-mono text-slate-400">
+                        ({lang === 'ar' ? 'اختيار تلقائي' : 'auto-selected'})
+                      </span>
+                    )}
+                  </div>
+                  <h4 className="text-xs font-extrabold text-slate-900 truncate">{webFetchMeta.fileName}</h4>
+                  <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono flex-wrap">
+                    <span>📦 {(webFetchMeta.sizeBytes / 1024).toFixed(1)} KB</span>
+                    <span>
+                      📝 {webFetchMeta.wordCount.toLocaleString()} {lang === 'ar' ? 'كلمة' : 'words'}
+                    </span>
+                    <span>
+                      📄 {webFetchMeta.totalPages} {lang === 'ar' ? 'صفحة' : 'pages'}
+                    </span>
+                  </div>
+                  <a
+                    href={webFetchMeta.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    dir="ltr"
+                    className="text-[10px] text-sky-600 hover:text-sky-800 font-mono truncate block max-w-full hover:underline"
+                  >
+                    {webFetchMeta.sourceUrl}
+                  </a>
                 </div>
               </div>
             )}

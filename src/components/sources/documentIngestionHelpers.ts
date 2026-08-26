@@ -140,3 +140,74 @@ export function validateYoutubeUrl(url: string): YoutubeValidationResult {
 
   return { isValid: true, videoId };
 }
+
+/** Hostname shapes that must never be fetched server-side (SSRF surface). */
+const PRIVATE_HOST_PATTERNS: RegExp[] = [
+  /^localhost$/i,
+  /^127\./,
+  /^10\./,
+  /^192\.168\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^169\.254\./,
+  /^0\./,
+  /^\[?::1\]?$/,
+  /^fc00:/i,
+  /^fd[0-9a-f]{2}:/i,
+  /^fe80:/i,
+];
+
+/**
+ * Client-side validation for a web file URL entered in the ingestion studio.
+ * Mirrors the authoritative server-side guards in lib/mcp/net.ts so the user
+ * gets instant feedback on obviously-blocked targets (non-http schemes,
+ * localhost / private-range hosts); the server re-validates everything.
+ */
+export function validateWebFileUrl(url: string): ValidationResult {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return {
+      isValid: false,
+      errorAr: 'يرجى إدخال رابط الملف أولاً.',
+      errorEn: 'Please enter a file URL first.',
+    };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return {
+      isValid: false,
+      errorAr: 'الرابط غير صالح. النسق المطلوب مثال: https://example.com/files/report.pdf',
+      errorEn: 'Invalid URL. Required format example: https://example.com/files/report.pdf',
+    };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return {
+      isValid: false,
+      errorAr: `يُسمح فقط بروابط http/https (تم رفض ${parsed.protocol.replace(':', '')}).`,
+      errorEn: `Only http/https URLs are allowed (${parsed.protocol.replace(':', '')} was rejected).`,
+    };
+  }
+
+  if (!parsed.hostname) {
+    return {
+      isValid: false,
+      errorAr: 'الرابط لا يحتوي على اسم مضيف صالح.',
+      errorEn: 'The URL has no valid host name.',
+    };
+  }
+
+  if (PRIVATE_HOST_PATTERNS.some((re) => re.test(parsed.hostname))) {
+    return {
+      isValid: false,
+      errorAr:
+        'لا يمكن جلب الملفات من عناوين الشبكة الداخلية أو المحلية (حماية SSRF). استخدم رابطاً عاماً على الإنترنت.',
+      errorEn:
+        'Files cannot be fetched from local or internal network addresses (SSRF protection). Use a public internet URL.',
+    };
+  }
+
+  return { isValid: true };
+}
