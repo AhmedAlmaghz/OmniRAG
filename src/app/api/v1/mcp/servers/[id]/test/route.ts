@@ -4,11 +4,15 @@ import { db } from '@/lib/storage/db';
 import { mcpClientPool } from '@/lib/mcp/client-pool';
 import { listRemoteTools } from '@/lib/mcp/remoteClient';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
 export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     // Hydrate runtime-provided keys so a real tool-call test resolves the
     // caller's configured environment (search providers, parsers, storage).
     getEnv('GEMINI_API_KEY', req);

@@ -8,11 +8,15 @@ import {
   MODEL_CONFIG_COOKIE,
 } from '@/lib/config/aiModels';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'settings:read');
+    if (denied) return denied;
+
     // Read the effective model config for this request: header first, then
     // the persisted cookie, finally DEFAULT_AI_MODELS. Sharing the canonical
     // resolver keeps every server path consistent.
@@ -31,6 +35,9 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'settings:write');
+    if (denied) return denied;
+
     const body = await req.json();
 
     // Reset action: clear the persisted cookie so non-header requests fall

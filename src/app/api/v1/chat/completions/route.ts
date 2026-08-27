@@ -5,6 +5,7 @@ import { performHybridSearch, generateRagCompletion } from '@/lib/rag/engine';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
+import { guardPermission } from '@/lib/auth/permissions';
 import { db } from '@/lib/storage/db';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   return await runWithModelConfig(modelConfig, async () => {
     try {
+      const chatDenied = await guardPermission(authCtx, 'chat:use');
+      if (chatDenied) return chatDenied;
+
       const body = await req.json();
       const tenantId = authCtx.tenantId;
       const {

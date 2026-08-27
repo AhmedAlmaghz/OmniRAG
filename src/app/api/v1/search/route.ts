@@ -7,6 +7,7 @@ import { SearchQuery } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +44,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   return await runWithModelConfig(modelConfig, async () => {
     try {
+      const searchDenied = await guardPermission(authCtx, 'chat:use');
+      if (searchDenied) return searchDenied;
+
       const rawBody = await req.json();
       // Tenant identity is derived exclusively from the verified auth context
       const tenantId = authCtx.tenantId;

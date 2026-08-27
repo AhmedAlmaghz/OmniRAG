@@ -54,10 +54,39 @@ export async function GET(req: NextRequest) {
     /* ignore: email is optional in the boot handshake */
   }
 
+  // Phase 5: multi-workspace. Resolve the caller's role in the CURRENT tenant
+  // and the list of workspaces they belong to, so the tenant switcher can
+  // render at boot without a second round-trip. Both are best-effort — a
+  // failure here must not break the auth handshake.
+  let role: string | null = null;
+  let workspaces: { tenantId: string; name: string; role: string; isCurrent: boolean }[] = [];
+  try {
+    const { resolveMembershipRole, listUserMemberships } = await import('@/lib/services/membershipService');
+    role = await resolveMembershipRole(session.tenantId, session.userId);
+    const memberships = await listUserMemberships(session.userId);
+    workspaces = await Promise.all(
+      memberships
+        .filter((m) => m.status === 'active')
+        .map(async (m) => {
+          const tenant = await db.getTenant(m.tenantId).catch(() => undefined);
+          return {
+            tenantId: m.tenantId,
+            name: tenant?.name || m.tenantId,
+            role: m.role,
+            isCurrent: m.tenantId === session.tenantId,
+          };
+        }),
+    );
+  } catch {
+    /* ignore: workspace enrichment is optional at boot */
+  }
+
   return NextResponse.json({
     authenticated: true,
     tenantId: session.tenantId,
     userId: session.userId,
     userEmail,
+    role,
+    workspaces,
   });
 }

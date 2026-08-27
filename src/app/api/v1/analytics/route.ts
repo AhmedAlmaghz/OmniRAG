@@ -2,6 +2,7 @@ import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { computeAnalyticsStats } from '@/lib/analytics/computeStats';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +13,11 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   // The wrapper already verified auth and rejected invalid tokens; authCtx is
   // the single source of identity. No redundant inner verifyApiAuth call.
   try {
+    // The dashboard exposes audit logs, so it is gated on audit:read
+    // (owner/admin) rather than a plain knowledge read.
+    const denied = await guardPermission(authCtx, 'audit:read');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
 
     const [auditLogs, toolCalls, docs, collections, conversations] = await Promise.all([

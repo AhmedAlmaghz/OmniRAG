@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,9 @@ export const dynamic = 'force-dynamic';
  *   404 when the document does not belong to the caller's tenant.
  */
 export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
+  const denied = await guardPermission(authCtx, 'documents:write');
+  if (denied) return denied;
+
   const { id } = await params;
   const tenantId = authCtx.tenantId;
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import {
   Layers,
@@ -13,9 +13,12 @@ import {
   Sparkles,
   CheckCircle2,
   AlertCircle,
+  Fingerprint,
+  UserPlus,
 } from 'lucide-react';
-import { signUpUser, signInUser } from '@/lib/auth/authClient';
+import { signUpUser, signInUser, startSsoLogin } from '@/lib/auth/authClient';
 import { randomHex, randomPassword } from '@/lib/crypto/webRandom';
+import { t } from '@/lib/i18n';
 
 interface AuthScreenProps {
   onAuthSuccess: (tenantId: string, userEmail: string) => void;
@@ -32,6 +35,32 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Phase 5: an ?invite=TOKEN deep-link switches the screen into "join an
+  // existing workspace" registration mode (no new tenant is created).
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const token = new URLSearchParams(window.location.search).get('invite');
+    if (token) {
+      setInviteToken(token);
+      setActiveTab('register');
+    }
+  }, []);
+
+  // Phase 5: OIDC single sign-on. Resolves the workspace from the entered
+  // email's domain (or an explicit tenant) and navigates to the provider.
+  const handleSsoLogin = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = await startSsoLogin({ email: email.trim() || undefined });
+      window.location.href = url;
+    } catch (err: any) {
+      setError(err.message || t(lang, 'auth.ssoFailed'));
+      setLoading(false);
+    }
+  };
 
   // Quick Guest Sign-Up: creates a REAL account (cryptographically-secure
   // random credentials) via the Postgres auth API — same path as a normal
@@ -46,7 +75,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
       const { tenantId, userEmail } = await signUpUser(demoEmail, demoPass, demoWorkspace);
       onAuthSuccess(tenantId, userEmail || demoEmail);
     } catch (err: any) {
-      setError(lang === 'ar' ? `فشل الدخول السريع: ${err.message}` : `Quick login failed: ${err.message}`);
+      setError(t(lang, 'auth.quickLoginFailed', { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -59,21 +88,23 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
     setSuccess(null);
 
     if (!email || !password) {
-      setError(lang === 'ar' ? 'يرجى ملء جميع الحقول المطلوبة' : 'Please fill in all required fields');
+      setError(t(lang, 'auth.fillRequired'));
       setLoading(false);
       return;
     }
 
     try {
       if (activeTab === 'register') {
-        if (!workspaceName) {
-          setError(lang === 'ar' ? 'يرجى إدخال اسم مساحة العمل' : 'Please enter a workspace name');
+        // Join mode (invite link) needs no workspace name — the account joins
+        // the inviting workspace instead of creating a new tenant.
+        if (!inviteToken && !workspaceName) {
+          setError(t(lang, 'auth.workspaceNameRequired'));
           setLoading(false);
           return;
         }
 
-        const { tenantId, userEmail } = await signUpUser(email, password, workspaceName);
-        setSuccess(lang === 'ar' ? 'تم إنشاء الحساب ومساحة العمل بنجاح!' : 'Account & Workspace created successfully!');
+        const { tenantId, userEmail } = await signUpUser(email, password, workspaceName, inviteToken || undefined);
+        setSuccess(t(lang, inviteToken ? 'auth.accountJoined' : 'auth.accountCreated'));
 
         setTimeout(() => {
           onAuthSuccess(tenantId, userEmail || email);
@@ -81,7 +112,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
       } else {
         // Sign In
         const { tenantId, userEmail } = await signInUser(email, password);
-        setSuccess(lang === 'ar' ? 'تم تسجيل الدخول بنجاح!' : 'Logged in successfully!');
+        setSuccess(t(lang, 'auth.loggedIn'));
 
         setTimeout(() => {
           onAuthSuccess(tenantId, userEmail || email);
@@ -96,16 +127,13 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
       // 403 CSRF guard. Map those to localized strings; otherwise show the
       // server-supplied message verbatim.
       if (err.code === '409_EMAIL_EXISTS') {
-        errMsg = lang === 'ar' ? 'البريد الإلكتروني مستخدم بالفعل' : 'Email is already in use';
+        errMsg = t(lang, 'auth.emailExists');
       } else if (err.code === '400_WEAK_PASSWORD') {
-        errMsg =
-          lang === 'ar'
-            ? 'كلمة المرور ضعيفة جداً (يجب أن لا تقل عن 8 أحرف)'
-            : 'Password is too weak (min 8 characters)';
+        errMsg = t(lang, 'auth.weakPassword');
       } else if (err.status === 401) {
-        errMsg = lang === 'ar' ? 'البريد الإلكتروني أو كلمة المرور غير صحيحة' : 'Invalid email or password';
+        errMsg = t(lang, 'auth.invalidCredentials');
       } else if (err.code === '403_CSRF') {
-        errMsg = lang === 'ar' ? 'طلب غير مصرّح به' : 'Unauthorized request';
+        errMsg = t(lang, 'auth.csrfRejected');
       }
       setError(errMsg);
     } finally {
@@ -135,9 +163,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
                   v2.4
                 </span>
               </div>
-              <p className="text-[10px] text-slate-400">
-                {lang === 'ar' ? 'منصة استرجاع معزز وحوكمة أمنية' : 'Agentic RAG & MCP Security Gateway'}
-              </p>
+              <p className="text-[10px] text-slate-400">{t(lang, 'header.tagline')}</p>
             </div>
           </div>
 
@@ -156,38 +182,19 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
         <div className="my-12 lg:my-0 z-10">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-800/80 text-indigo-300 text-xs font-semibold mb-4">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-            <span>{lang === 'ar' ? 'المصادقة وحوكمة المستأجرين الفاعلة' : 'Deterministic Multi-Tenancy Auth'}</span>
+            <span>{t(lang, 'auth.pitchBadge')}</span>
           </div>
           <h1 className="text-2xl lg:text-3xl font-extrabold text-white leading-snug tracking-tight mb-4">
-            {lang === 'ar'
-              ? 'تفعيل حماية المستأجرين التلقائي وفق مبادئ الـ SDLC'
-              : 'Deterministic Access Control & True Data Isolation'}
+            {t(lang, 'auth.pitchTitle')}
           </h1>
-          <p className="text-slate-400 text-sm leading-relaxed mb-6">
-            {lang === 'ar'
-              ? 'تلتزم OmniRAG بأقصى درجات أمان البيانات. بمجرد تسجيل حسابك، يُنشأ لك مستأجر (Tenant) معزول بعزل مفروض على مستوى التطبيق عبر فلاتر tenant_id إلزامية في كل استعلام، مع فحوص الخطافات الحتمية (HookHarness).'
-              : 'OmniRAG is built with strict security. Every registered user gets an isolated tenant workspace enforced at the APPLICATION layer via mandatory tenant_id predicates on every query, plus deterministic hook checks.'}
-          </p>
+          <p className="text-slate-400 text-sm leading-relaxed mb-6">{t(lang, 'auth.pitchBody')}</p>
 
           {/* Key Compliance List */}
           <div className="space-y-3.5">
-            {[
-              {
-                ar: 'عزل تام للمستندات وقاعدة المعرفة بمستوى المستأجر (Tenant Isolation)',
-                en: 'Cryptographic Workspace & Tenant Isolation for knowledge base',
-              },
-              {
-                ar: 'خطافات أمنية حتمية (HookHarness) لفحص وتأمين مدخلات ومخرجات الذكاء الاصطناعي',
-                en: 'Deterministic Pre/Post inference HookHarness check',
-              },
-              {
-                ar: 'تشفير كلمات المرور بـ Argon2id وجلسات معزولة عبر httpOnly cookies',
-                en: 'Argon2id password hashing with httpOnly secure session cookies',
-              },
-            ].map((item, idx) => (
+            {['auth.pitchIsolation', 'auth.pitchHookHarness', 'auth.pitchArgon2'].map((key, idx) => (
               <div key={idx} className="flex gap-3 text-xs leading-relaxed text-slate-300">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <span>{lang === 'ar' ? item.ar : item.en}</span>
+                <span>{t(lang, key)}</span>
               </div>
             ))}
           </div>
@@ -196,11 +203,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
         {/* Footer info */}
         <div className="text-[11px] text-slate-500 z-10 flex items-center gap-2">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-500/60" />
-          <span>
-            {lang === 'ar'
-              ? 'نظام محمي ومتوافق مع معايير الالتزام السيبراني 2026'
-              : 'ISO/IEC 27001 Secure Architecture Standards'}
-          </span>
+          <span>{t(lang, 'auth.complianceFooter')}</span>
         </div>
       </div>
 
@@ -213,7 +216,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
               onClick={onBackToLanding}
               className="mb-6 inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-extrabold transition cursor-pointer select-none"
             >
-              {lang === 'ar' ? 'العودة للصفحة الرئيسية ←' : '← Back to Landing Page'}
+              {t(lang, 'auth.backToLanding')}
             </button>
           )}
 
@@ -231,7 +234,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
-              {lang === 'ar' ? 'تسجيل الدخول' : 'Sign In'}
+              {t(lang, 'auth.tabLogin')}
             </button>
             <button
               type="button"
@@ -245,7 +248,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
-              {lang === 'ar' ? 'إنشاء حساب جديد' : 'Sign Up'}
+              {t(lang, 'auth.tabRegister')}
             </button>
           </div>
 
@@ -264,6 +267,14 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
             </div>
           )}
 
+          {/* Invite deep-link banner (Phase 5 join mode) */}
+          {inviteToken && (
+            <div className="mb-4 p-3.5 rounded-xl bg-indigo-950/60 border border-indigo-800/80 text-indigo-300 text-xs flex gap-2 items-start">
+              <UserPlus className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+              <span>{t(lang, 'auth.inviteBanner')}</span>
+            </div>
+          )}
+
           {/* Core Input Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
             <>
@@ -271,7 +282,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
               <div className="space-y-1.5">
                 <label className="text-xs text-slate-400 font-bold flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{lang === 'ar' ? 'البريد الإلكتروني' : 'Email Address'}</span>
+                  <span>{t(lang, 'auth.emailLabel')}</span>
                 </label>
                 <input
                   type="email"
@@ -287,7 +298,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
               <div className="space-y-1.5">
                 <label className="text-xs text-slate-400 font-bold flex items-center gap-1.5">
                   <Lock className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{lang === 'ar' ? 'كلمة المرور' : 'Password'}</span>
+                  <span>{t(lang, 'auth.passwordLabel')}</span>
                 </label>
                 <input
                   type="password"
@@ -300,7 +311,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
               </div>
 
               {/* Registration Only Fields */}
-              {activeTab === 'register' && (
+              {activeTab === 'register' && !inviteToken && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
@@ -310,12 +321,12 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
                   <div className="space-y-1.5">
                     <label className="text-xs text-slate-400 font-bold flex items-center gap-1.5">
                       <Building2 className="w-3.5 h-3.5 text-slate-500" />
-                      <span>{lang === 'ar' ? 'اسم مساحة العمل / المؤسسة' : 'Workspace / Enterprise Name'}</span>
+                      <span>{t(lang, 'auth.workspaceLabel')}</span>
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder={lang === 'ar' ? 'مؤسسة التقنية العالمية' : 'Global Tech Enterprise'}
+                      placeholder={t(lang, 'auth.workspacePlaceholder')}
                       value={workspaceName}
                       onChange={(e) => setWorkspaceName(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -331,22 +342,34 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
                 className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white text-xs font-bold py-3 px-4 rounded-xl cursor-pointer select-none transition shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
               >
                 {loading ? (
-                  <span>{lang === 'ar' ? 'جاري التحميل...' : 'Please wait...'}</span>
+                  <span>{t(lang, 'auth.pleaseWait')}</span>
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />
                     <span>
                       {activeTab === 'login'
-                        ? lang === 'ar'
-                          ? 'دخول آمن للمنصة'
-                          : 'Secure Platform Access'
-                        : lang === 'ar'
-                          ? 'تسجيل وتجهيز مساحة العمل'
-                          : 'Register & Create Tenant'}
+                        ? t(lang, 'auth.submitLogin')
+                        : inviteToken
+                          ? t(lang, 'auth.submitJoin')
+                          : t(lang, 'auth.submitRegister')}
                     </span>
                   </>
                 )}
               </button>
+
+              {/* OIDC Single Sign-On (Phase 5) — login tab only */}
+              {activeTab === 'login' && (
+                <button
+                  type="button"
+                  onClick={handleSsoLogin}
+                  disabled={loading || !email.trim()}
+                  className="w-full bg-slate-950 border border-slate-800 hover:border-indigo-500/50 disabled:opacity-50 text-slate-200 text-xs font-bold py-3 px-4 rounded-xl cursor-pointer select-none transition flex items-center justify-center gap-2"
+                  title={t(lang, 'auth.ssoTooltip')}
+                >
+                  <Fingerprint className="w-4 h-4 text-indigo-400" />
+                  <span>{t(lang, 'auth.ssoButton')}</span>
+                </button>
+              )}
             </>
           </form>
 
@@ -354,7 +377,7 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
           <div className="relative my-6 text-center">
             <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 border-b border-slate-800" />
             <span className="relative px-3 bg-slate-900 text-slate-500 text-[10px] font-mono font-bold tracking-wider">
-              {lang === 'ar' ? 'بوابة المحاكاة والاختبار السريع' : 'SDLC TESTING & SIMULATION PORTAL'}
+              {t(lang, 'auth.simPortal')}
             </span>
           </div>
 
@@ -365,20 +388,16 @@ export default function AuthScreen({ onAuthSuccess, lang, onLangChange, onBackTo
               onClick={handleGuestSignUp}
               disabled={loading}
               className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500/50 hover:bg-slate-900 cursor-pointer select-none transition text-center text-[11px]"
-              title={lang === 'ar' ? 'إنشاء مستأجر عشوائي معزول تماماً' : 'Create a fresh random tenant'}
+              title={t(lang, 'auth.guestTooltip')}
             >
               <UserIcon className="w-4 h-4 text-violet-400 mb-1" />
-              <span className="font-bold text-white">{lang === 'ar' ? 'مستخدم تجريبي' : 'Sandbox Guest'}</span>
-              <span className="text-[9px] text-slate-400">{lang === 'ar' ? 'عزل تلقائي' : 'Isolated Sign-Up'}</span>
+              <span className="font-bold text-white">{t(lang, 'auth.guestButton')}</span>
+              <span className="text-[9px] text-slate-400">{t(lang, 'auth.guestSubtitle')}</span>
             </button>
           </div>
 
           {/* Help text */}
-          <p className="mt-6 text-center text-[10px] text-slate-500 leading-normal">
-            {lang === 'ar'
-              ? 'تنويه: تدعم البوابة حسابات محلية حقيقية مع جلسات معزولة لمساحات عمل معتمدة.'
-              : 'Notice: Supports fully working local auth accounts with auto-seeded tenant sandbox states.'}
-          </p>
+          <p className="mt-6 text-center text-[10px] text-slate-500 leading-normal">{t(lang, 'auth.helpNotice')}</p>
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/storage/db';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,9 @@ const versionsActionSchema = z.discriminatedUnion('action', [
 
 export const GET = withAuthAndRateLimit(async (req, authCtx) => {
   try {
+    const denied = await guardPermission(authCtx, 'documents:read');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
     const documentId = req.nextUrl.searchParams.get('documentId');
 
@@ -62,6 +66,9 @@ export const GET = withAuthAndRateLimit(async (req, authCtx) => {
 
 export const POST = withAuthAndRateLimit(async (req, authCtx) => {
   try {
+    const denied = await guardPermission(authCtx, 'documents:write');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
     const body = await req.json();
 

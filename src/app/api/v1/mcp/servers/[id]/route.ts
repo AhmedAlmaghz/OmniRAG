@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const { id } = await (props as { params: Promise<{ id: string }> }).params;
     const tenantId = authCtx.tenantId;
 
@@ -29,6 +33,9 @@ export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props)
 
 export const PATCH = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const { id } = await (props as { params: Promise<{ id: string }> }).params;
     const body = await req.json();
     const tenantId = authCtx.tenantId;
@@ -62,6 +69,9 @@ export const PATCH = withAuthAndRateLimit(async (req: NextRequest, authCtx, prop
 
 export const DELETE = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const { id } = await (props as { params: Promise<{ id: string }> }).params;
     const tenantId = authCtx.tenantId;
 

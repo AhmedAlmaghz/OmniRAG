@@ -7,6 +7,7 @@ import {
   getUploadProvider,
   presignS3Url,
 } from '@/lib/uploads/directUpload';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,9 @@ const PUT_EXPIRY_SECONDS = 15 * 60;
 
 export const POST = withAuthAndRateLimit(
   async (req, authCtx) => {
+    const denied = await guardPermission(authCtx, 'documents:write');
+    if (denied) return denied;
+
     const body = await req.json().catch(() => null);
     const fileName = typeof body?.fileName === 'string' ? body.fileName.trim() : '';
     const rawMime =

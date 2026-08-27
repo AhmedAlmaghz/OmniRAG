@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,9 @@ export const GET = withAuthAndRateLimit(async (req, authCtx) => {
   getEnv('QDRANT_URL', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'documents:read');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
     const docs = await db.getDocuments(tenantId);
 

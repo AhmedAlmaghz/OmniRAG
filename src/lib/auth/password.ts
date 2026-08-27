@@ -25,6 +25,15 @@ export async function hashPassword(plain: string): Promise<string> {
   return hash(plain, HASH_OPTIONS);
 }
 
+/**
+ * Sentinel stored as `passwordHash` for users provisioned via SSO (OIDC). It is
+ * NOT a valid Argon2id encoding, so `verifyPassword` always rejects it — an
+ * SSO-only account can never authenticate through the password login form, and
+ * there is no secret whose hash this is. Distinct from the timing-oracle dummy
+ * hash, which IS a real hash (of a known string) and must not be reused here.
+ */
+export const SSO_NO_PASSWORD_HASH = 'sso:no-password-login';
+
 export async function verifyPassword(plain: string, encoded: string): Promise<boolean> {
   if (!encoded) return false;
   try {

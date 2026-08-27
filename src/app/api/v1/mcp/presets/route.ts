@@ -4,6 +4,7 @@ import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { MCP_SERVER_PRESETS, getPresetById } from '@/lib/mcp/presets';
 import { MCPServerConfig } from '@/lib/types/omnirag';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,9 @@ export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx) => {
     getEnv('MISTRAL_API_KEY', req);
     getEnv('GEMINI_API_KEY', req);
 
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
     const servers = await db.getMcpServers(tenantId);
     const installedPresetIds = new Set(servers.map((s) => (s.config as any)?.presetId).filter(Boolean));
@@ -58,6 +62,9 @@ export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx) => {
 
 export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const body = await req.json().catch(() => ({}));
     const tenantId = authCtx.tenantId;
     const presetId = body?.presetId;

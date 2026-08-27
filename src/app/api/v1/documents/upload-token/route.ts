@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { handleUpload } from '@vercel/blob/client';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +41,9 @@ const ALLOWED_CONTENT_TYPES = [
 ];
 
 export const POST = withAuthAndRateLimit(async (req, authCtx) => {
+  const denied = await guardPermission(authCtx, 'documents:write');
+  if (denied) return denied;
+
   if (!process.env.VERCEL || !process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
       {

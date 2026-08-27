@@ -4,11 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/storage/db';
 import { Conversation, Message } from '@/lib/types/omnirag';
 import { DEFAULT_AI_MODELS } from '@/lib/config/aiModels';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'conversations:read');
+    if (denied) return denied;
+
     const { searchParams } = new URL(req.url);
     const tenantId = authCtx.tenantId;
     const conversationId = searchParams.get('conversationId');
@@ -32,6 +36,14 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     const body = await req.json();
     const tenantId = authCtx.tenantId;
     const action = body.action || 'create';
+
+    // Per-action authorization: creating a conversation and persisting chat
+    // messages are part of using chat (chat:use), while renaming/deleting
+    // stored conversations are management actions on the conversation itself.
+    const requiredPermission =
+      action === 'delete' ? 'conversations:delete' : action === 'rename' ? 'conversations:write' : 'chat:use';
+    const denied = await guardPermission(authCtx, requiredPermission);
+    if (denied) return denied;
 
     if (action === 'create') {
       const newConv: Conversation = {

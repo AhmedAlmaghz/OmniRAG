@@ -5,6 +5,8 @@ import { db } from '@/lib/storage/db';
 import { Collection } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { guardPermission } from '@/lib/auth/permissions';
+import { guardQuota } from '@/lib/services/planService';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +31,9 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_API_KEY', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'collections:read');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
     const collections = await db.getCollections(tenantId);
     return NextResponse.json({ collections });
@@ -52,6 +57,13 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_API_KEY', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'collections:write');
+    if (denied) return denied;
+
+    // Plan quota (Phase 7): collection ceiling for the workspace's plan.
+    const quotaDenied = await guardQuota(authCtx.tenantId, 'maxCollections');
+    if (quotaDenied) return quotaDenied;
+
     const body = await req.json();
     const tenantId = authCtx.tenantId;
 

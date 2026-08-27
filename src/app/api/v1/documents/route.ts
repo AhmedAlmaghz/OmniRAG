@@ -1,12 +1,15 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
 import { Document, DocumentChunk, SourceConnector, SOURCE_TYPE_VALUES, SourceType } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { guardPermission } from '@/lib/auth/permissions';
 import { chunkDocumentWithPages, resolveChunkGeometry, estimateTokenCount } from '@/lib/rag/chunker';
+import { dispatchWebhookEvent } from '@/lib/services/webhookService';
+import { guardQuota } from '@/lib/services/planService';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,6 +55,9 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_API_KEY', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'documents:read');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
     const documentId = req.nextUrl.searchParams.get('documentId');
 
@@ -88,6 +94,13 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_API_KEY', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'documents:write');
+    if (denied) return denied;
+
+    // Plan quota (Phase 7): document ceiling for the workspace's plan.
+    const quotaDenied = await guardQuota(authCtx.tenantId, 'maxDocuments');
+    if (quotaDenied) return quotaDenied;
+
     const body = await req.json();
     const tenantId = authCtx.tenantId;
 
@@ -279,6 +292,20 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       timestamp: new Date().toISOString(),
     });
 
+    // Outbound webhook (Phase 6) — notify subscribers after the response.
+    // Best-effort: dispatch never throws and must not affect ingestion.
+    if (indexResult.success) {
+      after(() =>
+        dispatchWebhookEvent(tenantId, 'document.indexed', {
+          documentId: docId,
+          title,
+          sourceId: sourceObj.id,
+          chunkCount: chunkTextList.length,
+          durationMs,
+        }),
+      );
+    }
+
     return NextResponse.json(
       {
         success: indexResult.success,
@@ -304,11 +331,18 @@ export const DELETE = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_URL', req);
   getEnv('QDRANT_API_KEY', req);
 
+  const denied = await guardPermission(authCtx, 'documents:delete');
+  if (denied) return denied;
+
   const docId = req.nextUrl.searchParams.get('id');
   const tenantId = authCtx.tenantId;
 
   if (!docId) return NextResponse.json({ error: 'Missing document id' }, { status: 400 });
 
   await db.deleteDocument(docId, tenantId);
+
+  // Outbound webhook (Phase 6) — best-effort, after the response.
+  after(() => dispatchWebhookEvent(tenantId, 'document.deleted', { documentId: docId }));
+
   return NextResponse.json({ success: true });
 });

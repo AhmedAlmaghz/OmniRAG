@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
 import { mcpClientPool } from '@/lib/mcp/client-pool';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const tenantId = authCtx.tenantId;
 
     const servers = await db.getMcpServers(tenantId);

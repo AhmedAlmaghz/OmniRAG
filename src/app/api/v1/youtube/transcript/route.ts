@@ -1,6 +1,7 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
 import { processYoutubeTranscript, TranscriptExtractionError } from '@/lib/youtube/transcriptParser';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,6 +11,9 @@ export const maxDuration = 300;
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'sources:write');
+    if (denied) return denied;
+
     const { url, lang = 'ar' } = await req.json();
 
     const result = await processYoutubeTranscript(url, lang);

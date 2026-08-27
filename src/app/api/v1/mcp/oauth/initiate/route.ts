@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { mcpOAuthManager } from '@/lib/mcp/auth/oauth-manager';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,9 @@ function deriveRedirectUri(req: NextRequest): string {
 
 export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const body = await req.json();
     const tenantId = authCtx.tenantId;
 

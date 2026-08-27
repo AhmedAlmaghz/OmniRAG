@@ -17,7 +17,17 @@ import {
   Sun,
   Moon,
   Check,
+  Building2,
 } from 'lucide-react';
+import { t } from '@/lib/i18n';
+
+/** A workspace the signed-in user belongs to (Phase 5 multi-tenancy). */
+export interface WorkspaceRef {
+  tenantId: string;
+  name: string;
+  role: string;
+  isCurrent: boolean;
+}
 
 interface HeaderProps {
   currentTenantId: string;
@@ -31,6 +41,7 @@ interface HeaderProps {
   activeTab?: string;
   theme?: 'light' | 'dark';
   onThemeChange?: (theme: 'light' | 'dark') => void;
+  workspaces?: WorkspaceRef[];
 }
 
 export default function Header({
@@ -45,6 +56,7 @@ export default function Header({
   activeTab = 'landing',
   theme = 'light',
   onThemeChange,
+  workspaces = [],
 }: HeaderProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -99,22 +111,22 @@ export default function Header({
   const navTabs = [
     {
       id: 'chat',
-      label: lang === 'ar' ? 'المحادثة' : 'Chat',
+      label: t(lang, 'header.navChat'),
       icon: MessageSquare,
     },
     {
       id: 'knowledge',
-      label: lang === 'ar' ? 'المعرفة' : 'Knowledge',
+      label: t(lang, 'header.navKnowledge'),
       icon: BookOpen,
     },
     {
       id: 'mcp',
-      label: lang === 'ar' ? 'بوابة MCP' : 'MCP',
+      label: t(lang, 'header.navMcp'),
       icon: Plug,
     },
     {
       id: 'analytics',
-      label: lang === 'ar' ? 'التحليلات والأمن' : 'Analytics & Security',
+      label: t(lang, 'header.navAnalytics'),
       icon: BarChart3,
     },
   ];
@@ -142,9 +154,7 @@ export default function Header({
                 OmniRAG
               </span>
             </div>
-            <p className="text-xs text-slate-400 hidden lg:block">
-              {lang === 'ar' ? 'منصة وكلاء الاسترجاع المعزز والتحكم الحتمي' : 'Agentic RAG & MCP Security Gateway'}
-            </p>
+            <p className="text-xs text-slate-400 hidden lg:block">{t(lang, 'header.tagline')}</p>
           </div>
         </button>
 
@@ -178,8 +188,8 @@ export default function Header({
               type="button"
               onClick={() => setDropdownOpen(!dropdownOpen)}
               className="w-10 h-10 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700/80 flex items-center justify-center transition cursor-pointer select-none focus:outline-none ring-2 ring-indigo-500/20 hover:ring-indigo-500/40 shadow-sm"
-              aria-label={lang === 'ar' ? 'قائمة المستخدم' : 'User Menu'}
-              title={userEmail || (lang === 'ar' ? 'حساب المستخدم' : 'User Account')}
+              aria-label={t(lang, 'header.userMenuAria')}
+              title={userEmail || t(lang, 'header.userAccount')}
             >
               {userEmail ? (
                 <div
@@ -204,26 +214,52 @@ export default function Header({
                 {/* Profile Header section */}
                 <div className="px-4 py-3 border-b border-slate-800/65">
                   <p className="text-[10px] font-mono font-bold tracking-wider text-indigo-400 uppercase">
-                    {userEmail
-                      ? lang === 'ar'
-                        ? 'حساب نشط'
-                        : 'ACTIVE ACCOUNT'
-                      : lang === 'ar'
-                        ? 'مستخدم زائر'
-                        : 'GUEST SESSION'}
+                    {t(lang, userEmail ? 'header.activeAccount' : 'header.guestSession')}
                   </p>
                   <p className="text-sm font-semibold text-white truncate mt-1">
-                    {profileName || userEmail || (lang === 'ar' ? 'جلسة تجريبية آمنة' : 'Secure Demo Session')}
+                    {profileName || userEmail || t(lang, 'header.secureSession')}
                   </p>
                   {profileName && userEmail && (
                     <p className="text-[10px] text-slate-400 font-mono truncate">{userEmail}</p>
                   )}
                   {userEmail && currentTenantName && (
                     <p className="text-xs text-slate-400 mt-1 truncate">
-                      {lang === 'ar' ? 'مساحة:' : 'Space:'} {currentTenantName}
+                      {t(lang, 'header.spacePrefix')} {currentTenantName}
                     </p>
                   )}
                 </div>
+
+                {/* Workspace Switcher (Phase 5 multi-tenancy) */}
+                {userEmail && workspaces.length > 0 && (
+                  <div className="p-1.5 border-b border-slate-800/65">
+                    <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      {t(lang, 'header.workspacesTitle')}
+                    </div>
+                    <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                      {workspaces.map((ws) => (
+                        <button
+                          key={ws.tenantId}
+                          type="button"
+                          onClick={() =>
+                            handleDropdownAction(() => {
+                              if (!ws.isCurrent) onTenantChange(ws.tenantId);
+                            })
+                          }
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer text-start ${
+                            ws.isCurrent
+                              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30'
+                              : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                          }`}
+                        >
+                          <Building2 className="w-4 h-4 shrink-0 text-indigo-400" />
+                          <span className="truncate flex-1">{ws.name}</span>
+                          <span className="text-[10px] text-slate-500 uppercase">{ws.role}</span>
+                          {ws.isCurrent && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Main Action Links */}
                 <div className="p-1.5 border-b border-slate-800/65 space-y-0.5">
@@ -233,14 +269,14 @@ export default function Header({
                     className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer text-start"
                   >
                     <Settings className="w-4 h-4 text-indigo-400" />
-                    <span>{lang === 'ar' ? 'إعدادات المنصة' : 'Platform Settings'}</span>
+                    <span>{t(lang, 'header.platformSettings')}</span>
                   </button>
                 </div>
 
                 {/* Language Switch */}
                 <div className="p-1.5 border-b border-slate-800/65">
                   <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {lang === 'ar' ? 'اللغة والموقع' : 'LANGUAGE & LOCALIZATION'}
+                    {t(lang, 'header.languageTitle')}
                   </div>
                   <div className="grid grid-cols-2 gap-1 p-1">
                     <button
@@ -273,7 +309,7 @@ export default function Header({
                 {/* Theme / Appearance Switch */}
                 <div className="p-1.5 border-b border-slate-800/65">
                   <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {lang === 'ar' ? 'المظهر واللون' : 'THEME & APPEARANCE'}
+                    {t(lang, 'header.themeTitle')}
                   </div>
                   <div className="grid grid-cols-2 gap-1 p-1">
                     <button
@@ -286,7 +322,7 @@ export default function Header({
                       }`}
                     >
                       <Sun className="w-3.5 h-3.5" />
-                      <span>{lang === 'ar' ? 'مضيء' : 'Light'}</span>
+                      <span>{t(lang, 'header.themeLight')}</span>
                     </button>
                     <button
                       type="button"
@@ -298,7 +334,7 @@ export default function Header({
                       }`}
                     >
                       <Moon className="w-3.5 h-3.5" />
-                      <span>{lang === 'ar' ? 'داكن' : 'Dark'}</span>
+                      <span>{t(lang, 'header.themeDark')}</span>
                     </button>
                   </div>
                 </div>
@@ -312,7 +348,7 @@ export default function Header({
                       className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-rose-400 hover:text-white hover:bg-rose-950/50 transition cursor-pointer text-start"
                     >
                       <LogOut className="w-4 h-4 text-rose-400" />
-                      <span>{lang === 'ar' ? 'تسجيل الخروج' : 'Log Out'}</span>
+                      <span>{t(lang, 'header.signOut')}</span>
                     </button>
                   ) : (
                     <div className="space-y-1">
@@ -331,7 +367,7 @@ export default function Header({
                         className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-indigo-400 hover:text-white hover:bg-indigo-950/40 transition cursor-pointer text-start"
                       >
                         <LogIn className="w-4 h-4 text-indigo-400" />
-                        <span>{lang === 'ar' ? 'تسجيل الدخول' : 'Sign In'}</span>
+                        <span>{t(lang, 'header.signIn')}</span>
                       </button>
                       <button
                         type="button"
@@ -348,7 +384,7 @@ export default function Header({
                         className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer text-start"
                       >
                         <UserPlus className="w-4 h-4 text-slate-400" />
-                        <span>{lang === 'ar' ? 'إنشاء حساب جديد' : 'Create Account'}</span>
+                        <span>{t(lang, 'header.createAccount')}</span>
                       </button>
                     </div>
                   )}

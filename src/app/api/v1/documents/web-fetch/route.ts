@@ -6,6 +6,7 @@ import { safeFetchBinary, assertPublicHttpUrl } from '@/lib/mcp/net';
 import { detectFileType, normalizeMimeType, processFileBuffer } from '@/lib/services/unstructuredService';
 import { fileNameFromUrl, fileNameFromContentDisposition } from '@/lib/connectors/liveConnectors';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +49,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
   getEnv('GROQ_API_KEY', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'documents:write');
+    if (denied) return denied;
+
     let bodyJson: unknown;
     try {
       bodyJson = await req.json();
