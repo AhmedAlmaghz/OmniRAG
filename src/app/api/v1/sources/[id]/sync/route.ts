@@ -2,6 +2,8 @@ import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
+import { guardPermission } from '@/lib/auth/permissions';
+import { dispatchWebhookEvent } from '@/lib/services/webhookService';
 
 // The background sync keeps running after the response is sent (Next `after`).
 // On serverless hosts this budget covers the whole invocation, including the
@@ -9,6 +11,9 @@ import { getEnv } from '@/lib/env/runtimeEnv';
 export const maxDuration = 300;
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { params: Promise<{ id: string }> }) => {
+  const denied = await guardPermission(authCtx, 'sources:write');
+  if (denied) return denied;
+
   const { id } = await params;
   const tenantId = authCtx.tenantId;
 
@@ -38,6 +43,13 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { para
   after(async () => {
     try {
       await db.syncSource(id, tenantId);
+      // Outbound webhook (Phase 6) — sync finished successfully. Best-effort:
+      // dispatch never throws and must not affect the sync outcome.
+      const synced = await db.getSourceById(id, tenantId).catch(() => null);
+      await dispatchWebhookEvent(tenantId, 'sync.completed', {
+        sourceId: id,
+        sourceName: synced?.name ?? null,
+      });
     } catch (err) {
       console.error(`[sources/sync] Background sync failed for ${id}:`, err);
       try {

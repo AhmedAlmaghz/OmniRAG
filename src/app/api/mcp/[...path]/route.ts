@@ -1,15 +1,27 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
-import { processMcpProtocolRequest } from '@/lib/mcp/server-factory';
+import type { AuthenticatedContext } from '@/lib/auth/apiAuth';
+import { handleOutboundMcpRequest } from '@/lib/mcp/outboundServer';
 import { getEnv } from '@/lib/env/runtimeEnv';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Tool executions (OCR, search, parsing) can run long; keep the invocation
+// alive for post-response work on serverless hosts.
+export const maxDuration = 300;
 
 /**
- * MCP Gateway Stateless Protocol Endpoint per SPEC 2026-07-28
- * Supports GET, POST, DELETE with authenticated tenant isolation.
- * Tenant identity is derived exclusively from the verified auth context.
+ * Outbound MCP endpoint (Phase 6) — standard Streamable HTTP transport from
+ * `@modelcontextprotocol/sdk`, compatible with Claude Desktop, Cursor and any
+ * MCP client.
+ *
+ * Auth: Bearer tenant API key (headless clients) or session cookie (in-app
+ * gateway), enforced by withAuthAndRateLimit before the transport runs.
+ * API keys may carry an `mcpTools` whitelist that restricts tools/list and
+ * tools/call; session traffic sees all tenant-enabled tools.
+ *
+ * The server is stateless (no session id) and answers with JSON responses,
+ * so it scales horizontally across serverless instances.
  */
 
 // Hydrate runtime-provided keys so tool executions inside the gateway (web
@@ -28,65 +40,21 @@ function hydrateToolRuntimeEnv(req: NextRequest) {
   getEnv('QDRANT_API_KEY', req);
 }
 
-export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
-  try {
-    const tenantId = authCtx.tenantId;
-    const userId = authCtx.userId;
-
-    hydrateToolRuntimeEnv(req);
-
-    const body = await req.json();
-
-    const response = await processMcpProtocolRequest(body, {
-      tenantId,
-      userId,
-    });
-
-    return NextResponse.json(response, {
-      headers: {
-        'Content-Type': 'application/json',
-        'X-MCP-Protocol-Version': '2026-07-28',
-      },
-    });
-  } catch (err: any) {
-    console.error('[api/mcp/[...path]] POST error:', err);
-    return NextResponse.json(
-      {
-        jsonrpc: '2.0',
-        id: 1,
-        error: {
-          code: -32603,
-          message: 'خطأ غير متوقع في خادم MCP Gateway',
-        },
-      },
-      { status: 500 },
-    );
-  }
-});
-
-export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
-  const tenantId = authCtx.tenantId;
-
+async function handleMcp(req: NextRequest, authCtx: AuthenticatedContext) {
   hydrateToolRuntimeEnv(req);
-
-  // Return protocol capabilities and active gateway information
-  const initInfo = await processMcpProtocolRequest(
-    { jsonrpc: '2.0', id: 'get-init', method: 'initialize' },
-    { tenantId },
-  );
-
-  return NextResponse.json(initInfo.result, {
-    headers: {
-      'Content-Type': 'application/json',
-      'X-MCP-Protocol-Version': '2026-07-28',
-    },
+  return handleOutboundMcpRequest(req, {
+    tenantId: authCtx.tenantId,
+    userId: authCtx.userId,
+    // Tool whitelist applies to API-key traffic only; browser sessions keep
+    // the full tenant tool surface (chat gateway parity).
+    allowedTools: authCtx.authMethod === 'apiKey' ? authCtx.apiKeyMcpTools : null,
   });
-});
+}
 
-export const DELETE = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
-  return NextResponse.json({
-    jsonrpc: '2.0',
-    id: 'del-1',
-    result: { message: 'تم إغلاق وتفريغ جلسة MCP عديمة الحالة بنجاح' },
-  });
-});
+export const POST = withAuthAndRateLimit(async (req, authCtx) => handleMcp(req, authCtx));
+
+// Streamable HTTP clients use POST for messages; GET (SSE stream) and DELETE
+// (session teardown) are answered by the transport itself — 405 in stateless
+// mode, per spec.
+export const GET = withAuthAndRateLimit(async (req, authCtx) => handleMcp(req, authCtx));
+export const DELETE = withAuthAndRateLimit(async (req, authCtx) => handleMcp(req, authCtx));
