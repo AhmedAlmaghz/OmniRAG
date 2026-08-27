@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Collection, SourceType } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { t } from '@/lib/i18n';
 import { useToast } from '../ui/Toast';
 import {
   FileText,
@@ -136,10 +137,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     setFieldsState({ ...fieldsState, ...preset });
     setTestDiagnostics({
       step: 3,
-      logs: [
-        lang === 'ar' ? '✓ تم تحميل إعدادات النموذج التجريبي الجاهز' : '✓ Preset demo configuration loaded',
-        lang === 'ar' ? 'جاهز للاختبار الفوري والتفعيل' : 'Ready for test & deployment',
-      ],
+      logs: [t(lang, 'wizard.presetLoaded'), t(lang, 'wizard.presetReady')],
       success: true,
     });
   };
@@ -154,11 +152,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
       if (!videoId) {
         setTestDiagnostics({
           step: 1,
-          logs: [
-            lang === 'ar'
-              ? '❌ رابط يوتيوب غير صحيح. النسق المطلوب: https://www.youtube.com/watch?v=XXXXX'
-              : '❌ Invalid YouTube URL. Required format: https://www.youtube.com/watch?v=XXXXX',
-          ],
+          logs: [t(lang, 'wizard.ytUrlInvalidLog')],
           success: false,
         });
         return;
@@ -169,11 +163,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
         setTestDiagnostics({
           step: 1,
-          logs: [
-            lang === 'ar'
-              ? '❌ رابط الويب غير صحيح. يجب أن يبدأ بـ http:// أو https://'
-              : '❌ Invalid URL. Must start with http:// or https://',
-          ],
+          logs: [t(lang, 'wizard.webUrlInvalidLog')],
           success: false,
         });
         return;
@@ -183,12 +173,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     setIsTesting(true);
     setTestDiagnostics({
       step: 1,
-      logs: [
-        lang === 'ar' ? '✓ صيغة المدخلات صحيحة (تحقق محلي)' : '✓ Input format valid (local validation)',
-        lang === 'ar'
-          ? 'جاري فحص جاهزية البنية التحتية للمعالجة...'
-          : 'Checking processing infrastructure readiness...',
-      ],
+      logs: [t(lang, 'wizard.inputValidLog'), t(lang, 'wizard.checkingInfraLog')],
     });
 
     try {
@@ -200,9 +185,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
       const data = await res.json().catch(() => ({}));
       const latency = Date.now() - startedAt;
 
-      const logs: string[] = [
-        lang === 'ar' ? '✓ صيغة المدخلات صحيحة (تحقق محلي)' : '✓ Input format valid (local validation)',
-      ];
+      const logs: string[] = [t(lang, 'wizard.inputValidLog')];
 
       let allHealthy = true;
       const services: Array<[string, any]> = Object.entries(data?.services || {});
@@ -211,11 +194,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
           const ok = (svc as any)?.status === 'connected';
           if (!ok) allHealthy = false;
           const label = ok ? '✓' : '⚠';
-          logs.push(
-            lang === 'ar'
-              ? `${label} ${svcName}: ${(svc as any)?.status} (${(svc as any)?.latencyMs ?? '?'}ms)`
-              : `${label} ${svcName}: ${(svc as any)?.status} (${(svc as any)?.latencyMs ?? '?'}ms)`,
-          );
+          logs.push(`${label} ${svcName}: ${(svc as any)?.status} (${(svc as any)?.latencyMs ?? '?'}ms)`);
         }
       } else {
         // Diagnostics endpoint shape unexpected — report honestly instead of
@@ -223,32 +202,18 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
         allHealthy = res.ok;
         logs.push(
           res.ok
-            ? lang === 'ar'
-              ? `✓ استجابة الخادم سليمة (${latency}ms)`
-              : `✓ Server responded healthily (${latency}ms)`
-            : lang === 'ar'
-              ? `❌ استجابة غير متوقعة من الخادم (${res.status})`
-              : `❌ Unexpected server response (${res.status})`,
+            ? t(lang, 'wizard.serverHealthyLog', { latency })
+            : t(lang, 'wizard.serverUnexpectedLog', { status: res.status }),
         );
       }
 
-      logs.push(
-        lang === 'ar'
-          ? allHealthy
-            ? 'البنية جاهزة — سيتم التحقق الفعلي من المصدر عند إنشاء المزامنة الأولى.'
-            : 'توجد خدمات غير مهيأة — الاستيعاب قد يفشل حتى ضبطها.'
-          : allHealthy
-            ? 'Infrastructure ready — source itself is validated on first sync.'
-            : 'Some services are unconfigured — ingestion may fail until resolved.',
-      );
+      logs.push(t(lang, allHealthy ? 'wizard.infraReadyLog' : 'wizard.infraDegradedLog'));
 
       setTestDiagnostics({ step: 3, logs, success: allHealthy });
     } catch {
       setTestDiagnostics({
         step: 3,
-        logs: [
-          lang === 'ar' ? '❌ تعذر الوصول لخادم الفحص. تحقق من الاتصال.' : '❌ Could not reach the diagnostics server.',
-        ],
+        logs: [t(lang, 'wizard.diagUnreachableLog')],
         success: false,
       });
     } finally {
@@ -280,10 +245,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
           // Ingestion runs after the response now (OCR/embedding can take
           // minutes) — tell the user instead of implying everything finished.
           toast({
-            title:
-              lang === 'ar'
-                ? 'تم تفعيل الموصل — بدأت المزامنة والفهرسة في الخلفية'
-                : 'Connector activated — syncing & indexing started in the background',
+            title: t(lang, 'wizard.activatedToast'),
             variant: 'success',
           });
         }
@@ -291,17 +253,14 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
       } else {
         const err = await res.json().catch(() => ({}));
         toast({
-          title: err.error || (lang === 'ar' ? 'فشل إنشاء المصدر' : 'Failed to create source'),
+          title: err.error || t(lang, 'wizard.createFailedFallback'),
           variant: 'error',
         });
       }
     } catch (error) {
       console.error('Error creating source:', error);
       toast({
-        title:
-          lang === 'ar'
-            ? 'حدث خطأ غير متوقع أثناء إنشاء المصدر'
-            : 'An unexpected error occurred while creating the source',
+        title: t(lang, 'wizard.unexpectedErrorToast'),
         variant: 'error',
       });
     } finally {
@@ -310,13 +269,13 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
   };
 
   const categories = [
-    { id: 'all', nameAr: 'كافة الموصلات', nameEn: 'All Connectors' },
-    { id: 'web', nameAr: 'ويب ومستخرجات', nameEn: 'Web & Crawlers' },
-    { id: 'files', nameAr: 'ملفات وسحابة', nameEn: 'Files & Storage' },
-    { id: 'code', nameAr: 'شفرات وريبوهات', nameEn: 'Code & Repos' },
-    { id: 'databases', nameAr: 'قواعد بيانات', nameEn: 'Databases' },
-    { id: 'media', nameAr: 'وسائط وتفريغ', nameEn: 'Media & Transcripts' },
-    { id: 'apps', nameAr: 'تطبيقات ومستندات', nameEn: 'Apps & Docs' },
+    { id: 'all', labelKey: 'wizard.catAll' },
+    { id: 'web', labelKey: 'wizard.catWeb' },
+    { id: 'files', labelKey: 'wizard.catFiles' },
+    { id: 'code', labelKey: 'wizard.catCode' },
+    { id: 'databases', labelKey: 'wizard.catDatabases' },
+    { id: 'media', labelKey: 'wizard.catMedia' },
+    { id: 'apps', labelKey: 'wizard.catApps' },
   ];
 
   const filteredCatalog = sourceTypes.filter((st) => {
@@ -335,17 +294,9 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
         <div>
           <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-indigo-600" />
-            <span>
-              {lang === 'ar'
-                ? 'معالج موصلات البيانات الذكي (Enterprise Connector Wizard)'
-                : 'Enterprise Connector Wizard'}
-            </span>
+            <span>{t(lang, 'wizard.title')}</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            {lang === 'ar'
-              ? 'ربط مصادر المعلومات الخارجية المباشرة، وقواعد البيانات، والمستودعات مع الفهرسة الدلالية'
-              : 'Connect external knowledge bases, databases, and repos with semantic indexing'}
-          </p>
+          <p className="text-xs text-slate-500 mt-1">{t(lang, 'wizard.subtitle')}</p>
         </div>
 
         {/* Step Indicator */}
@@ -356,7 +307,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
             }`}
           >
             <span>1</span>
-            <span>{lang === 'ar' ? 'اختيار النوع' : 'Type'}</span>
+            <span>{t(lang, 'wizard.stepType')}</span>
           </div>
           <ArrowLeft className="w-3.5 h-3.5 text-slate-400 rtl:rotate-0 ltr:rotate-180" />
           <div
@@ -365,7 +316,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
             }`}
           >
             <span>2</span>
-            <span>{lang === 'ar' ? 'تكوين المعايير' : 'Config'}</span>
+            <span>{t(lang, 'wizard.stepConfig')}</span>
           </div>
           <ArrowLeft className="w-3.5 h-3.5 text-slate-400 rtl:rotate-0 ltr:rotate-180" />
           <div
@@ -374,7 +325,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
             }`}
           >
             <span>3</span>
-            <span>{lang === 'ar' ? 'التفعيل والفهرسة' : 'Deploy'}</span>
+            <span>{t(lang, 'wizard.stepDeploy')}</span>
           </div>
         </div>
       </div>
@@ -396,7 +347,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                       : 'text-slate-600 hover:bg-slate-200/70'
                   }`}
                 >
-                  {lang === 'ar' ? cat.nameAr : cat.nameEn}
+                  {t(lang, cat.labelKey)}
                 </button>
               ))}
             </div>
@@ -408,7 +359,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 type="text"
                 value={catalogSearch}
                 onChange={(e) => setCatalogSearch(e.target.value)}
-                placeholder={lang === 'ar' ? 'بحث في الموصلات...' : 'Search connectors...'}
+                placeholder={t(lang, 'wizard.searchPlaceholder')}
                 className="w-full pl-8 pr-3 py-1.5 bg-white rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -432,12 +383,12 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                         live-sync pipeline today vs manual-only placeholders. */}
                     {st.liveSync === true && (
                       <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase font-mono">
-                        {lang === 'ar' ? 'مزامنة حية' : 'LIVE'}
+                        {t(lang, 'wizard.badgeLive')}
                       </span>
                     )}
                     {st.liveSync === false && (
                       <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 uppercase font-mono">
-                        {lang === 'ar' ? 'قريباً' : 'SOON'}
+                        {t(lang, 'wizard.badgeSoon')}
                       </span>
                     )}
                   </h4>
@@ -455,7 +406,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
               onClick={onCancel}
               className="py-2.5 px-5 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer"
             >
-              {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+              {t(lang, 'wizard.cancel')}
             </button>
           </div>
         </div>
@@ -487,7 +438,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shrink-0 cursor-pointer shadow-xs"
               >
                 <Zap className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
-                <span>{lang === 'ar' ? 'تعبئة نموذج تجريبي بضغطة واحدة' : 'Load Demo Preset'}</span>
+                <span>{t(lang, 'wizard.loadPresetBtn')}</span>
               </button>
             )}
           </div>
@@ -495,14 +446,14 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
           <div className="space-y-4">
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">
-                {lang === 'ar' ? 'اسم الموصل المصدر:' : 'Connector Name:'}
+                {t(lang, 'wizard.connectorNameLabel')}
               </label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="اسم تمييزي للموصل"
+                placeholder={t(lang, 'wizard.connectorNamePlaceholder')}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -551,26 +502,26 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'جدول المزامنة التلقائية (Cron):' : 'Sync Schedule:'}
+                  {t(lang, 'wizard.syncScheduleLabel')}
                 </label>
                 <select
                   value={syncSchedule}
                   onChange={(e) => setSyncSchedule(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="manual">{lang === 'ar' ? 'يدوي فقط (Manual Sync)' : 'Manual Only'}</option>
-                  <option value="*/30 * * * *">{lang === 'ar' ? 'كل 30 دقيقة' : 'Every 30 mins'}</option>
-                  <option value="0 */1 * * *">{lang === 'ar' ? 'كل ساعة' : 'Every hour'}</option>
-                  <option value="0 */3 * * *">{lang === 'ar' ? 'كل 3 ساعات' : 'Every 3 hours'}</option>
-                  <option value="0 */6 * * *">{lang === 'ar' ? 'كل 6 ساعات' : 'Every 6 hours'}</option>
-                  <option value="0 0 * * *">{lang === 'ar' ? 'يومياً (Daily)' : 'Daily'}</option>
+                  <option value="manual">{t(lang, 'wizard.schedManual')}</option>
+                  <option value="*/30 * * * *">{t(lang, 'wizard.sched30min')}</option>
+                  <option value="0 */1 * * *">{t(lang, 'wizard.schedHourly')}</option>
+                  <option value="0 */3 * * *">{t(lang, 'wizard.sched3hours')}</option>
+                  <option value="0 */6 * * *">{t(lang, 'wizard.sched6hours')}</option>
+                  <option value="0 0 * * *">{t(lang, 'wizard.schedDaily')}</option>
                 </select>
               </div>
 
               {collections.length > 0 && (
                 <div>
                   <label className="text-xs font-bold text-slate-700 block mb-1">
-                    {lang === 'ar' ? 'ربط المجموعات المستهدفة:' : 'Assign Collections:'}
+                    {t(lang, 'wizard.assignCollectionsLabel')}
                   </label>
                   <div className="border border-slate-300 rounded-xl p-2 max-h-28 overflow-y-auto space-y-1 bg-slate-50">
                     {collections.map((col) => {
@@ -614,19 +565,17 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 ) : (
                   <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
                 )}
-                <span>
-                  {lang === 'ar' ? 'اختبار جودة الاتصال والمصادقة (Live Health Check)' : 'Test Connection & Auth'}
-                </span>
+                <span>{t(lang, 'wizard.testConnectionBtn')}</span>
               </button>
 
               {testDiagnostics && (
                 <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-200 text-xs font-mono space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1">
-                    <span>Diagnostic Log</span>
+                    <span>{t(lang, 'wizard.diagnosticLogLabel')}</span>
                     <span
                       className={testDiagnostics.success ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}
                     >
-                      {testDiagnostics.success ? 'READY' : 'DEGRADED'}
+                      {t(lang, testDiagnostics.success ? 'wizard.statusReady' : 'wizard.statusDegraded')}
                     </span>
                   </div>
                   {testDiagnostics.logs.map((log, idx) => (
@@ -653,7 +602,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
               disabled={!name}
               className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition cursor-pointer flex items-center justify-center gap-2"
             >
-              <span>{lang === 'ar' ? 'الانتقال إلى المراجعة والتفعيل' : 'Next Step'}</span>
+              <span>{t(lang, 'wizard.nextStepBtn')}</span>
               <ArrowLeft className="w-4 h-4 rtl:rotate-0 ltr:rotate-180" />
             </button>
             <button
@@ -661,7 +610,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
               onClick={() => setStep(1)}
               className="py-2.5 px-5 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer"
             >
-              {lang === 'ar' ? 'السابق' : 'Back'}
+              {t(lang, 'wizard.backBtn')}
             </button>
           </div>
         </div>
@@ -673,42 +622,34 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
           <div className="p-5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-3 text-xs">
             <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-              <span>{lang === 'ar' ? 'ملخص مراجعة إعدادات الموصل والتفعيل' : 'Connector Setup Summary'}</span>
+              <span>{t(lang, 'wizard.summaryTitle')}</span>
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
               <div className="p-3 bg-white rounded-xl border border-slate-200">
-                <span className="text-[11px] text-slate-400 block">
-                  {lang === 'ar' ? 'اسم الموصل:' : 'Connector Name:'}
-                </span>
+                <span className="text-[11px] text-slate-400 block">{t(lang, 'wizard.summaryNameLabel')}</span>
                 <span className="font-bold text-slate-900">{name}</span>
               </div>
               <div className="p-3 bg-white rounded-xl border border-slate-200">
-                <span className="text-[11px] text-slate-400 block">{lang === 'ar' ? 'نوع المصدر:' : 'Type:'}</span>
-                <span className="font-bold text-slate-900">{currentTypeMeta.nameAr}</span>
+                <span className="text-[11px] text-slate-400 block">{t(lang, 'wizard.summaryTypeLabel')}</span>
+                <span className="font-bold text-slate-900">
+                  {lang === 'ar' ? currentTypeMeta.nameAr : currentTypeMeta.nameEn}
+                </span>
               </div>
               <div className="p-3 bg-white rounded-xl border border-slate-200">
-                <span className="text-[11px] text-slate-400 block">
-                  {lang === 'ar' ? 'جدولة المزامنة:' : 'Schedule:'}
-                </span>
+                <span className="text-[11px] text-slate-400 block">{t(lang, 'wizard.summaryScheduleLabel')}</span>
                 <span className="font-mono font-bold text-slate-900">{syncSchedule}</span>
               </div>
               <div className="p-3 bg-white rounded-xl border border-slate-200">
-                <span className="text-[11px] text-slate-400 block">
-                  {lang === 'ar' ? 'عزل بيانات المستأجر:' : 'Tenant Isolation:'}
-                </span>
-                <span className="font-bold text-emerald-600">Tenant Isolated ({tenantId})</span>
+                <span className="text-[11px] text-slate-400 block">{t(lang, 'wizard.summaryTenantLabel')}</span>
+                <span className="font-bold text-emerald-600">{t(lang, 'wizard.tenantIsolated', { tenantId })}</span>
               </div>
             </div>
           </div>
 
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-1">
-            <span className="font-bold block">💡 {lang === 'ar' ? 'تفعيل الاستيعاب الفوري:' : 'Ingestion Note:'}</span>
-            <p className="text-[11px]">
-              {lang === 'ar'
-                ? 'عند التفعيل، سيبدأ المحرك في جلب البيانات فوراً واستخراج المقاطع وتوليد المتجهات وفهرستها في Qdrant.'
-                : 'Upon activation, OmniRAG triggers background parsing and Qdrant vector indexing.'}
-            </p>
+            <span className="font-bold block">💡 {t(lang, 'wizard.ingestionNoteTitle')}</span>
+            <p className="text-[11px]">{t(lang, 'wizard.ingestionNoteBody')}</p>
           </div>
 
           <div className="flex gap-2 pt-4 border-t border-slate-100">
@@ -721,12 +662,12 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>{lang === 'ar' ? 'جاري الاستيعاب والتجميع...' : 'Ingesting data...'}</span>
+                  <span>{t(lang, 'wizard.ingestingBtn')}</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  <span>{lang === 'ar' ? 'تفعيل الموصل وتشغيل الاستيعاب الان' : 'Activate & Ingest Now'}</span>
+                  <span>{t(lang, 'wizard.activateBtn')}</span>
                 </>
               )}
             </button>
@@ -735,7 +676,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
               onClick={() => setStep(2)}
               className="py-3 px-5 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer"
             >
-              {lang === 'ar' ? 'السابق' : 'Back'}
+              {t(lang, 'wizard.backBtn')}
             </button>
           </div>
         </div>

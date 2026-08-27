@@ -73,16 +73,22 @@ export function assertPublicHttpUrl(rawUrl: string): URL {
  */
 export async function safeFetchText(
   rawUrl: string,
-  opts: { timeoutMs?: number; maxBytes?: number; headers?: Record<string, string> } = {},
+  opts: {
+    timeoutMs?: number;
+    maxBytes?: number;
+    headers?: Record<string, string>;
+    method?: 'GET' | 'POST';
+    body?: string;
+  } = {},
 ): Promise<SafeFetchResult> {
   const url = assertPublicHttpUrl(rawUrl);
-  const { timeoutMs = 12000, maxBytes = 1024 * 1024 } = opts;
+  const { timeoutMs = 12000, maxBytes = 1024 * 1024, method = 'GET' } = opts;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url.href, {
-      method: 'GET',
+      method,
       signal: controller.signal,
       redirect: 'follow',
       headers: {
@@ -90,6 +96,7 @@ export async function safeFetchText(
         Accept: 'text/html,text/plain,application/json,*/*;q=0.8',
         ...(opts.headers || {}),
       },
+      body: method === 'POST' ? opts.body : undefined,
     });
 
     const contentType = res.headers.get('content-type') || '';

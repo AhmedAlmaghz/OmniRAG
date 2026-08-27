@@ -4,7 +4,8 @@ import path from 'path';
 import mammoth from 'mammoth';
 import { generateText, transcribe, uploadFile } from 'ai';
 import { getAiModel, getFallbackModels } from '../config/aiModels';
-import { google, getGoogleProvider, resolveGeminiApiKey } from '../rag/googleProvider';
+import { getGoogleProvider, resolveGeminiApiKey } from '../rag/googleProvider';
+import { resolveLanguageModel, isModelRefConfigured } from '../ai/registry/resolve';
 import { generateTextResilient } from '../ai/resilientGenerate';
 import {
   groqTranscriptionModel,
@@ -13,6 +14,8 @@ import {
   resolveMistralApiKey,
 } from '../ai/providers';
 import { ensureLongHttpTimeouts } from '../http/longHttpTimeouts';
+import { runExtractionChain } from './extraction/registry';
+import type { ExtractionContext } from './extraction/types';
 
 export interface FileTypeClassification {
   isText: boolean;
@@ -670,25 +673,24 @@ async function runTranscriptionWithModelChain(
   engineUsed: string,
   options: { model?: string } = {},
 ): Promise<DispatchResult> {
-  if (!resolveGeminiApiKey()) {
+  const primaryModel = options.model || getAiModel('documentParseModel');
+  if (!(await isModelRefConfigured(primaryModel))) {
     return {
       text: '',
       engineUsed,
       success: false,
-      metadata: { error: 'GEMINI_API_KEY is not configured.' },
+      metadata: { error: 'No AI provider key configured for document parsing.' },
     };
   }
 
-  const modelsToTry = [options.model || getAiModel('documentParseModel'), ...getFallbackModels()].filter(
-    (m, i, arr) => m && arr.indexOf(m) === i,
-  );
+  const modelsToTry = [primaryModel, ...getFallbackModels()].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastError = '';
   for (const modelId of modelsToTry) {
     try {
       console.log(`[Gemini Transcriber] Transcribing via ${modelId} (${mediaPart.mediaType})...`);
       const { text } = await generateText({
-        model: google(modelId),
+        model: await resolveLanguageModel(modelId),
         messages: [
           {
             role: 'user',
@@ -936,7 +938,15 @@ export async function processFileBuffer(
 }
 
 /**
- * Dispatches any file buffer to the correct logical workflow (Transcription, Partitioning, OCR, or Direct Plain Text Reader).
+ * Dispatches any file buffer to the correct extraction workflow.
+ *
+ * Implemented as a walk over the extraction-engine registry
+ * (services/extraction): the legacy hard-coded waterfall — local PPTX →
+ * Mammoth DOCX → local-only mode → audio/video transcription → plain text →
+ * Mistral OCR → Unstructured partition → Gemini multimodal → Tesseract →
+ * PPTX slide-image OCR — now lives as ordered, self-describing engines.
+ * Ordering, key/category/preference gating, engine labels, and the honest
+ * no-fabrication fall-through are all preserved by the registry chain.
  */
 export async function dispatchFile(
   fileBuffer: Buffer,
@@ -951,276 +961,17 @@ export async function dispatchFile(
   // Long OCR round-trips outlive Node's default ~300 s fetch headers timeout.
   ensureLongHttpTimeouts();
 
-  // 0. PowerPoint (.pptx) local XML parsing first — instant, key-free, and
-  // preserves slide order + speaker notes. Falls through to cloud engines
-  // when the deck is mostly images (little text to extract locally).
-  if (fileClassification.isPowerPoint && fileName.toLowerCase().endsWith('.pptx')) {
-    try {
-      const { parsePptxLocally } = await import('./pptxParser');
-      const localPptx = await parsePptxLocally(fileBuffer);
-      if (localPptx.text.trim().length >= 400) {
-        console.log(
-          `[Document Ingestion] Parsed PowerPoint locally (${localPptx.slideCount} slides) — no cloud engine needed.`,
-        );
-        return {
-          text: localPptx.text.trim(),
-          engineUsed: `Local PPTX XML Parser (${localPptx.slideCount} slides ⚡)`,
-          success: true,
-        };
-      }
-      console.warn(
-        `[Document Ingestion] Local PPTX parse produced only ${localPptx.text.trim().length} chars — falling through to cloud engines.`,
-      );
-    } catch (e: any) {
-      console.warn('[Document Ingestion] Local PPTX parser failed, falling back to other engines...', e?.message);
-    }
-  }
-
-  // 1. Word Document (.docx / .doc) local parsing with Mammoth first (ensures perfect Arabic UTF-8 encoding without mojibake/strange characters)
-  if (fileClassification.isWord) {
-    try {
-      console.log(
-        `[Document Ingestion] Parsing Word Document (${fileName}) locally using mammoth to preserve perfect Arabic UTF-8 encoding...`,
-      );
-      const mammothText = await parseDocxWithMammoth(fileBuffer);
-      if (mammothText && mammothText.trim().length > 0) {
-        return {
-          text: mammothText.trim(),
-          engineUsed: 'Local Mammoth DOCX Parser (UTF-8 Arabic Safe ⚡)',
-          success: true,
-        };
-      }
-    } catch (e: any) {
-      console.error('[Document Ingestion] Local Mammoth DOCX parser failed, falling back to other engines...', e);
-    }
-  }
-
-  // 1b. LOCAL-ONLY engine ('local'): the explicit "offline libraries" choice
-  // from the web-fetch studio tab. Plain-text, Word, and PPTX inputs were
-  // already served by the local parsers above; what remains here is images
-  // (straight to offline Tesseract instead of cloud OCR), PDFs (routed into
-  // the batched pipeline in local-only mode), and honestly-unsupported media.
-  // Nothing below this branch ever leaves the machine or bills a cloud API.
-  if (enginePref === 'local') {
-    const localUnsupported = (reason: string): DispatchResult => ({
-      text: '',
-      engineUsed: 'Local Libraries Only',
-      success: false,
-      metadata: { error: reason },
-    });
-
-    if (fileClassification.isPdf) {
-      const { processPdfWithBatchedPipeline } = await import('../pdf/pdfChunker');
-      const pipelineResult = await processPdfWithBatchedPipeline(fileBuffer, { preferredEngine: 'local' });
-      if (pipelineResult.text.trim().length > 0) {
-        return {
-          text: pipelineResult.text,
-          engineUsed: pipelineResult.engineUsed,
-          success: true,
-        };
-      }
-      return localUnsupported(
-        'تعذر استخراج النص محلياً من ملف PDF (قد يكون مستنداً ممسوحاً ضوئياً بلا طبقة نصية ويفشل الـ OCR المحلي).',
-      );
-    }
-
-    if (fileClassification.isImage) {
-      try {
-        const { ocrImageBuffer } = await import('./localOcr');
-        const localText = await ocrImageBuffer(fileBuffer);
-        if (localText.length > 0) {
-          return {
-            text: localText,
-            engineUsed: 'Local Tesseract OCR (offline ⚡)',
-            success: true,
-          };
-        }
-      } catch (e: any) {
-        console.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
-      }
-      return localUnsupported('تعذر التعرف الضوئي على نص داخل الصورة عبر المكتبة المحلية (Tesseract).');
-    }
-
-    if (fileClassification.isAudio || fileClassification.isVideo) {
-      return localUnsupported('المكتبة المحلية لا تدعم تفريغ الصوت والفيديو — اختر المحرك التلقائي أو محركاً سحابياً.');
-    }
-
-    // Plain text & CSV remain perfectly serviceable offline.
-    if (fileClassification.isText) {
-      const text = fileBuffer.toString('utf-8');
-      if (text.trim().length > 0) {
-        return {
-          text,
-          engineUsed: 'Direct UTF-8 Text Reader',
-          success: true,
-        };
-      }
-    }
-
-    // Spreadsheets (.xlsx/.xls) and any unrecognized binary have no local parser.
-    return localUnsupported('لا تتوفر مكتبة محلية لهذه الصيغة — استخدم الوضع التلقائي أو محركاً سحابياً.');
-  }
-
-  // 2. Audio & Video transcription workflow
-  if (fileClassification.isAudio || fileClassification.isVideo) {
-    return transcribeAudioVideo(fileBuffer, fileName, mimeType, options);
-  }
-
-  // 3. Plain Text Fallback (direct extraction for actual plain text files)
-  if (fileClassification.isText) {
-    try {
-      const text = fileBuffer.toString('utf-8');
-      return {
-        text,
-        engineUsed: 'Direct UTF-8 Text Reader',
-        success: true,
-      };
-    } catch (e: any) {
-      console.warn('[Unstructured Service] Failed to read as plain text:', e);
-    }
-  }
-
-  // 3. Prioritized Mistral Document AI (OCR) workflow (PDFs and Images)
-  const mistralKey = options.mistralApiKey || process.env.MISTRAL_API_KEY;
-  if (
-    mistralKey &&
-    (fileClassification.isPdf || fileClassification.isImage) &&
-    (enginePref === 'mistral' || enginePref === 'auto')
-  ) {
-    const mistralResult = await mistralOcr(fileBuffer, fileName, resolvedMime, mistralKey);
-    if (mistralResult.success) {
-      return mistralResult;
-    }
-    console.warn('[Unstructured Service] Mistral OCR workflow failed, falling back to other engines...');
-  }
-
-  // 4. Document Partitioning workflow (PDF, Word, Excel, PowerPoint)
-  const unstructuredKey = options.unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY;
-  if (
-    unstructuredKey &&
-    (fileClassification.isPdf ||
-      fileClassification.isWord ||
-      fileClassification.isPowerPoint ||
-      fileClassification.isSpreadsheet) &&
-    (enginePref === 'unstructured' || enginePref === 'auto')
-  ) {
-    const partitionResult = await unstructuredPartition(
-      fileBuffer,
-      fileName,
-      resolvedMime,
-      unstructuredKey,
-      options.strategy || 'hi_res',
-    );
-    if (partitionResult.success) {
-      return partitionResult;
-    }
-    console.warn('[Unstructured Service] Partition workflow failed, falling back to Gemini OCR parser...');
-  }
-
-  // 5. Default Fallback / Gemini High-Precision Multimodal OCR / Extraction (AI SDK v7)
-  try {
-    const model = options.model || getAiModel('documentParseModel');
-    let systemInstruction =
-      'You are an expert multilingual document extractor. Extract, transcribe, and structure all readable text, tables, slide contents, spreadsheets, audio speech transcription, or visual elements from this file. IMPORTANT: If the file contains Arabic (العربية), extract it perfectly. Maintain correct spelling, grammar, RTL (Right-to-Left) formatting, and paragraphs. Do NOT translate any Arabic text. Output ONLY the extracted text directly without adding preamble or extra commentary.';
-    let engineUsed = 'Gemini Multimodal Document Extractor Fallback';
-
-    if (fileClassification.isImage) {
-      systemInstruction =
-        'You are an expert high-precision visual OCR model. Perform OCR on this image. Extract all text, labels, titles, tables, or annotations visible in the image. If there is Arabic text, extract it perfectly with RTL (Right-to-Left) alignment. Output ONLY the extracted text directly without adding any preamble or extra commentary.';
-      engineUsed = 'Gemini High-Precision Visual OCR';
-    } else if (fileClassification.isSpreadsheet) {
-      systemInstruction =
-        'You are an expert spreadsheet parser. Extract all data from this spreadsheet file and format it as beautifully structured Markdown tables. Preserve all column names, row indices, values, and cell relationships. Keep the structure perfect. Output ONLY the formatted tables without adding any preamble or extra commentary.';
-      engineUsed = 'Gemini Excel-to-Markdown Tabular Parser';
-    } else if (fileClassification.isWord) {
-      systemInstruction =
-        'You are an expert Word document parser. Extract all text, paragraphs, headings, bullet points, numbered lists, and tables. Format the output elegantly in standard Markdown. Output ONLY the extracted markdown content directly without adding any preamble or extra commentary.';
-      engineUsed = 'Gemini Word Document Structure Parser';
-    } else if (fileClassification.isPowerPoint) {
-      systemInstruction =
-        'You are an expert slide presentation parser. Extract and structure the content of this presentation slide-by-slide. Format each slide with a clear header (e.g., "### Slide 1: [Title]") followed by bullet points, text, and visual descriptions. Output ONLY the structured text directly without adding any preamble or extra commentary.';
-      engineUsed = 'Gemini PowerPoint Slide Parser';
-    }
-
-    const result = await generateTextResilient({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'file',
-              mediaType: resolvedMime,
-              filename: fileName,
-              data: { type: 'data', data: new Uint8Array(fileBuffer) },
-            },
-            { type: 'text', text: systemInstruction },
-          ],
-        },
-      ],
-      maxRetries: 2,
-    });
-
-    if (result?.text) {
-      return {
-        text: result.text,
-        engineUsed,
-        success: true,
-      };
-    }
-  } catch (err: any) {
-    console.error('[Unstructured Service] Fallback document extraction failed:', err);
-  }
-
-  // 6. FINAL local fallback: offline Tesseract OCR — keeps image-only files
-  // working even when no cloud API key is configured.
-  if (fileClassification.isImage) {
-    try {
-      const { ocrImageBuffer } = await import('./localOcr');
-      const localText = await ocrImageBuffer(fileBuffer);
-      if (localText.length > 0) {
-        return {
-          text: localText,
-          engineUsed: 'Local Tesseract OCR (offline ⚡)',
-          success: true,
-        };
-      }
-    } catch (e: any) {
-      console.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
-    }
-  }
-
-  // 6b. FINAL local fallback for image-only PPTX decks (design-tool exports
-  // where every slide is a full-bleed picture and the XML carries no text).
-  if (fileClassification.isPowerPoint && fileName.toLowerCase().endsWith('.pptx')) {
-    try {
-      const { extractSlideImagesFromPptx } = await import('./pptxParser');
-      const { ocrImageBuffer } = await import('./localOcr');
-      const slideImages = await extractSlideImagesFromPptx(fileBuffer);
-      if (slideImages.length > 0) {
-        const sections: string[] = [];
-        for (let i = 0; i < slideImages.length; i++) {
-          const text = await ocrImageBuffer(slideImages[i]);
-          if (text) sections.push(`### Slide ${i + 1}\n\n${text}`);
-        }
-        if (sections.length > 0) {
-          return {
-            text: sections.join('\n\n'),
-            engineUsed: `Local PPTX Slide-Image OCR (offline, ${slideImages.length} slides ⚡)`,
-            success: true,
-          };
-        }
-      }
-    } catch (e: any) {
-      console.warn('[Unstructured Service] Local PPTX slide-image OCR failed:', e?.message);
-    }
-  }
-
-  // If Mistral or Unstructured was preferred but failed, try Gemini fallback anyway
-  return {
-    text: '',
-    engineUsed: 'None',
-    success: false,
-    metadata: { error: 'No extraction engine succeeded.' },
+  const ctx: ExtractionContext = {
+    fileBuffer,
+    fileName,
+    mimeType: resolvedMime,
+    rawMimeType: mimeType,
+    classification: fileClassification,
+    enginePref,
+    options,
+    mistralKey: options.mistralApiKey || process.env.MISTRAL_API_KEY || '',
+    unstructuredKey: options.unstructuredApiKey || process.env.UNSTRUCTURED_API_KEY || '',
   };
+
+  return runExtractionChain(ctx);
 }

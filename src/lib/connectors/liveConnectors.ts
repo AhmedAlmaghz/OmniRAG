@@ -20,6 +20,8 @@
 
 import { safeFetchText, safeFetchBinary, htmlToText } from '../mcp/net';
 import { processFileBuffer } from '../services/unstructuredService';
+import { getConnectorDescriptor, hasGenericExtraction } from './registry';
+import { applyFieldDefaults } from './schemaBuilder';
 
 export interface ConnectorExtraction {
   /** Document title derived from the source payload (feed title, repo name…). */
@@ -405,28 +407,33 @@ export async function extractFromWebFile(config: Record<string, any>): Promise<C
 }
 
 /**
- * Dispatches extraction for a connector type. Returns undefined for types
- * WITHOUT a live pipeline so the caller applies its honest-failure policy.
+ * True when a source type can produce REAL content on background sync.
+ *
+ * Delegates to the connector registry: any descriptor with an `extract()`
+ * implementation is live-syncable, plus `youtube` and `file`, which keep their
+ * dedicated pipelines (transcript ladder / batched PDF) inside the storage
+ * layer rather than a generic extract(). Adding a connector with extract() to
+ * the registry makes it live-syncable automatically — no edits here.
  */
 export function supportsLiveSync(type: string): boolean {
-  return ['youtube', 'file', 'url', 'rss', 'github', 'web_file'].includes(type);
+  return hasGenericExtraction(type) || type === 'youtube' || type === 'file';
 }
 
+/**
+ * Dispatches extraction for a connector type via the registry. Returns
+ * undefined for types WITHOUT a generic extract() (youtube/file, handled by
+ * their dedicated storage-layer pipelines, and unknown types) so the caller
+ * applies its honest-failure policy.
+ */
 export async function extractConnectorContent(
   type: string,
   config: Record<string, any>,
 ): Promise<ConnectorExtraction | undefined> {
-  switch (type) {
-    case 'url':
-      return extractFromWebPage(config);
-    case 'rss':
-      return extractFromRssFeed(config);
-    case 'github':
-      return extractFromGithubRepo(config);
-    case 'web_file':
-      return extractFromWebFile(config);
-    default:
-      // youtube/file keep their dedicated pipelines inside the storage layer.
-      return undefined;
+  const descriptor = getConnectorDescriptor(type);
+  if (!descriptor?.extract) {
+    // youtube/file keep their dedicated pipelines inside the storage layer.
+    return undefined;
   }
+  const withDefaults = applyFieldDefaults(descriptor.fields, config || {});
+  return descriptor.extract(withDefaults);
 }

@@ -7,7 +7,9 @@ const nextConfig: NextConfig = {
   },
   // tesseract.js spawns worker threads and streams its WASM core from
   // node_modules at runtime — bundling it into the server build breaks both.
-  serverExternalPackages: ['tesseract.js'],
+  // pg-boss/pg/imapflow/mysql2 are Node-only modules loaded lazily by the job
+  // queue and connectors; keep them external to the server bundle too.
+  serverExternalPackages: ['tesseract.js', 'pg-boss', 'pg', 'imapflow', 'mysql2'],
   experimental: {
     webpackBuildWorker: false,
     serverActions: {

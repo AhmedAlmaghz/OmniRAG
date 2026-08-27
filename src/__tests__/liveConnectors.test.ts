@@ -111,12 +111,30 @@ describe('extractHtmlTitle', () => {
 });
 
 describe('supportsLiveSync', () => {
-  it('marks only connector types with real pipelines as live', () => {
-    for (const t of ['youtube', 'file', 'url', 'rss', 'github']) {
+  it('marks every connector with a real pipeline as live', () => {
+    // youtube/file keep dedicated storage-layer pipelines; the rest resolve
+    // through the connector registry's extract() implementations.
+    for (const t of [
+      'youtube',
+      'file',
+      'url',
+      'rss',
+      'github',
+      'web_file',
+      'notion',
+      'gdrive',
+      'confluence',
+      'slack',
+      'email',
+      'database',
+      'api',
+    ]) {
       expect(supportsLiveSync(t)).toBe(true);
     }
-    for (const t of ['gdrive', 'notion', 'confluence', 'slack', 'email', 'database', 'api']) {
-      expect(supportsLiveSync(t)).toBe(false);
-    }
+  });
+
+  it('rejects unknown connector types', () => {
+    expect(supportsLiveSync('does_not_exist')).toBe(false);
+    expect(supportsLiveSync('')).toBe(false);
   });
 });

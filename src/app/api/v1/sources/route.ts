@@ -5,7 +5,10 @@ import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
 import { SourceConnector, SOURCE_TYPE_VALUES, SourceType } from '@/lib/types/omnirag';
 import { getEnv } from '@/lib/env/runtimeEnv';
-import { encryptSourceConfig, redactSourceConfig } from '@/lib/storage/sourceConfigCrypto';
+import { encryptSourceConfig, mergeAndEncryptSourceConfig, redactSourceConfig } from '@/lib/storage/sourceConfigCrypto';
+import { validateConnectorConfig } from '@/lib/connectors/registry';
+import { guardPermission } from '@/lib/auth/permissions';
+import { guardQuota } from '@/lib/services/planService';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +46,9 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   const tenantId = authCtx.tenantId;
   try {
+    const denied = await guardPermission(authCtx, 'sources:read');
+    if (denied) return denied;
+
     const { searchParams } = new URL(req.url);
     const typeFilter = searchParams.get('type');
     const statusFilter = searchParams.get('status');
@@ -97,6 +103,13 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_API_KEY', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'sources:write');
+    if (denied) return denied;
+
+    // Plan quota (Phase 7): connector ceiling for the workspace's plan.
+    const quotaDenied = await guardQuota(authCtx.tenantId, 'maxConnectors');
+    if (quotaDenied) return quotaDenied;
+
     const body = await req.json();
     // Tenant identity is derived exclusively from the verified auth context
     const tenantId = authCtx.tenantId;
@@ -111,9 +124,25 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     }
     const { name, type, config, syncSchedule, collectionIds } = parsed.data;
 
+    // Validate the connector config against the registry schema (built from
+    // the same field descriptors the wizard renders) and apply declared
+    // defaults. Fail-fast here — a connector created with a missing required
+    // field would otherwise fail only at first sync with a confusing error.
+    const connectorValidation = validateConnectorConfig(type, config);
+    if (!connectorValidation.ok) {
+      return NextResponse.json(
+        {
+          error: `إعدادات الموصل غير صالحة: ${connectorValidation.errors.join('، ')}`,
+          code: 'CONNECTOR_CONFIG_INVALID',
+        },
+        { status: 400 },
+      );
+    }
+    const normalizedConfig = connectorValidation.config;
+
     const id = `src-${type}-${randomUUID().slice(0, 8)}`;
     // Encrypt any credential-bearing fields before persistence.
-    const encryptedConfig = encryptSourceConfig(config);
+    const encryptedConfig = encryptSourceConfig(normalizedConfig);
     const newSource: SourceConnector = {
       id,
       tenantId,
@@ -175,6 +204,9 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('QDRANT_API_KEY', req);
 
   try {
+    const denied = await guardPermission(authCtx, 'sources:write');
+    if (denied) return denied;
+
     const body = await req.json();
     const { id, ...updates } = body;
     const tenantId = authCtx.tenantId;
@@ -183,9 +215,15 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
       return NextResponse.json({ error: 'Source ID is required' }, { status: 400 });
     }
 
-    // Encrypt any credential-bearing fields supplied in the update payload.
+    // Merge + encrypt credential fields. Secrets round-tripped as the redaction
+    // placeholder (edit modal seeded from a redacted GET) keep their stored
+    // value instead of being overwritten with the mask.
     if (updates.config && typeof updates.config === 'object') {
-      updates.config = encryptSourceConfig(updates.config);
+      const existing = await db.getSourceById(id, tenantId);
+      if (!existing) {
+        return NextResponse.json({ error: 'Source not found' }, { status: 404 });
+      }
+      updates.config = mergeAndEncryptSourceConfig(existing.config, updates.config);
       updates.configEncrypted = true;
     }
 
@@ -213,6 +251,9 @@ export const DELETE = withAuthAndRateLimit(async (req, authCtx, props) => {
   getEnv('POSTGRES_URL', req);
   getEnv('QDRANT_URL', req);
   getEnv('QDRANT_API_KEY', req);
+
+  const denied = await guardPermission(authCtx, 'sources:delete');
+  if (denied) return denied;
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
