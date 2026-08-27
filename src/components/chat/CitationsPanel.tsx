@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, BookOpen, ExternalLink, Link2 } from 'lucide-react';
 import { Citation } from '@/lib/types/omnirag';
+import { t } from '@/lib/i18n';
 
 interface CitationsPanelProps {
   citations: Citation[];
@@ -90,9 +91,7 @@ export const CitationsPanel: React.FC<CitationsPanelProps> = ({
               onClick={() => setIsExpanded(!isExpanded)}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-slate-300 text-slate-600 text-xs font-medium shadow-xs transition-all duration-200 cursor-pointer"
             >
-              <span>
-                {lang === 'ar' ? `+${hiddenCitations.length} مصادر إضافية` : `+${hiddenCitations.length} more`}
-              </span>
+              <span>{t(lang, 'citation.moreCount', { count: hiddenCitations.length })}</span>
               {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
 
@@ -100,7 +99,7 @@ export const CitationsPanel: React.FC<CitationsPanelProps> = ({
               <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl border border-slate-200 shadow-xl z-50 overflow-hidden animate-citation-dropdown">
                 <div className="bg-slate-50 px-3 py-2 border-b border-slate-200">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                    {lang === 'ar' ? 'المصادر الإضافية' : 'Additional Sources'}
+                    {t(lang, 'citation.additionalSources')}
                   </span>
                 </div>
                 <div className="max-h-56 overflow-y-auto divide-y divide-slate-100">
@@ -117,7 +116,7 @@ export const CitationsPanel: React.FC<CitationsPanelProps> = ({
                             <span className="text-[10px] text-slate-400 font-mono">{Math.round(cit.score * 100)}%</span>
                             {cit.pageNumber && (
                               <span className="text-[10px] text-slate-400">
-                                {lang === 'ar' ? `ص.${cit.pageNumber}` : `p.${cit.pageNumber}`}
+                                {t(lang, 'citation.pageShort', { page: cit.pageNumber })}
                               </span>
                             )}
                           </div>
@@ -164,7 +163,7 @@ export const CitationsPanel: React.FC<CitationsPanelProps> = ({
           className="flex items-center gap-1.5 text-[11px] text-indigo-600 hover:text-indigo-800 font-medium transition cursor-pointer"
         >
           <ExternalLink className="w-3 h-3" />
-          <span>{lang === 'ar' ? 'عرض الكل في مستودع المعرفة' : 'View all in Knowledge Base'}</span>
+          <span>{t(lang, 'citation.viewAllInKnowledge')}</span>
         </button>
       )}
     </div>

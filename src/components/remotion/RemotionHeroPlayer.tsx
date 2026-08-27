@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Player } from '@remotion/player';
 import { RagAnimation } from './RagAnimation';
+import { t } from '@/lib/i18n';
 
 interface RemotionHeroPlayerProps {
   lang?: 'ar' | 'en';
@@ -18,7 +19,7 @@ export const RemotionHeroPlayer: React.FC<RemotionHeroPlayerProps> = ({ lang = '
   if (!mounted) {
     return (
       <div className="w-full h-[360px] md:h-[420px] bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-center text-slate-500 text-sm font-mono animate-pulse">
-        {lang === 'ar' ? 'جاري تحميل العرض التفاعلي...' : 'Loading Interactive Remotion Animation...'}
+        {t(lang, 'ragAnim.loadingPlayer')}
       </div>
     );
   }
@@ -27,9 +28,7 @@ export const RemotionHeroPlayer: React.FC<RemotionHeroPlayerProps> = ({ lang = '
     <div className="w-full relative group">
       <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-700/60 shadow-lg">
         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-        <span className="text-[11px] font-mono font-medium text-slate-300">
-          Remotion 4.0 Live Rendering Engine
-        </span>
+        <span className="text-[11px] font-mono font-medium text-slate-300">Remotion 4.0 Live Rendering Engine</span>
       </div>
 
       <div className="w-full aspect-video relative overflow-hidden">

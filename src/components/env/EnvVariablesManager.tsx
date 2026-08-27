@@ -23,6 +23,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { t } from '@/lib/i18n';
 import {
   loadEnvStatus as loadEnvStatusApi,
   persistFormValue,
@@ -93,17 +94,11 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
       ok
         ? {
             ok: true,
-            text:
-              lang === 'ar'
-                ? 'تم حفظ متغيرات البيئة ومزامنتها مع بيئة الخادم بنجاح.'
-                : 'Environment variables saved and synced to the server runtime.',
+            text: t(lang, 'envMgr.savedNotice'),
           }
         : {
             ok: false,
-            text:
-              lang === 'ar'
-                ? 'فشل الحفظ على الخادم (قد تكون الكتابة معطّلة في الإنتاج). بقيت القيم محفوظة محلياً في هذا المتصفح.'
-                : 'Server save failed (writes may be blocked in production). Values remain saved locally in this browser.',
+            text: t(lang, 'envMgr.saveFailedNotice'),
           },
     );
     setTimeout(() => setSaveNotice(null), 5000);
@@ -139,15 +134,13 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
               <div className="flex items-center gap-2">
                 <span className="px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-bold font-mono flex items-center gap-1.5">
                   <Key className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>{lang === 'ar' ? 'إدارة متغيرات البيئة والاتصالات' : 'Environment Variables Manager'}</span>
+                  <span>{t(lang, 'envMgr.badgeTitle')}</span>
                 </span>
                 <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold font-mono">
-                  {readinessScore}% {lang === 'ar' ? 'جاهزية النظام' : 'Ready'}
+                  {t(lang, 'envMgr.readyBadge', { score: readinessScore })}
                 </span>
               </div>
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-                {lang === 'ar' ? 'متغيرات بيئة التشغيل ومفاتيح API' : 'System Environment Variables & API Keys'}
-              </h2>
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">{t(lang, 'envMgr.title')}</h2>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -158,7 +151,7 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
                   className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-md shadow-indigo-600/20"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>{lang === 'ar' ? 'معالج التشغيل الأول' : 'Launch Setup Wizard'}</span>
+                  <span>{t(lang, 'envMgr.launchWizardBtn')}</span>
                 </button>
               )}
 
@@ -168,23 +161,17 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-2 border border-slate-700 transition cursor-pointer"
               >
                 {copiedEnv ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>
-                  {copiedEnv ? (lang === 'ar' ? 'تم النسخ!' : 'Copied!') : lang === 'ar' ? 'نسخ .env' : 'Copy .env'}
-                </span>
+                <span>{t(lang, copiedEnv ? 'envMgr.copied' : 'envMgr.copyEnv')}</span>
               </button>
             </div>
           </div>
 
-          <p className="text-xs sm:text-sm text-slate-300 max-w-3xl leading-relaxed">
-            {lang === 'ar'
-              ? 'تتيح لك هذه الشاشة مراجعة وإدخال واختبار كافة متغيرات البيئة الأساسية للنظام (مثل قواعد البيانات PostgreSQL و Vector DB ومفاتيح Gemini Pro و Mistral AI).'
-              : 'Inspect, edit, and test all production environment variables including PostgreSQL, Qdrant Vector DB, Gemini AI, and Mistral AI API keys.'}
-          </p>
+          <p className="text-xs sm:text-sm text-slate-300 max-w-3xl leading-relaxed">{t(lang, 'envMgr.subtitle')}</p>
 
           {/* Readiness Bar */}
           <div className="space-y-1.5 pt-2">
             <div className="flex justify-between text-[11px] font-mono text-slate-400">
-              <span>{lang === 'ar' ? 'مشر جاهزية النظام للإنتاج:' : 'System Production Readiness Score:'}</span>
+              <span>{t(lang, 'envMgr.readinessScoreLabel')}</span>
               <span className="text-emerald-400 font-bold">{readinessScore}%</span>
             </div>
             <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
@@ -220,12 +207,12 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
         {/* Category Filters */}
         <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl gap-1 overflow-x-auto">
           {[
-            { id: 'all', nameAr: 'الكل', nameEn: 'All' },
-            { id: 'ai', nameAr: 'الذكاء الاصطناعي', nameEn: 'AI Reasoning' },
-            { id: 'database', nameAr: 'قواعد البيانات', nameEn: 'Databases' },
-            { id: 'vector', nameAr: 'المتجهات Qdrant', nameEn: 'Vector DB' },
-            { id: 'docai', nameAr: 'مستندات OCR', nameEn: 'Document AI' },
-            { id: 'ingress', nameAr: 'بوابات الدخول', nameEn: 'Ingress' },
+            { id: 'all', labelKey: 'envMgr.catAll' },
+            { id: 'ai', labelKey: 'envMgr.catAi' },
+            { id: 'database', labelKey: 'envMgr.catDatabase' },
+            { id: 'vector', labelKey: 'envMgr.catVector' },
+            { id: 'docai', labelKey: 'envMgr.catDocai' },
+            { id: 'ingress', labelKey: 'envMgr.catIngress' },
           ].map((cat) => (
             <button
               key={cat.id}
@@ -237,7 +224,7 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              {lang === 'ar' ? cat.nameAr : cat.nameEn}
+              {t(lang, cat.labelKey)}
             </button>
           ))}
         </div>
@@ -249,7 +236,7 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={lang === 'ar' ? 'ابحث باسم المتغير أو الوصف...' : 'Search by variable key or description...'}
+            placeholder={t(lang, 'envMgr.searchPlaceholder')}
             className="w-full pl-9 pr-4 rtl:pl-4 rtl:pr-9 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800 text-xs focus:outline-none focus:border-indigo-500"
           />
         </div>
@@ -259,9 +246,7 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
       {loading ? (
         <div className="py-12 text-center space-y-2">
           <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
-          <p className="text-xs text-slate-500 font-bold">
-            {lang === 'ar' ? 'جاري التحقق من متغيرات البيئة...' : 'Auditing environment parameters...'}
-          </p>
+          <p className="text-xs text-slate-500 font-bold">{t(lang, 'envMgr.auditing')}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -283,29 +268,29 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
 
                       {item.required ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
-                          {lang === 'ar' ? 'مطلوب' : 'Required'}
+                          {t(lang, 'envMgr.required')}
                         </span>
                       ) : (
                         <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold">
-                          {lang === 'ar' ? 'اختياري' : 'Optional'}
+                          {t(lang, 'envMgr.optional')}
                         </span>
                       )}
 
                       {item.isConfigured ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          <span>{lang === 'ar' ? 'مكوّن - Configured' : 'Configured'}</span>
+                          <span>{t(lang, 'envMgr.configured')}</span>
                         </span>
                       ) : (
                         <span className="px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-bold flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3 text-amber-600" />
-                          <span>{lang === 'ar' ? 'غير مكوّن' : 'Missing'}</span>
+                          <span>{t(lang, 'envMgr.missing')}</span>
                         </span>
                       )}
 
                       {item.isInjectedBySystem && (
                         <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
-                          {lang === 'ar' ? 'محقون تلقائياً بالسيرفر' : 'Cloud Injected'}
+                          {t(lang, 'envMgr.cloudInjected')}
                         </span>
                       )}
                     </div>
@@ -321,7 +306,7 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
                     rel="noreferrer"
                     className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 font-semibold shrink-0"
                   >
-                    <span>{lang === 'ar' ? 'مزود الخدمة' : 'Provider Docs'}</span>
+                    <span>{t(lang, 'envMgr.providerDocs')}</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
@@ -358,7 +343,7 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
                     ) : (
                       <Activity className="w-3.5 h-3.5 text-emerald-400" />
                     )}
-                    <span>{lang === 'ar' ? 'فحص الاتصال' : 'Test Connection'}</span>
+                    <span>{t(lang, 'envMgr.testConnectionBtn')}</span>
                   </button>
                 </div>
 
@@ -400,7 +385,7 @@ export default function EnvVariablesManager({ lang, onOpenWizard }: EnvVariables
           className="px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer shadow-lg shadow-indigo-600/20 hover:scale-[1.01]"
         >
           <ShieldCheck className="w-4 h-4" />
-          <span>{lang === 'ar' ? 'تأكيد وحفظ تهيئة متغيرات البيئة' : 'Save Environment Configuration'}</span>
+          <span>{t(lang, 'envMgr.saveBtn')}</span>
         </button>
       </div>
     </div>

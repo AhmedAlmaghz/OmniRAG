@@ -11,9 +11,10 @@ import SettingsView from '@/components/SettingsView';
 import AnalyticsCenter from '@/components/AnalyticsCenter';
 import AuthScreen from '@/components/AuthScreen';
 import LandingPage from '@/components/LandingPage';
-import { logOutUser, getSession } from '@/lib/auth/authClient';
+import { logOutUser, getSession, switchWorkspace } from '@/lib/auth/authClient';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { useUserPreferences } from '@/lib/preferences/userPreferences';
+import { t } from '@/lib/i18n';
 
 import { Layers } from 'lucide-react';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -23,15 +24,29 @@ type TabType = 'landing' | 'chat' | 'knowledge' | 'mcp' | 'analytics' | 'setting
 export default function MainApp() {
   const [tenantId, setTenantId] = useState('');
   const [currentTenantName, setCurrentTenantName] = useState<string>('');
-  const [lang, setLang] = useState<'ar' | 'en'>('ar');
-  const [activeTab, setActiveTab] = useState<TabType>('chat');
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   // Global appearance preferences (theme, fonts, density, math engine).
   // The store hydrates from localStorage on mount and applies the resolved
   // theme class + data attributes to <html> automatically.
-  const { update: updatePreferences, resolvedTheme } = useUserPreferences();
+  const { preferences, update: updatePreferences, resolvedTheme } = useUserPreferences();
+
+  // UI language (Phase 7 i18n) — persisted in the user preferences store so
+  // the choice survives reloads. Hydration may load the saved value after
+  // mount, so the local state follows the store.
+  const [lang, setLangState] = useState<'ar' | 'en'>(preferences.language);
+  useEffect(() => {
+    setLangState(preferences.language);
+  }, [preferences.language]);
+  const setLang = (next: 'ar' | 'en') => {
+    setLangState(next);
+    updatePreferences({ language: next });
+  };
+  const [activeTab, setActiveTab] = useState<TabType>('chat');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  // Phase 5 multi-tenancy: the workspaces this user belongs to + current role.
+  const [workspaces, setWorkspaces] = useState<import('@/lib/auth/authClient').WorkspaceRef[]>([]);
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
 
   // Load session, active tab, and first launch onboarding check from localStorage
   useEffect(() => {
@@ -124,24 +139,31 @@ export default function MainApp() {
     async function fetchTenantName() {
       if (!tenantId) return;
 
+      // Prefer the real workspace name from the memberships list (Phase 5).
+      const ws = workspaces.find((w) => w.tenantId === tenantId);
+      if (ws?.name) {
+        setCurrentTenantName(ws.name);
+        return;
+      }
+
       if (tenantId === 'tenant-acme-01') {
-        setCurrentTenantName(lang === 'ar' ? 'شركة أكمي العالمية (ACME Corp)' : 'ACME Corp');
+        setCurrentTenantName(t(lang, 'mainApp.tenantAcme'));
         return;
       }
       if (tenantId === 'tenant-health-02') {
-        setCurrentTenantName(lang === 'ar' ? 'مجموعة الرعاية الصحية العالمية (BioHealth)' : 'BioHealth Group');
+        setCurrentTenantName(t(lang, 'mainApp.tenantBioHealth'));
         return;
       }
 
       if (userEmail) {
-        setCurrentTenantName(lang === 'ar' ? `مساحة عمل ${userEmail}` : `Workspace ${userEmail}`);
+        setCurrentTenantName(t(lang, 'mainApp.workspaceOf', { email: userEmail }));
       } else {
-        setCurrentTenantName(lang === 'ar' ? 'مساحة عمل مخصصة' : 'Custom Workspace');
+        setCurrentTenantName(t(lang, 'mainApp.customWorkspace'));
       }
     }
 
     fetchTenantName();
-  }, [tenantId, userEmail, lang]);
+  }, [tenantId, userEmail, lang, workspaces]);
 
   // Rehydrate auth state from the server-side session (Postgres-only, cookie-based).
   // The httpOnly cookie is opaque, so identity can only be recovered via the
@@ -156,6 +178,8 @@ export default function MainApp() {
         setIsAuthenticated(true);
         setTenantId(session.tenantId);
         setUserEmail(session.userEmail);
+        setWorkspaces(session.workspaces);
+        setCurrentRole(session.role);
         if (typeof window !== 'undefined') {
           localStorage.setItem('omnirag-auth', 'true');
           localStorage.setItem('omnirag-user-email', session.userEmail);
@@ -183,6 +207,8 @@ export default function MainApp() {
       setIsAuthenticated(false);
       setUserEmail(null);
       setTenantId('');
+      setWorkspaces([]);
+      setCurrentRole(null);
       setActiveTab('landing');
       if (typeof window !== 'undefined') {
         localStorage.removeItem('omnirag-auth');
@@ -190,6 +216,26 @@ export default function MainApp() {
         localStorage.removeItem('omnirag-user-email');
         localStorage.setItem('omnirag-active-tab', 'landing');
       }
+    }
+  };
+
+  // Phase 5: switch the active workspace. The server rotates the session cookie
+  // to the target tenant; we then re-read the session to refresh identity and
+  // the workspace list (roles/isCurrent flags) consistently.
+  const handleTenantChange = async (targetTenantId: string) => {
+    if (!targetTenantId || targetTenantId === tenantId) return;
+    try {
+      await switchWorkspace(targetTenantId);
+      const session = await getSession();
+      if (session.authenticated) {
+        setTenantId(session.tenantId);
+        setWorkspaces(session.workspaces);
+        setCurrentRole(session.role);
+      } else {
+        setTenantId(targetTenantId);
+      }
+    } catch (e) {
+      console.error('Workspace switch error:', e);
     }
   };
 
@@ -277,7 +323,7 @@ export default function MainApp() {
         {/* Top Main Navigation Header with integrated links */}
         <Header
           currentTenantId={tenantId}
-          onTenantChange={setTenantId}
+          onTenantChange={handleTenantChange}
           lang={lang}
           onLangChange={setLang}
           onNavigateTab={handleTabChange}
@@ -287,6 +333,7 @@ export default function MainApp() {
           activeTab={activeTab}
           theme={resolvedTheme}
           onThemeChange={handleThemeChange}
+          workspaces={workspaces}
         />
 
         {/* Workspace Active Tab View Content

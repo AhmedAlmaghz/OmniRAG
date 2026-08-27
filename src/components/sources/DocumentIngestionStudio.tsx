@@ -6,6 +6,7 @@ import { Collection } from '@/lib/types/omnirag';
 import { getIngestionSettings } from '@/lib/config/ingestionSettings';
 import { useDocumentCache } from '@/hooks/useDocumentCache';
 import { validateUploadedFile, validateYoutubeUrl, validateWebFileUrl } from './documentIngestionHelpers';
+import { t } from '@/lib/i18n';
 import {
   Upload,
   FileText,
@@ -36,10 +37,8 @@ import {
 
 interface IngestionProgressStep {
   id: string;
-  nameAr: string;
-  nameEn: string;
-  descAr: string;
-  descEn: string;
+  nameKey: string;
+  descKey: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   progress: number;
   durationMs: number;
@@ -48,50 +47,40 @@ interface IngestionProgressStep {
 const INITIAL_STEPS: IngestionProgressStep[] = [
   {
     id: 'read',
-    nameAr: 'تحميل وقراءة الملف',
-    nameEn: 'File Ingest & Parsing',
-    descAr: 'قراءة محتويات الملف وفك تشفير البايتات وتهيئة الذاكرة',
-    descEn: 'Opening file, extracting raw stream, and validating metadata.',
+    nameKey: 'ingest.stepReadName',
+    descKey: 'ingest.stepReadDesc',
     status: 'pending',
     progress: 0,
     durationMs: 1200,
   },
   {
     id: 'parse',
-    nameAr: 'تحليل البنية والتنسيق الدلالي',
-    nameEn: 'Layout & AST Analysis',
-    descAr: 'استخلاص الجداول والهياكل والترويسات وتصفية النصوص',
-    descEn: 'Analyzing markdown headers, layouts, tables, or AST tokens.',
+    nameKey: 'ingest.stepParseName',
+    descKey: 'ingest.stepParseDesc',
     status: 'pending',
     progress: 0,
     durationMs: 1600,
   },
   {
     id: 'chunk',
-    nameAr: 'تقسيم المقاطع وتطبيق النوافذ المتداخلة',
-    nameEn: 'Sliding Window Chunking',
-    descAr: 'تقطيع دلالي دقيق مع تداخل الحدود لمنع ضياع السياق المعرفي',
-    descEn: 'Creating logical paragraphs with exact sliding token boundaries.',
+    nameKey: 'ingest.stepChunkName',
+    descKey: 'ingest.stepChunkDesc',
     status: 'pending',
     progress: 0,
     durationMs: 1800,
   },
   {
     id: 'embed',
-    nameAr: 'توليد المتجهات الدلالية عبر نموذج Gemini',
-    nameEn: 'Semantic Embedding Generation',
-    descAr: 'استدعاء نموذج text-embedding-004 لبناء مصفوفات 768-Dim',
-    descEn: 'Calling text-embedding-004 model to generate 768-dim vectors.',
+    nameKey: 'ingest.stepEmbedName',
+    descKey: 'ingest.stepEmbedDesc',
     status: 'pending',
     progress: 0,
     durationMs: 2200,
   },
   {
     id: 'index',
-    nameAr: 'فهرسة وتخزين المتجهات في Qdrant',
-    nameEn: 'Multi-Tenant Qdrant Indexing',
-    descAr: 'تخزين المقاطع في مستودع المتجهات المعزول الخاص بك مع تشفير المسافات الدلالية',
-    descEn: 'Upserting vectors into isolated index partitions in Qdrant DB.',
+    nameKey: 'ingest.stepIndexName',
+    descKey: 'ingest.stepIndexDesc',
     status: 'pending',
     progress: 0,
     durationMs: 1200,
@@ -124,40 +113,30 @@ const WEB_ENGINE_API_VALUES: Record<WebFetchEngineChoice, 'auto' | 'mistral' | '
 
 const WEB_ENGINE_OPTIONS: Array<{
   id: WebFetchEngineChoice;
-  labelAr: string;
-  labelEn: string;
-  descAr: string;
-  descEn: string;
+  labelKey: string;
+  descKey: string;
   badge?: string;
 }> = [
   {
     id: 'auto',
-    labelAr: 'تلقائي (الأفضل)',
-    labelEn: 'Auto (Best Fit)',
-    descAr: 'يختار التطبيق المحرك الأنسب تلقائياً حسب نوع الملف والمفاتيح المتاحة',
-    descEn: 'The app picks the best engine per file type and available keys',
+    labelKey: 'ingest.engineAutoLabel',
+    descKey: 'ingest.engineAutoDesc',
     badge: 'SMART',
   },
   {
     id: 'mistral_ocr',
-    labelAr: 'Mistral Document AI',
-    labelEn: 'Mistral Document AI',
-    descAr: 'تعرف ضوئي بصري دقيق يحافظ على التخطيط والجداول والمعادلات',
-    descEn: 'High-precision visual OCR preserving layout, tables & formulas',
+    labelKey: 'ingest.engineMistralLabel',
+    descKey: 'ingest.engineMistralDesc',
   },
   {
     id: 'unstructured_mcp',
-    labelAr: 'MCP Transform (Unstructured)',
-    labelEn: 'MCP Transform (Unstructured)',
-    descAr: 'منصة Unstructured Transform لتفكيك البنية المعقدة للمستندات والعناصر',
-    descEn: 'Unstructured Transform platform for complex document layouts & elements',
+    labelKey: 'ingest.engineUnstructuredLabel',
+    descKey: 'ingest.engineUnstructuredDesc',
   },
   {
     id: 'local',
-    labelAr: 'المكتبة المحلية (دون اتصال)',
-    labelEn: 'Local Libraries (Offline)',
-    descAr: 'pdf-parse وmammoth وPPTX XML وTesseract — بدون أي مفاتيح API أو نداءات سحابية',
-    descEn: 'pdf-parse, mammoth, PPTX XML & Tesseract — zero API keys or cloud calls',
+    labelKey: 'ingest.engineLocalLabel',
+    descKey: 'ingest.engineLocalDesc',
     badge: 'FREE',
   },
 ];
@@ -328,11 +307,11 @@ export function DocumentIngestionStudio({
   // Extract YouTube Transcript Handler
   const handleExtractYoutubeTranscript = async () => {
     // Input validation step
-    const validation = validateYoutubeUrl(youtubeUrl);
+    const validation = validateYoutubeUrl(youtubeUrl, lang);
     if (!validation.isValid) {
       setStatusMessage({
         type: 'error',
-        text: lang === 'ar' ? validation.errorAr! : validation.errorEn!,
+        text: validation.error!,
       });
       return;
     }
@@ -349,7 +328,7 @@ export function DocumentIngestionStudio({
 
       const data = await res.json();
       if (res.ok && data.success && data.transcript) {
-        setDocTitle(data.title || `تفريغ فيديو: ${data.videoId}`);
+        setDocTitle(data.title || t(lang, 'ingest.youtubeTranscriptTitle', { videoId: data.videoId }));
         setDocContent(data.transcript);
         setSelectedFileName(`youtube-${data.videoId}.txt`);
         setFileSizeStr(`${(data.transcript.length / 1024).toFixed(1)} KB`);
@@ -364,27 +343,19 @@ export function DocumentIngestionStudio({
 
         setStatusMessage({
           type: 'success',
-          text:
-            lang === 'ar'
-              ? `تم التحقق واستخراج تفريغ الفيديو بنجاح بواسطة [${data.extractionMethod || 'Whisper / AI'}] (${data.wordCount} كلمة)! جاهز للتقسيم والفهرسة.`
-              : `YouTube transcript extracted successfully via [${data.extractionMethod || 'Whisper / AI'}] (${data.wordCount} words)! Ready for chunking and vector indexing.`,
+          text: t(lang, 'ingest.youtubeSuccess', {
+            method: data.extractionMethod || 'Whisper / AI',
+            words: data.wordCount,
+          }),
         });
       } else {
-        throw new Error(
-          data.error ||
-            (lang === 'ar'
-              ? 'فشل استخراج تفريغ الفيديو أو أن الفيديو غير متاح'
-              : 'Failed to extract video transcript or video is inaccessible'),
-        );
+        throw new Error(data.error || t(lang, 'ingest.youtubeExtractFailed'));
       }
     } catch (err: any) {
       console.error('YouTube transcript error:', err);
       setStatusMessage({
         type: 'error',
-        text:
-          lang === 'ar'
-            ? `خطأ أثناء التحقق واستخراج التفريغ: ${err.message}`
-            : `Validation & extraction failed: ${err.message}`,
+        text: t(lang, 'ingest.youtubeError', { error: err.message }),
       });
     } finally {
       setIsExtractingYoutube(false);
@@ -394,11 +365,11 @@ export function DocumentIngestionStudio({
   // Fetch a file from a public URL, extract its text via the chosen engine,
   // and drop the result into the shared editor ready for chunking/indexing.
   const handleFetchWebFile = async () => {
-    const validation = validateWebFileUrl(webFileUrl);
+    const validation = validateWebFileUrl(webFileUrl, lang);
     if (!validation.isValid) {
       setStatusMessage({
         type: 'error',
-        text: lang === 'ar' ? validation.errorAr! : validation.errorEn!,
+        text: validation.error!,
       });
       return;
     }
@@ -446,25 +417,19 @@ export function DocumentIngestionStudio({
 
         setStatusMessage({
           type: 'success',
-          text:
-            lang === 'ar'
-              ? `تم جلب الملف من الإنترنت واستخراج نصه بنجاح عبر [${data.engineUsed}] (${data.wordCount || 0} كلمة)! جاهز للتقسيم والفهرسة.`
-              : `File fetched from the web and extracted successfully via [${data.engineUsed}] (${data.wordCount || 0} words)! Ready for chunking and vector indexing.`,
+          text: t(lang, 'ingest.webFetchSuccess', {
+            engine: data.engineUsed,
+            words: data.wordCount || 0,
+          }),
         });
       } else {
-        throw new Error(
-          data.error ||
-            (lang === 'ar' ? 'فشل جلب الملف من الرابط أو معالجته' : 'Failed to fetch or process the file from the URL'),
-        );
+        throw new Error(data.error || t(lang, 'ingest.webFetchFailed'));
       }
     } catch (err: any) {
       console.error('Web file fetch error:', err);
       setStatusMessage({
         type: 'error',
-        text:
-          lang === 'ar'
-            ? `خطأ أثناء جلب الملف ومعالجته: ${err.message}`
-            : `Web file fetch & extraction failed: ${err.message}`,
+        text: t(lang, 'ingest.webFetchError', { error: err.message }),
       });
     } finally {
       unregisterInterval(ticker);
@@ -537,11 +502,11 @@ export function DocumentIngestionStudio({
     if (!file) return;
 
     // File validation step
-    const validation = validateUploadedFile(file);
+    const validation = validateUploadedFile(file, lang);
     if (!validation.isValid) {
       setStatusMessage({
         type: 'error',
-        text: lang === 'ar' ? validation.errorAr! : validation.errorEn!,
+        text: validation.error!,
       });
       return;
     }
@@ -576,11 +541,7 @@ export function DocumentIngestionStudio({
       setIsParsingFile(true);
       setParseProgress(10);
       setParseStage('hash');
-      setParseStageText(
-        lang === 'ar'
-          ? 'جاري توليد بصمة SHA-256 للتحقق من وجود معالجة سابقة بنفس الملف...'
-          : 'Computing SHA-256 hash & searching local OCR cache...',
-      );
+      setParseStageText(t(lang, 'ingest.stageHash'));
       setParseElapsedMs(0);
 
       const activeIngestionSettings = getIngestionSettings();
@@ -592,10 +553,10 @@ export function DocumentIngestionStudio({
         setIsParsingFile(false);
         setStatusMessage({
           type: 'error',
-          text:
-            lang === 'ar'
-              ? `حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)} MB) يتجاوز الحد الأقصى المسموح به في الإعدادات (${currentMaxFileSizeMb} MB). يمكنك زيادة الحد في شاشة الإعدادات.`
-              : `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds configured maximum size (${currentMaxFileSizeMb} MB). Increase limit in Settings.`,
+          text: t(lang, 'ingest.fileSizeExceeded', {
+            size: (file.size / (1024 * 1024)).toFixed(1),
+            limit: currentMaxFileSizeMb,
+          }),
         });
         return;
       }
@@ -624,9 +585,7 @@ export function DocumentIngestionStudio({
             unregisterInterval(progressInterval);
             setParseProgress(100);
             setParseStage('complete');
-            setParseStageText(
-              lang === 'ar' ? 'تم استرجاع النص من الذاكرة المؤقتة (0ms)' : 'Loaded from OCR cache (0ms)',
-            );
+            setParseStageText(t(lang, 'ingest.cacheLoaded'));
             setDocContent(cachedEntry.extractedText);
             setInputTab('text');
             setIsParsingFile(false);
@@ -634,10 +593,7 @@ export function DocumentIngestionStudio({
             const savedTokens = cachedEntry.savedTokensEstimate || Math.round(cachedEntry.extractedText.length / 4);
             setStatusMessage({
               type: 'success',
-              text:
-                lang === 'ar'
-                  ? `⚡ [Mistral OCR Cache Hit] تم تحميل نص المستند المعالج سابقاً فوراً (0ms). تم توفير طلب الـ API ونحو ${savedTokens.toLocaleString()} رمز.`
-                  : `⚡ [Mistral OCR Cache Hit] Loaded processed document text instantly from cache (0ms). Saved API call & ~${savedTokens.toLocaleString()} tokens.`,
+              text: t(lang, 'ingest.cacheHitSuccess', { tokens: savedTokens.toLocaleString() }),
             });
             return;
           }
@@ -660,11 +616,7 @@ export function DocumentIngestionStudio({
           const DIRECT_UPLOAD_THRESHOLD = 3.5 * 1024 * 1024;
           if (file.size > DIRECT_UPLOAD_THRESHOLD) {
             setParseStage('upload');
-            setParseStageText(
-              lang === 'ar'
-                ? `جاري رفع الملف الكبير (${(file.size / (1024 * 1024)).toFixed(2)} MB) إلى التخزين السحابي الآمن...`
-                : `Uploading large file (${(file.size / (1024 * 1024)).toFixed(2)} MB) to secure cloud storage...`,
-            );
+            setParseStageText(t(lang, 'ingest.largeFileUpload', { size: (file.size / (1024 * 1024)).toFixed(2) }));
 
             try {
               const sessionRes = await fetchWithAuth('/api/v1/documents/upload-session', {
@@ -694,11 +646,7 @@ export function DocumentIngestionStudio({
 
                   setParseProgress(55);
                   setParseStage('ocr');
-                  setParseStageText(
-                    lang === 'ar'
-                      ? 'جاري معالجة المستند من التخزين السحابي عبر محرك الذكاء الاصطناعي...'
-                      : 'Processing document from cloud storage via AI pipeline...',
-                  );
+                  setParseStageText(t(lang, 'ingest.cloudProcessing'));
 
                   res = await fetchWithAuth('/api/v1/documents/parse', {
                     method: 'POST',
@@ -736,11 +684,7 @@ export function DocumentIngestionStudio({
                   if (blobResult?.url) {
                     setParseProgress(55);
                     setParseStage('ocr');
-                    setParseStageText(
-                      lang === 'ar'
-                        ? 'جاري معالجة المستند من التخزين السحابي عبر محرك الذكاء الاصطناعي...'
-                        : 'Processing document from cloud storage via AI pipeline...',
-                    );
+                    setParseStageText(t(lang, 'ingest.cloudProcessing'));
 
                     res = await fetchWithAuth('/api/v1/documents/parse', {
                       method: 'POST',
@@ -772,11 +716,7 @@ export function DocumentIngestionStudio({
 
           if (!res && isPdf && file.size > 4 * 1024 * 1024) {
             // Client-side PDF Slicing using pdf-lib!
-            setParseStageText(
-              lang === 'ar'
-                ? 'جاري تجزئة ملف الـ PDF الكبير على المتصفح لتفادي الأخطاء وتسهيل المعالجة السريعة...'
-                : 'Slicing large PDF file on client to prevent errors & optimize speed...',
-            );
+            setParseStageText(t(lang, 'ingest.pdfSlicing'));
 
             try {
               const { PDFDocument } = await import('pdf-lib');
@@ -801,9 +741,7 @@ export function DocumentIngestionStudio({
 
                   setParseProgress(Math.min(35 + Math.floor((chunkIdx / totalChunks) * 55), 90));
                   setParseStageText(
-                    lang === 'ar'
-                      ? `جاري معالجة الجزء ${chunkIdx} من ${totalChunks} (الصفحات ${i + 1} - ${end})...`
-                      : `Processing chunk ${chunkIdx} of ${totalChunks} (Pages ${i + 1} - ${end})...`,
+                    t(lang, 'ingest.sliceProgress', { idx: chunkIdx, total: totalChunks, start: i + 1, end }),
                   );
 
                   const subDoc = await PDFDocument.create();
@@ -895,11 +833,7 @@ export function DocumentIngestionStudio({
             // Fallback/Direct Upload Stage
             setParseProgress(35);
             setParseStage('upload');
-            setParseStageText(
-              lang === 'ar'
-                ? `جاري رفع المستند (${(file.size / (1024 * 1024)).toFixed(2)} MB) إلى السيرفر...`
-                : `Uploading document (${(file.size / (1024 * 1024)).toFixed(2)} MB)...`,
-            );
+            setParseStageText(t(lang, 'ingest.uploadingDoc', { size: (file.size / (1024 * 1024)).toFixed(2) }));
 
             const formData = new FormData();
             formData.append('file', file);
@@ -926,17 +860,11 @@ export function DocumentIngestionStudio({
               /\.(mp3|wav|m4a|flac|mp4|mov|webm)$/i.test(file.name);
 
             setParseStageText(
-              lang === 'ar'
-                ? isWord
-                  ? 'جاري استخراج وتنسيق محتوى ملف الوورد (DOCX) بأعلى دقة وترميز UTF-8 سليم...'
-                  : isAudioOrVideo
-                    ? 'جاري التفريغ الصوتي ومعالجة الوسائط عبر محرك Whisper...'
-                    : `جاري معالجة المستند عبر محرك الذكاء الاصطناعي (تقطيع على دفعات من ${currentPagesPerChunk} صفحة)...`
-                : isWord
-                  ? 'Parsing & formatting Word document (DOCX) with clean UTF-8 Arabic encoding...'
-                  : isAudioOrVideo
-                    ? 'Transcribing audio/video stream via Whisper engine...'
-                    : `Running AI Document Pipeline (batched in ${currentPagesPerChunk}-page chunks)...`,
+              isWord
+                ? t(lang, 'ingest.stageWord')
+                : isAudioOrVideo
+                  ? t(lang, 'ingest.stageMedia')
+                  : t(lang, 'ingest.stageAiPipeline', { pages: currentPagesPerChunk }),
             );
 
             res = await fetchWithAuth('/api/v1/documents/parse', {
@@ -987,11 +915,7 @@ export function DocumentIngestionStudio({
             if (data.text && data.text.trim().length > 0) {
               setParseProgress(90);
               setParseStage('chunk');
-              setParseStageText(
-                lang === 'ar'
-                  ? 'جاري تنسيق وسحب النصوص المحللة وتخزينها بالذاكرة المؤقتة...'
-                  : 'Formatting markdown & saving OCR cache...',
-              );
+              setParseStageText(t(lang, 'ingest.formattingCache'));
 
               setDocContent(data.text);
               setInputTab('text');
@@ -1017,18 +941,15 @@ export function DocumentIngestionStudio({
 
               setStatusMessage({
                 type: 'success',
-                text:
-                  lang === 'ar'
-                    ? `تم استخراج وتنسيق النصوص بنجاح (${data.totalPages || 1} صفحة، ${data.chunksProcessed || 1} دفعة مجزأة) وتم حفظها بالذاكرة المؤقتة لـ OCR!`
-                    : `Text extracted successfully (${data.totalPages || 1} pages, ${data.chunksProcessed || 1} sliced batches) & cached for future OCR!`,
+                text: t(lang, 'ingest.extractSuccess', {
+                  pages: data.totalPages || 1,
+                  batches: data.chunksProcessed || 1,
+                }),
               });
             } else {
               setStatusMessage({
                 type: 'error',
-                text:
-                  lang === 'ar'
-                    ? 'لم يتم استخراج أي نص من الملف. يرجى التأكد من أن الملف غير فارغ ويحتوي على نصوص قابلة للقراءة.'
-                    : 'No text could be extracted. Please ensure the file is not empty and contains readable text.',
+                text: t(lang, 'ingest.noTextExtracted'),
               });
             }
           } else {
@@ -1047,7 +968,7 @@ export function DocumentIngestionStudio({
             }
             setStatusMessage({
               type: 'error',
-              text: lang === 'ar' ? `فشل استخراج النص: ${errorMsg}` : `Extraction failed: ${errorMsg}`,
+              text: t(lang, 'ingest.extractionFailed', { error: errorMsg }),
             });
           }
         } catch (error: any) {
@@ -1055,7 +976,7 @@ export function DocumentIngestionStudio({
           console.error('Error parsing file:', error);
           setStatusMessage({
             type: 'error',
-            text: lang === 'ar' ? `فشل استخراج النص: ${error.message}` : `Extraction failed: ${error.message}`,
+            text: t(lang, 'ingest.extractionFailed', { error: error.message }),
           });
         } finally {
           unregisterInterval(progressInterval);
@@ -1123,30 +1044,24 @@ export function DocumentIngestionStudio({
     if (!docTitle.trim()) {
       setStatusMessage({
         type: 'error',
-        text:
-          lang === 'ar'
-            ? 'عنوان المستند مطلوب قبل البدء برفع وفهرسة البيانات.'
-            : 'Document title is required before starting ingestion.',
+        text: t(lang, 'ingest.titleRequired'),
       });
       return;
     }
 
     if (!docContent.trim() || docContent.trim().length < 10) {
       if (inputTab === 'youtube') {
-        const ytValidation = validateYoutubeUrl(youtubeUrl);
+        const ytValidation = validateYoutubeUrl(youtubeUrl, lang);
         if (!ytValidation.isValid) {
           setStatusMessage({
             type: 'error',
-            text: lang === 'ar' ? ytValidation.errorAr! : ytValidation.errorEn!,
+            text: ytValidation.error!,
           });
           return;
         } else {
           setStatusMessage({
             type: 'error',
-            text:
-              lang === 'ar'
-                ? 'يرجى النقر على زر "استخراج التفريغ" لجلب نص الفيديو قبل المتابعة.'
-                : 'Please click "Extract Transcript" to retrieve video text before proceeding.',
+            text: t(lang, 'ingest.extractTranscriptFirst'),
           });
           return;
         }
@@ -1154,10 +1069,7 @@ export function DocumentIngestionStudio({
 
       setStatusMessage({
         type: 'error',
-        text:
-          lang === 'ar'
-            ? 'محتوى المستند فارغ أو قصير جداً (أقل من 10 أحرف). يرجى تقديم محتوى نصي صالح للفهرسة.'
-            : 'Document content is empty or too short (less than 10 characters). Please provide valid text content for indexing.',
+        text: t(lang, 'ingest.contentTooShort'),
       });
       return;
     }
@@ -1305,7 +1217,7 @@ export function DocumentIngestionStudio({
           data.source?.id ||
           data.document?.metadata?.sourceId ||
           `src-${determinedSourceType}-${Date.now().toString().slice(-6)}`;
-        const createdSourceName = data.source?.name || docTitle || 'المستند المرفوع';
+        const createdSourceName = data.source?.name || docTitle || t(lang, 'ingest.uploadedDocFallback');
         const createdChunkCount = data.document?.chunkCount || generatedChunks.length || 1;
 
         setCompletionData({
@@ -1316,22 +1228,15 @@ export function DocumentIngestionStudio({
           sourceType: determinedSourceType,
         });
 
+        const indexingErrors = data?.indexing?.errors as string[] | undefined;
+        const errorsText =
+          indexingErrors && indexingErrors.length > 0
+            ? indexingErrors.join(lang === 'ar' ? '؛ ' : '; ')
+            : t(lang, 'ingest.unknownError');
         setStatusMessage(
           indexingFailed
-            ? {
-                type: 'error',
-                text:
-                  lang === 'ar'
-                    ? `تم حفظ المستند لكن الفهرسة المتجهية فشلت: ${data?.indexing?.errors?.join('؛ ') || 'خطأ غير معروف'} — يمكنك إعادة الفهرسة من بطاقة المستند`
-                    : `Document saved but vector indexing failed: ${data?.indexing?.errors?.join('; ') || 'unknown error'} — you can reindex from the document card`,
-              }
-            : {
-                type: 'success',
-                text:
-                  lang === 'ar'
-                    ? `تم حفظ الموصل واستيعاب المستند بنجاح! (${createdChunkCount} مقطع دلالي مفهرس)`
-                    : 'Document and source connector saved successfully!',
-              },
+            ? { type: 'error', text: t(lang, 'ingest.indexingFailed', { errors: errorsText }) }
+            : { type: 'success', text: t(lang, 'ingest.ingestSuccess', { chunks: createdChunkCount }) },
         );
 
         onIngestionCompleted(createdSourceId);
@@ -1375,41 +1280,33 @@ export function DocumentIngestionStudio({
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-sm font-extrabold text-emerald-950">
-                  {lang === 'ar'
-                    ? 'تم حفظ موصل البيانات وفهرسة المتجهات بنجاح!'
-                    : 'Source Connector Saved & Vectors Indexed!'}
-                </h3>
-                <p className="text-xs text-emerald-700 mt-0.5">
-                  {lang === 'ar'
-                    ? 'تم تسجيل المصدر في قاعدة البيانات وتجزئة المحتوى وتخزين المتجهات بنجاح.'
-                    : 'The source connector has been saved to the database, chunked, and indexed.'}
-                </p>
+                <h3 className="text-sm font-extrabold text-emerald-950">{t(lang, 'ingest.completionTitle')}</h3>
+                <p className="text-xs text-emerald-700 mt-0.5">{t(lang, 'ingest.completionDesc')}</p>
               </div>
             </div>
             <span className="text-[9px] font-mono font-bold bg-emerald-200 text-emerald-900 px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-              {lang === 'ar' ? 'محفوظ وفاعل' : 'SAVED & ACTIVE'}
+              {t(lang, 'ingest.savedActiveBadge')}
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white/90 p-3 rounded-2xl border border-emerald-100 text-xs">
             <div>
               <span className="text-[10px] text-slate-400 font-bold uppercase block">
-                {lang === 'ar' ? 'اسم المصدر' : 'Source Name'}
+                {t(lang, 'ingest.sourceNameLabel')}
               </span>
               <span className="font-bold text-slate-800 line-clamp-1">{completionData.sourceName}</span>
             </div>
             <div>
               <span className="text-[10px] text-slate-400 font-bold uppercase block">
-                {lang === 'ar' ? 'عدد المقاطع' : 'Indexed Chunks'}
+                {t(lang, 'ingest.indexedChunksLabel')}
               </span>
               <span className="font-bold text-indigo-600">
-                {completionData.chunkCount} {lang === 'ar' ? 'مقطع دلالي' : 'chunks'}
+                {t(lang, 'ingest.chunkCountLabel', { count: completionData.chunkCount })}
               </span>
             </div>
             <div>
               <span className="text-[10px] text-slate-400 font-bold uppercase block">
-                {lang === 'ar' ? 'معرّف الموصل' : 'Source ID'}
+                {t(lang, 'ingest.sourceIdLabel')}
               </span>
               <span className="font-mono text-slate-600 text-[11px]">{completionData.sourceId}</span>
             </div>
@@ -1422,7 +1319,7 @@ export function DocumentIngestionStudio({
               className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
             >
               <Database className="w-3.5 h-3.5" />
-              <span>{lang === 'ar' ? 'عرض المصدر في الموصلات' : 'View in Connectors'}</span>
+              <span>{t(lang, 'ingest.viewInConnectors')}</span>
             </button>
             <button
               type="button"
@@ -1430,7 +1327,7 @@ export function DocumentIngestionStudio({
               className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
             >
               <Layers className="w-3.5 h-3.5 text-indigo-600" />
-              <span>{lang === 'ar' ? 'استعراض مقاطع Qdrant' : 'Inspect Qdrant Vectors'}</span>
+              <span>{t(lang, 'ingest.inspectQdrant')}</span>
             </button>
             <button
               type="button"
@@ -1450,7 +1347,7 @@ export function DocumentIngestionStudio({
               className="px-3.5 py-2 bg-emerald-100 text-emerald-900 hover:bg-emerald-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-emerald-200"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>{lang === 'ar' ? 'استيعاب مصدر جديد' : 'Ingest Another Source'}</span>
+              <span>{t(lang, 'ingest.ingestAnother')}</span>
             </button>
           </div>
         </div>
@@ -1461,17 +1358,9 @@ export function DocumentIngestionStudio({
         <div>
           <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
             <Upload className="w-5 h-5 text-indigo-600" />
-            <span>
-              {lang === 'ar'
-                ? 'استوديو رفع وتجزئة المستندات المتقدم (Document Ingestion Studio)'
-                : 'Document Ingestion Studio'}
-            </span>
+            <span>{t(lang, 'ingest.studioTitle')}</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            {lang === 'ar'
-              ? 'رفع ملفات PDF، Word، Markdown، وشفرات البرمجة مع المعاينة المباشرة لتجزئة المقاطع الدلالية'
-              : 'Drag & drop real PDF, DOCX, TXT, MD, & code files with live chunking visualization'}
-          </p>
+          <p className="text-xs text-slate-500 mt-1">{t(lang, 'ingest.studioSubtitle')}</p>
         </div>
 
         {/* Input Method Selector Tabs */}
@@ -1484,7 +1373,7 @@ export function DocumentIngestionStudio({
             }`}
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>{lang === 'ar' ? 'رفع ملف' : 'Upload File'}</span>
+            <span>{t(lang, 'ingest.tabUpload')}</span>
           </button>
 
           <button
@@ -1495,7 +1384,7 @@ export function DocumentIngestionStudio({
             }`}
           >
             <MonitorPlay className="w-3.5 h-3.5 text-rose-600" />
-            <span>{lang === 'ar' ? 'فيديو يوتيوب' : 'YouTube Video'}</span>
+            <span>{t(lang, 'ingest.tabYoutube')}</span>
           </button>
 
           <button
@@ -1506,7 +1395,7 @@ export function DocumentIngestionStudio({
             }`}
           >
             <Globe className="w-3.5 h-3.5 text-sky-600" />
-            <span>{lang === 'ar' ? 'جلب من الإنترنت' : 'Web File Fetch'}</span>
+            <span>{t(lang, 'ingest.tabWeb')}</span>
           </button>
 
           <button
@@ -1517,7 +1406,7 @@ export function DocumentIngestionStudio({
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
-            <span>{lang === 'ar' ? 'محرر النص' : 'Text Editor'}</span>
+            <span>{t(lang, 'ingest.tabText')}</span>
           </button>
 
           <button
@@ -1528,7 +1417,7 @@ export function DocumentIngestionStudio({
             }`}
           >
             <Zap className="w-3.5 h-3.5 text-amber-500" />
-            <span>{lang === 'ar' ? 'نماذج جاهزة' : 'Sample Presets'}</span>
+            <span>{t(lang, 'ingest.tabSample')}</span>
           </button>
         </div>
       </div>
@@ -1549,14 +1438,13 @@ export function DocumentIngestionStudio({
                   </div>
                   <div>
                     <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
-                      <span>{lang === 'ar' ? 'جاري رفع وتحليل المستند' : 'Uploading & Parsing Document'}</span>
+                      <span>{t(lang, 'ingest.uploadingParsing')}</span>
                       <span className="text-[10px] bg-indigo-500/30 text-indigo-300 px-2 py-0.5 rounded-full font-mono font-bold border border-indigo-400/30">
                         {selectedFileName || 'Document'}
                       </span>
                     </h3>
                     <p className="text-xs text-slate-400 mt-0.5 font-mono">
-                      {parseStageText ||
-                        (lang === 'ar' ? 'جاري تنفيذ المعالجة الدلالية...' : 'Executing semantic processing...')}
+                      {parseStageText || t(lang, 'ingest.semanticProcessing')}
                     </p>
                   </div>
                 </div>
@@ -1568,7 +1456,7 @@ export function DocumentIngestionStudio({
                     <span>⏱️ {(parseElapsedMs / 1000).toFixed(1)}s</span>
                   </span>
                   <span className="bg-indigo-950 text-indigo-300 px-2.5 py-1 rounded-xl border border-indigo-800 text-[11px] font-bold">
-                    {getIngestionSettings().pagesPerChunk} {lang === 'ar' ? 'صفحة/دفعة' : 'pages/chunk'}
+                    {t(lang, 'ingest.pagesPerChunkBadge', { pages: getIngestionSettings().pagesPerChunk })}
                   </span>
                 </div>
               </div>
@@ -1579,25 +1467,16 @@ export function DocumentIngestionStudio({
                   <span className="text-indigo-300 flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
                     <span>
-                      {parseStage === 'hash'
-                        ? lang === 'ar'
-                          ? '1. فحص الكاش SHA-256'
-                          : '1. SHA-256 Cache Check'
-                        : parseStage === 'upload'
-                          ? lang === 'ar'
-                            ? '2. رفع البيانات للسيرفر'
-                            : '2. File Uploading'
-                          : parseStage === 'ocr'
-                            ? lang === 'ar'
-                              ? '3. معالجة OCR بالتعديد'
-                              : '3. Mistral OCR Batching'
-                            : parseStage === 'chunk'
-                              ? lang === 'ar'
-                                ? '4. تنسيق وهيكلة Markdown'
-                                : '4. Markdown Formatting'
-                              : lang === 'ar'
-                                ? '5. اكتملت المعالجة'
-                                : '5. Processing Complete'}
+                      {t(
+                        lang,
+                        {
+                          hash: 'ingest.stageHashLabel',
+                          upload: 'ingest.stageUploadLabel',
+                          ocr: 'ingest.stageOcrLabel',
+                          chunk: 'ingest.stageChunkLabel',
+                          complete: 'ingest.stageCompleteLabel',
+                        }[parseStage],
+                      )}
                     </span>
                   </span>
                   <span className="text-amber-400 font-extrabold text-sm">{parseProgress}%</span>
@@ -1619,7 +1498,7 @@ export function DocumentIngestionStudio({
                   <CheckCircle2
                     className={`w-3.5 h-3.5 ${parseProgress >= 10 ? 'text-emerald-400' : 'text-slate-600'}`}
                   />
-                  <span className="truncate">{lang === 'ar' ? 'فحص الكاش' : 'Cache Check'}</span>
+                  <span className="truncate">{t(lang, 'ingest.stepCacheCheck')}</span>
                 </div>
 
                 <div
@@ -1628,7 +1507,7 @@ export function DocumentIngestionStudio({
                   <CheckCircle2
                     className={`w-3.5 h-3.5 ${parseProgress >= 35 ? 'text-emerald-400' : 'text-slate-600'}`}
                   />
-                  <span className="truncate">{lang === 'ar' ? 'رفع المستند' : 'File Upload'}</span>
+                  <span className="truncate">{t(lang, 'ingest.stepFileUpload')}</span>
                 </div>
 
                 <div
@@ -1637,7 +1516,7 @@ export function DocumentIngestionStudio({
                   <CheckCircle2
                     className={`w-3.5 h-3.5 ${parseProgress >= 55 ? 'text-emerald-400' : 'text-slate-600'}`}
                   />
-                  <span className="truncate">{lang === 'ar' ? 'استخراج OCR' : 'Mistral OCR'}</span>
+                  <span className="truncate">{t(lang, 'ingest.stepMistralOcr')}</span>
                 </div>
 
                 <div
@@ -1646,7 +1525,7 @@ export function DocumentIngestionStudio({
                   <CheckCircle2
                     className={`w-3.5 h-3.5 ${parseProgress >= 90 ? 'text-emerald-400' : 'text-slate-600'}`}
                   />
-                  <span className="truncate">{lang === 'ar' ? 'حفظ الكاش' : 'Cache Store'}</span>
+                  <span className="truncate">{t(lang, 'ingest.stepCacheStore')}</span>
                 </div>
               </div>
             </div>
@@ -1676,15 +1555,9 @@ export function DocumentIngestionStudio({
                 <Upload className="w-7 h-7" />
               </div>
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900">
-                  {lang === 'ar'
-                    ? 'اسحب واسقط الملف هنا أو انقر للاستعراض'
-                    : 'Drag & drop file here or click to browse'}
-                </h3>
+                <h3 className="text-sm font-extrabold text-slate-900">{t(lang, 'ingest.dropzoneTitle')}</h3>
                 <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                  {lang === 'ar'
-                    ? `يدعم مستندات PDF/Office، جداول وعروض PPTX/XLSX، الصور، الأصوات، والفيديو حتى ${getIngestionSettings().maxFileSizeMb}MB`
-                    : `Supports PDF, Office, PPTX, XLSX, Images, Audio, Video up to ${getIngestionSettings().maxFileSizeMb} MB`}
+                  {t(lang, 'ingest.dropzoneSupported', { limit: getIngestionSettings().maxFileSizeMb })}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-1.5 text-[10px] font-mono font-bold text-slate-400 pt-2 max-w-lg">
@@ -1692,9 +1565,15 @@ export function DocumentIngestionStudio({
                 <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.DOCX</span>
                 <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.PPTX</span>
                 <span className="bg-white px-2 py-0.5 rounded border border-slate-200">.XLSX</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">الصور</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">الأصوات</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">الفيديو</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">
+                  {t(lang, 'ingest.formatImages')}
+                </span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">
+                  {t(lang, 'ingest.formatAudio')}
+                </span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-200">
+                  {t(lang, 'ingest.formatVideo')}
+                </span>
               </div>
             </div>
           ))}
@@ -1707,16 +1586,8 @@ export function DocumentIngestionStudio({
                 <MonitorPlay className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900">
-                  {lang === 'ar'
-                    ? 'استخراج تفريغ فيديو يوتيوب (YouTube Video Transcript)'
-                    : 'YouTube Video Transcript Extractor'}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  {lang === 'ar'
-                    ? 'أدخل رابط أي فيديو يوتيوب لاستخراج النص كاملاً مع الطوابع الزمنية وتحويله لمتجهات دلالية'
-                    : 'Paste any YouTube video link to extract transcripts, timestamps, and index vector chunks'}
-                </p>
+                <h3 className="text-sm font-extrabold text-slate-900">{t(lang, 'ingest.ytTabTitle')}</h3>
+                <p className="text-xs text-slate-500">{t(lang, 'ingest.ytTabSubtitle')}</p>
               </div>
             </div>
 
@@ -1725,11 +1596,7 @@ export function DocumentIngestionStudio({
                 type="text"
                 value={youtubeUrl}
                 onChange={(e) => setYoutubeUrl(e.target.value)}
-                placeholder={
-                  lang === 'ar'
-                    ? 'ضع رابط فيديو يوتيوب هنا، مثلاً: https://www.youtube.com/watch?v=...'
-                    : 'Paste YouTube video URL e.g. https://www.youtube.com/watch?v=...'
-                }
+                placeholder={t(lang, 'ingest.ytPlaceholder')}
                 className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:border-rose-500 text-xs bg-white text-slate-900"
               />
               <button
@@ -1741,12 +1608,12 @@ export function DocumentIngestionStudio({
                 {isExtractingYoutube ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>{lang === 'ar' ? 'جاري استخراج التفريغ...' : 'Extracting Transcript...'}</span>
+                    <span>{t(lang, 'ingest.extractingTranscript')}</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-rose-200" />
-                    <span>{lang === 'ar' ? 'استخراج وحفظ التفريغ' : 'Extract Transcript'}</span>
+                    <span>{t(lang, 'ingest.extractTranscriptBtn')}</span>
                   </>
                 )}
               </button>
@@ -1756,23 +1623,19 @@ export function DocumentIngestionStudio({
             {youtubeUrl.trim().length > 0 && (
               <div className="pt-1">
                 {(() => {
-                  const check = validateYoutubeUrl(youtubeUrl);
+                  const check = validateYoutubeUrl(youtubeUrl, lang);
                   if (check.isValid) {
                     return (
                       <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>
-                          {lang === 'ar'
-                            ? `رابط يوتيوب صحيح ومكتمل (معرّف الفيديو: ${check.videoId})`
-                            : `Valid YouTube URL structure (Video ID: ${check.videoId})`}
-                        </span>
+                        <span>{t(lang, 'ingest.ytUrlValid', { videoId: check.videoId! })}</span>
                       </div>
                     );
                   } else {
                     return (
                       <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
                         <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
-                        <span>{lang === 'ar' ? check.errorAr : check.errorEn}</span>
+                        <span>{check.error}</span>
                       </div>
                     );
                   }
@@ -1803,7 +1666,7 @@ export function DocumentIngestionStudio({
                   <h4 className="text-xs font-extrabold text-slate-900 truncate">{youtubeVideoMeta.title}</h4>
                   <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono">
                     <span>⏱ {youtubeVideoMeta.duration}</span>
-                    <span>📝 {youtubeVideoMeta.wordCount} كلمة</span>
+                    <span>📝 {t(lang, 'ingest.wordCount', { count: youtubeVideoMeta.wordCount })}</span>
                   </div>
                 </div>
               </div>
@@ -1819,14 +1682,8 @@ export function DocumentIngestionStudio({
                 <Globe className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-extrabold text-slate-900">
-                  {lang === 'ar' ? 'جلب ومعالجة ملف من الإنترنت (Web File Fetch)' : 'Fetch & Process File from the Web'}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  {lang === 'ar'
-                    ? 'ضع رابطاً مباشراً لملف (PDF، DOCX، PPTX، صورة…) وسيقوم التطبيق بجلبه واستخراج نصوصه عبر المحرك الذي تختاره'
-                    : 'Paste a direct file URL (PDF, DOCX, PPTX, image…) — the app downloads it and extracts text via your chosen engine'}
-                </p>
+                <h3 className="text-sm font-extrabold text-slate-900">{t(lang, 'ingest.webTabTitle')}</h3>
+                <p className="text-xs text-slate-500">{t(lang, 'ingest.webTabSubtitle')}</p>
               </div>
             </div>
 
@@ -1837,9 +1694,7 @@ export function DocumentIngestionStudio({
                 value={webFileUrl}
                 onChange={(e) => setWebFileUrl(e.target.value)}
                 disabled={isFetchingWeb}
-                placeholder={
-                  lang === 'ar' ? 'https://example.com/files/report.pdf' : 'https://example.com/files/report.pdf'
-                }
+                placeholder="https://example.com/files/report.pdf"
                 className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:border-sky-500 text-xs bg-white text-slate-900 font-mono"
               />
               <button
@@ -1851,16 +1706,12 @@ export function DocumentIngestionStudio({
                 {isFetchingWeb ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>
-                      {lang === 'ar'
-                        ? `جاري الجلب والمعالجة (${(webElapsedMs / 1000).toFixed(1)} ث)...`
-                        : `Fetching & Processing (${(webElapsedMs / 1000).toFixed(1)}s)...`}
-                    </span>
+                    <span>{t(lang, 'ingest.fetchingProcessing', { secs: (webElapsedMs / 1000).toFixed(1) })}</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-sky-200" />
-                    <span>{lang === 'ar' ? 'جلب الملف واستخراج النص' : 'Fetch File & Extract Text'}</span>
+                    <span>{t(lang, 'ingest.fetchFileBtn')}</span>
                   </>
                 )}
               </button>
@@ -1870,20 +1721,16 @@ export function DocumentIngestionStudio({
             {webFileUrl.trim().length > 0 && !isFetchingWeb && (
               <div className="pt-1">
                 {(() => {
-                  const check = validateWebFileUrl(webFileUrl);
+                  const check = validateWebFileUrl(webFileUrl, lang);
                   return check.isValid ? (
                     <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>
-                        {lang === 'ar'
-                          ? 'رابط صالح وجاهز للجلب الآمن (http/HTTPS عام)'
-                          : 'Valid public http(s) URL — ready for a safe fetch'}
-                      </span>
+                      <span>{t(lang, 'ingest.webUrlValid')}</span>
                     </div>
                   ) : (
                     <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-medium">
                       <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
-                      <span>{lang === 'ar' ? check.errorAr : check.errorEn}</span>
+                      <span>{check.error}</span>
                     </div>
                   );
                 })()}
@@ -1892,9 +1739,7 @@ export function DocumentIngestionStudio({
 
             {/* Extraction engine choice cards */}
             <div className="space-y-2 pt-1">
-              <label className="text-xs font-bold text-slate-700 block">
-                {lang === 'ar' ? 'محرك الاستخراج والمعالجة:' : 'Extraction & Processing Engine:'}
-              </label>
+              <label className="text-xs font-bold text-slate-700 block">{t(lang, 'ingest.webEngineLabel')}</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                 {WEB_ENGINE_OPTIONS.map((engineOpt) => {
                   const isActive = webEngine === engineOpt.id;
@@ -1912,12 +1757,12 @@ export function DocumentIngestionStudio({
                     >
                       <div className="flex items-center justify-between gap-1.5">
                         <span className={`text-[11px] font-extrabold ${isActive ? 'text-sky-700' : 'text-slate-800'}`}>
-                          {lang === 'ar' ? engineOpt.labelAr : engineOpt.labelEn}
+                          {t(lang, engineOpt.labelKey)}
                         </span>
                         {isActive && <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0" />}
                       </div>
                       <p className="text-[10px] text-slate-500 leading-relaxed line-clamp-3">
-                        {lang === 'ar' ? engineOpt.descAr : engineOpt.descEn}
+                        {t(lang, engineOpt.descKey)}
                       </p>
                       {engineOpt.badge && (
                         <span
@@ -1952,20 +1797,14 @@ export function DocumentIngestionStudio({
                       {webFetchMeta.mimeType}
                     </span>
                     {(webEngine === 'auto' || webFetchMeta.requestedEngine !== webEngine) && (
-                      <span className="text-[9px] font-mono text-slate-400">
-                        ({lang === 'ar' ? 'اختيار تلقائي' : 'auto-selected'})
-                      </span>
+                      <span className="text-[9px] font-mono text-slate-400">({t(lang, 'ingest.autoSelected')})</span>
                     )}
                   </div>
                   <h4 className="text-xs font-extrabold text-slate-900 truncate">{webFetchMeta.fileName}</h4>
                   <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono flex-wrap">
                     <span>📦 {(webFetchMeta.sizeBytes / 1024).toFixed(1)} KB</span>
-                    <span>
-                      📝 {webFetchMeta.wordCount.toLocaleString()} {lang === 'ar' ? 'كلمة' : 'words'}
-                    </span>
-                    <span>
-                      📄 {webFetchMeta.totalPages} {lang === 'ar' ? 'صفحة' : 'pages'}
-                    </span>
+                    <span>📝 {t(lang, 'ingest.wordCount', { count: webFetchMeta.wordCount.toLocaleString() })}</span>
+                    <span>📄 {t(lang, 'ingest.pageCountLabel', { count: webFetchMeta.totalPages })}</span>
                   </div>
                   <a
                     href={webFetchMeta.sourceUrl}
@@ -2012,15 +1851,13 @@ export function DocumentIngestionStudio({
         <div className="space-y-4 pt-2">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="w-full">
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                {lang === 'ar' ? 'عنوان المستند المفهرس:' : 'Document Title:'}
-              </label>
+              <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'ingest.docTitleLabel')}</label>
               <input
                 type="text"
                 required
                 value={docTitle}
                 onChange={(e) => setDocTitle(e.target.value)}
-                placeholder={lang === 'ar' ? 'مثال: سياسة حماية البيانات 2026' : 'e.g. Data Protection Policy 2026'}
+                placeholder={t(lang, 'ingest.docTitlePlaceholder')}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
               />
             </div>
@@ -2046,7 +1883,7 @@ export function DocumentIngestionStudio({
 
           <div>
             <label className="text-xs font-bold text-slate-700 block mb-1 flex items-center justify-between">
-              <span>{lang === 'ar' ? 'محتوى النص الكامل للمستند:' : 'Document Full Text Content:'}</span>
+              <span>{t(lang, 'ingest.docContentLabel')}</span>
               <span className="text-[10px] font-mono text-slate-400">
                 {docContent.length} chars | ~{Math.round(docContent.length / 2.8)} est. tokens
               </span>
@@ -2056,11 +1893,7 @@ export function DocumentIngestionStudio({
               rows={6}
               value={docContent}
               onChange={(e) => setDocContent(e.target.value)}
-              placeholder={
-                lang === 'ar'
-                  ? 'الصق النص كاملاً هنا أو اختر ملفاً أعلاه...'
-                  : 'Paste full document text here or upload file above...'
-              }
+              placeholder={t(lang, 'ingest.docContentPlaceholder')}
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500"
             />
           </div>
@@ -2071,13 +1904,11 @@ export function DocumentIngestionStudio({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
               <Scissors className="w-4 h-4 text-indigo-400" />
-              <h3 className="text-xs font-extrabold text-white">
-                {lang === 'ar' ? 'محاكي التقطيع الدلالي الفوري (Live Chunking Visualizer)' : 'Live Chunking Visualizer'}
-              </h3>
+              <h3 className="text-xs font-extrabold text-white">{t(lang, 'ingest.chunkingVisualizer')}</h3>
             </div>
 
             <div className="flex items-center gap-3 text-xs font-mono">
-              <span className="text-slate-400">{lang === 'ar' ? 'عدد المقاطع:' : 'Total Chunks:'}</span>
+              <span className="text-slate-400">{t(lang, 'ingest.totalChunksLabel')}</span>
               <span className="px-2.5 py-0.5 rounded-full bg-indigo-500 text-white font-bold text-xs">
                 {generatedChunks.length} Chunks
               </span>
@@ -2088,7 +1919,7 @@ export function DocumentIngestionStudio({
             {/* AI Document Parsing Engine */}
             <div>
               <label className="text-[11px] font-bold text-slate-300 block mb-1 flex items-center justify-between">
-                <span>{lang === 'ar' ? 'محرك استخراج الملفات والصور:' : 'Document Extraction Engine:'}</span>
+                <span>{t(lang, 'ingest.extractionEngineLabel')}</span>
                 <span className="text-[9px] font-mono text-amber-400 font-bold bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-800">
                   AI OCR
                 </span>
@@ -2098,45 +1929,33 @@ export function DocumentIngestionStudio({
                 onChange={(e) => setParsingEngine(e.target.value as any)}
                 className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer font-sans"
               >
-                <option value="mistral_ocr">
-                  {lang === 'ar' ? 'Mistral Document AI (OCR + Visual Layout)' : 'Mistral Document AI (OCR + Visual)'}
-                </option>
-                <option value="unstructured_mcp">
-                  {lang === 'ar' ? 'Unstructured API / MCP Transform' : 'Unstructured API / MCP Transform'}
-                </option>
-                <option value="pdf_layout">
-                  {lang === 'ar' ? 'Native PDF Layout Parser' : 'Native PDF Layout Parser'}
-                </option>
-                <option value="native_ast">
-                  {lang === 'ar' ? 'Code AST & Structure Extraction' : 'Code AST & Structure Extraction'}
-                </option>
+                <option value="mistral_ocr">{t(lang, 'ingest.engineOptMistral')}</option>
+                <option value="unstructured_mcp">{t(lang, 'ingest.engineOptUnstructured')}</option>
+                <option value="pdf_layout">{t(lang, 'ingest.engineOptPdfLayout')}</option>
+                <option value="native_ast">{t(lang, 'ingest.engineOptAst')}</option>
               </select>
             </div>
 
             {/* Strategy */}
             <div>
               <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                {lang === 'ar' ? 'استراتيجية التقطيع (Strategy):' : 'Chunking Strategy:'}
+                {t(lang, 'ingest.chunkStrategyLabel')}
               </label>
               <select
                 value={chunkStrategy}
                 onChange={(e) => setChunkStrategy(e.target.value as any)}
                 className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
-                <option value="semantic">{lang === 'ar' ? 'تقطيع دلالي ذكي (Semantic)' : 'Semantic Boundaries'}</option>
-                <option value="markdown">
-                  {lang === 'ar' ? 'تقسيم الترويسات (Markdown Headings)' : 'Markdown Headings'}
-                </option>
-                <option value="recursive">
-                  {lang === 'ar' ? 'تقسيم تكراري بالفواصل (Recursive)' : 'Recursive Splitting'}
-                </option>
+                <option value="semantic">{t(lang, 'ingest.strategySemantic')}</option>
+                <option value="markdown">{t(lang, 'ingest.strategyMarkdown')}</option>
+                <option value="recursive">{t(lang, 'ingest.strategyRecursive')}</option>
               </select>
             </div>
 
             {/* Chunk Size */}
             <div>
               <label className="text-[11px] font-bold text-slate-300 block mb-1 flex justify-between">
-                <span>{lang === 'ar' ? 'حجم المقطع (Chunk Size):' : 'Chunk Size:'}</span>
+                <span>{t(lang, 'ingest.chunkSizeLabel')}</span>
                 <span className="text-indigo-400 font-mono font-bold">{chunkSize} tokens</span>
               </label>
               <input
@@ -2159,7 +1978,7 @@ export function DocumentIngestionStudio({
             {/* Overlap */}
             <div>
               <label className="text-[11px] font-bold text-slate-300 block mb-1 flex justify-between">
-                <span>{lang === 'ar' ? 'نسبة التداخل (Overlap):' : 'Overlap Ratio:'}</span>
+                <span>{t(lang, 'ingest.overlapLabel')}</span>
                 <span className="text-indigo-400 font-mono font-bold">{chunkOverlap}%</span>
               </label>
               <input
@@ -2183,7 +2002,7 @@ export function DocumentIngestionStudio({
           {collections.length > 0 && (
             <div className="pt-2 border-t border-slate-800">
               <label className="text-[11px] font-bold text-slate-300 block mb-2">
-                {lang === 'ar' ? 'ربط بالمجموعات المعرفية المستهدفة:' : 'Target Collections:'}
+                {t(lang, 'ingest.targetCollections')}
               </label>
               <div className="border border-slate-700 bg-slate-900 rounded-xl p-2 max-h-32 overflow-y-auto space-y-1">
                 {collections.map((c) => {
@@ -2216,9 +2035,7 @@ export function DocumentIngestionStudio({
           {/* VISUAL CHUNKS PREVIEW CARDS */}
           {generatedChunks.length > 0 && (
             <div className="space-y-2.5 pt-2 border-t border-slate-800">
-              <span className="text-[11px] font-bold text-slate-400 block">
-                {lang === 'ar' ? 'معاينة المقاطع الناتجة من الاستراتيجية الحالية:' : 'Live Generated Chunks Preview:'}
-              </span>
+              <span className="text-[11px] font-bold text-slate-400 block">{t(lang, 'ingest.chunksPreviewLabel')}</span>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">
                 {generatedChunks.slice(0, 6).map((chk) => (
@@ -2239,9 +2056,7 @@ export function DocumentIngestionStudio({
                       {/* Honest placeholder: embeddings are generated server-side
                           during indexing, so no vector values exist at preview
                           time. The old UI printed fabricated numbers here. */}
-                      {lang === 'ar'
-                        ? 'التضمين المتجهي (3072d) يُولَّد عند الفهرسة'
-                        : 'Embedding (3072d) generated at index time'}
+                      {t(lang, 'ingest.embeddingNote')}
                     </div>
                   </div>
                 ))}
@@ -2258,14 +2073,12 @@ export function DocumentIngestionStudio({
               <div>
                 <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping" />
-                  <span>
-                    {lang === 'ar' ? 'جاري معالجة وفهرسة المستند في نظام RAG...' : 'Processing & Indexing Document...'}
-                  </span>
+                  <span>{t(lang, 'ingest.processingIndexing')}</span>
                 </h4>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  {lang === 'ar'
-                    ? `الزمن المنقضي: ${Math.round((Date.now() - uploadStartedAtRef.current) / 1000)} ثانية`
-                    : `Elapsed: ${Math.round((Date.now() - uploadStartedAtRef.current) / 1000)}s`}
+                  {t(lang, 'ingest.elapsedTime', {
+                    secs: Math.round((Date.now() - uploadStartedAtRef.current) / 1000),
+                  })}
                 </p>
               </div>
               <span className="text-sm font-black text-indigo-400 font-mono">{overallProgress}%</span>
@@ -2327,11 +2140,9 @@ export function DocumentIngestionStudio({
                                     : 'text-slate-400'
                             }`}
                           >
-                            {lang === 'ar' ? step.nameAr : step.nameEn}
+                            {t(lang, step.nameKey)}
                           </span>
-                          <span className="text-[10px] text-slate-400 block mt-0.5">
-                            {lang === 'ar' ? step.descAr : step.descEn}
-                          </span>
+                          <span className="text-[10px] text-slate-400 block mt-0.5">{t(lang, step.descKey)}</span>
                         </div>
                       </div>
 
@@ -2385,16 +2196,12 @@ export function DocumentIngestionStudio({
           {isUploading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>{lang === 'ar' ? 'جاري التقطيع وتوليد متجهات Qdrant...' : 'Ingesting & Indexing Chunks...'}</span>
+              <span>{t(lang, 'ingest.ingestingIndexing')}</span>
             </>
           ) : (
             <>
               <Sparkles className="w-4 h-4" />
-              <span>
-                {lang === 'ar'
-                  ? `استيعاب وتجزئة المستند (${generatedChunks.length} مقطع) وفهرسته فوراً`
-                  : `Ingest & Vector Index Document (${generatedChunks.length} chunks)`}
-              </span>
+              <span>{t(lang, 'ingest.submitIngest', { chunks: generatedChunks.length })}</span>
             </>
           )}
         </button>

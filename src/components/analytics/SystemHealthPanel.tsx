@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { Activity, RefreshCw, ShieldCheck, AlertTriangle, XCircle, Database, Boxes, FileSearch } from 'lucide-react';
+import { t } from '@/lib/i18n';
 
 interface ServiceDiagnostic {
   service: string;
@@ -45,12 +46,12 @@ export default function SystemHealthPanel({ lang }: SystemHealthPanelProps) {
     try {
       const res = await fetchWithAuth('/api/v1/diagnostics');
       if (!res.ok) {
-        throw new Error(lang === 'ar' ? 'فشل فحص التشخيصات' : 'Diagnostics request failed');
+        throw new Error(t(lang, 'health.diagnosticsFailed'));
       }
       const payload = await res.json();
       setData(payload);
     } catch (e: any) {
-      setError(e?.message || (lang === 'ar' ? 'خطأ غير متوقع' : 'Unexpected error'));
+      setError(e?.message || t(lang, 'health.unexpectedError'));
     } finally {
       setIsLoading(false);
     }
@@ -75,24 +76,19 @@ export default function SystemHealthPanel({ lang }: SystemHealthPanelProps) {
   };
 
   const statusLabel = (status: string) => {
-    if (lang === 'ar') {
-      return status === 'connected'
-        ? 'متصل'
-        : status === 'missing_config'
-          ? 'غير مهيأ'
-          : status === 'auth_failed'
-            ? 'فشل المصادقة'
-            : 'منقطع';
-    }
+    if (status === 'connected') return t(lang, 'health.statusConnected');
+    if (status === 'missing_config') return t(lang, 'health.statusMissingConfig');
+    if (status === 'auth_failed') return t(lang, 'health.statusAuthFailed');
+    if (status === 'disconnected') return t(lang, 'health.statusDisconnected');
     return status;
   };
 
   const overallBadge = data
     ? data.overallStatus === 'healthy'
-      ? { cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30', text: lang === 'ar' ? 'سليمة' : 'Healthy' }
+      ? { cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30', text: t(lang, 'health.overallHealthy') }
       : data.overallStatus === 'degraded'
-        ? { cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30', text: lang === 'ar' ? 'متدهورة' : 'Degraded' }
-        : { cls: 'bg-rose-500/15 text-rose-400 border-rose-500/30', text: lang === 'ar' ? 'حرجة' : 'Critical' }
+        ? { cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30', text: t(lang, 'health.overallDegraded') }
+        : { cls: 'bg-rose-500/15 text-rose-400 border-rose-500/30', text: t(lang, 'health.overallCritical') }
     : null;
 
   const services = data ? Object.values(data.diagnostics) : [];
@@ -102,7 +98,7 @@ export default function SystemHealthPanel({ lang }: SystemHealthPanelProps) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
           <Activity className="w-4 h-4 text-indigo-600" />
-          <span>{lang === 'ar' ? 'صحة البنية التحتية (قياس فعلي)' : 'Infrastructure Health (measured)'}</span>
+          <span>{t(lang, 'health.title')}</span>
           {overallBadge && (
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${overallBadge.cls}`}>
               {overallBadge.text}
@@ -115,7 +111,7 @@ export default function SystemHealthPanel({ lang }: SystemHealthPanelProps) {
           className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition flex items-center gap-1 text-xs cursor-pointer select-none"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>{lang === 'ar' ? 'إعادة الفحص' : 'Re-check'}</span>
+          <span>{t(lang, 'health.recheck')}</span>
         </button>
       </div>
 
@@ -129,7 +125,7 @@ export default function SystemHealthPanel({ lang }: SystemHealthPanelProps) {
       {data && (
         <div className="space-y-1">
           <div className="flex justify-between text-[11px] font-medium text-slate-600">
-            <span>{lang === 'ar' ? 'درجة الجهوزية الإنتاجية' : 'Production Readiness Score'}</span>
+            <span>{t(lang, 'health.readinessScore')}</span>
             <span className="font-mono font-bold text-slate-900">{data.readinessScore}/100</span>
           </div>
           <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
@@ -189,11 +185,7 @@ export default function SystemHealthPanel({ lang }: SystemHealthPanelProps) {
             })}
       </div>
 
-      <p className="text-[10px] text-slate-400 leading-relaxed">
-        {lang === 'ar'
-          ? 'كل الأرقام أعلاه مقاسة فعلياً عبر /api/v1/diagnostics: اتصال PostgreSQL حقيقي، فحص مجموعة Qdrant، والتحقق من مفتاح Mistral. لا توجد بيانات محاكاة.'
-          : 'All numbers above are measured live via /api/v1/diagnostics: real Postgres round-trip, Qdrant collection probe, Mistral key verification. No simulated data.'}
-      </p>
+      <p className="text-[10px] text-slate-400 leading-relaxed">{t(lang, 'health.footnote')}</p>
     </div>
   );
 }

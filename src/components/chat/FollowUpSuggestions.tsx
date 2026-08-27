@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Sparkles, ArrowUpLeft } from 'lucide-react';
+import { t } from '@/lib/i18n';
 
 interface FollowUpSuggestionsProps {
   suggestions: string[];
@@ -22,7 +23,7 @@ export const FollowUpSuggestions: React.FC<FollowUpSuggestionsProps> = ({
     <div className="flex items-start gap-2 overflow-x-auto no-scrollbar pb-1" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       <span className="text-[11px] font-bold text-slate-500 shrink-0 flex items-center gap-1 bg-white px-2 py-1 rounded-md border border-slate-200 shadow-xs mt-0.5">
         <Sparkles className={`w-3 h-3 text-indigo-600 ${isLoading ? 'animate-pulse' : ''}`} />
-        <span>{lang === 'ar' ? 'اقتراحات:' : 'Try asking:'}</span>
+        <span>{t(lang, 'chat.tryAsking')}</span>
       </span>
       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         {suggestions.map((suggestion, idx) => (

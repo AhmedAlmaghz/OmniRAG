@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
+import { t } from '@/lib/i18n';
 
 interface ChunksDistributionChartProps {
   data: { name: string; count: number }[];
@@ -38,19 +39,22 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
       .range(d3.schemeSet3);
 
     // Compute the position of each group on the pie
-    const pie = d3.pie<{ name: string; count: number }>()
+    const pie = d3
+      .pie<{ name: string; count: number }>()
       .value((d) => d.count)
       .sort(null);
 
     const data_ready = pie(data);
 
     // Shape helper to build arcs
-    const arcGenerator = d3.arc<d3.PieArcDatum<{ name: string; count: number }>>()
+    const arcGenerator = d3
+      .arc<d3.PieArcDatum<{ name: string; count: number }>>()
       .innerRadius(radius * 0.5) // This makes it a donut chart
       .outerRadius(radius);
 
     // Hover arc generator
-    const arcHover = d3.arc<d3.PieArcDatum<{ name: string; count: number }>>()
+    const arcHover = d3
+      .arc<d3.PieArcDatum<{ name: string; count: number }>>()
       .innerRadius(radius * 0.5)
       .outerRadius(radius + 10);
 
@@ -72,7 +76,7 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
           .duration(200)
           .attr('d', arcHover as any)
           .style('opacity', 1);
-        
+
         // Tooltip or central text could be added here
       })
       .on('mouseout', function (event, d) {
@@ -84,7 +88,8 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
       });
 
     // Add labels
-    const outerArc = d3.arc<d3.PieArcDatum<{ name: string; count: number }>>()
+    const outerArc = d3
+      .arc<d3.PieArcDatum<{ name: string; count: number }>>()
       .innerRadius(radius * 1.1)
       .outerRadius(radius * 1.1);
 
@@ -125,19 +130,16 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
         posC[0] = radius * 1.0 * (midangle < Math.PI ? 1 : -1); // multiply by 1 or -1 to put it on the right or left
         return [posA, posB, posC] as any;
       });
-
   }, [data, lang]);
 
   return (
     <div className="w-full flex flex-col items-center justify-center p-4 bg-white rounded-xl shadow-sm border border-slate-200">
-      <h4 className="text-sm font-semibold text-slate-800 mb-4 self-start">
-        {lang === 'ar' ? 'توزيع متجهات المصادر المعرفية' : 'Knowledge Source Chunks Distribution'}
-      </h4>
+      <h4 className="text-sm font-semibold text-slate-800 mb-4 self-start">{t(lang, 'chunksChart.title')}</h4>
       {data && data.length > 0 ? (
         <div ref={chartRef} className="w-full flex justify-center" />
       ) : (
         <div className="h-[300px] flex items-center justify-center text-slate-400 text-sm">
-          {lang === 'ar' ? 'لا توجد بيانات لعرضها' : 'No data available'}
+          {t(lang, 'chunksChart.noData')}
         </div>
       )}
     </div>

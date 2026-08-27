@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Copy, Code2, ChevronDown, ChevronUp, WrapText, Hash } from 'lucide-react';
+import { t } from '@/lib/i18n';
 
 interface CodeBlockProps {
   code: string;
@@ -135,7 +136,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'typescri
             {title && title !== language.toUpperCase() ? title : language}
           </span>
           <span className="text-[9px] text-slate-500 font-mono shrink-0 hidden sm:inline">
-            {lineCount} {lang === 'ar' ? 'سطر' : 'lines'}
+            {t(lang, 'codeBlock.lineCount', { count: lineCount })}
           </span>
         </div>
 
@@ -147,7 +148,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'typescri
             className={`p-1.5 rounded-md transition cursor-pointer ${
               showLineNumbers ? 'text-cyan-400 bg-slate-800/60' : 'text-slate-500 hover:bg-slate-800'
             }`}
-            title={lang === 'ar' ? 'أرقام الأسطر' : 'Line numbers'}
+            title={t(lang, 'codeBlock.lineNumbersTitle')}
           >
             <Hash className="w-3.5 h-3.5" />
           </button>
@@ -158,7 +159,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'typescri
             className={`p-1.5 rounded-md transition cursor-pointer ${
               wordWrap ? 'text-cyan-400 bg-slate-800/60' : 'text-slate-500 hover:bg-slate-800'
             }`}
-            title={lang === 'ar' ? 'التفاف الأسطر' : 'Word wrap'}
+            title={t(lang, 'codeBlock.wordWrapTitle')}
           >
             <WrapText className="w-3.5 h-3.5" />
           </button>
@@ -167,7 +168,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'typescri
             type="button"
             onClick={() => setIsCollapsed((v) => !v)}
             className="p-1.5 rounded-md text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition cursor-pointer"
-            title={isCollapsed ? (lang === 'ar' ? 'توسيع' : 'Expand') : lang === 'ar' ? 'طي' : 'Collapse'}
+            title={t(lang, isCollapsed ? 'codeBlock.expandTitle' : 'codeBlock.collapseTitle')}
           >
             {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
           </button>
@@ -180,12 +181,12 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language = 'typescri
             {copied ? (
               <>
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400">{lang === 'ar' ? 'تم النسخ' : 'Copied'}</span>
+                <span className="text-emerald-400">{t(lang, 'codeBlock.copied')}</span>
               </>
             ) : (
               <>
                 <Copy className="w-3.5 h-3.5" />
-                <span>{lang === 'ar' ? 'نسخ' : 'Copy'}</span>
+                <span>{t(lang, 'codeBlock.copy')}</span>
               </>
             )}
           </button>

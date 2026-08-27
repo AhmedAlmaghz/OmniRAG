@@ -15,13 +15,27 @@ import {
   LayoutGrid,
   Activity,
   HardDrive,
+  Cpu,
+  KeySquare,
+  Database,
+  Users,
+  Fingerprint,
+  CreditCard,
 } from 'lucide-react';
 import IngestionSettingsView from './IngestionSettingsView';
 import ModelSettingsView from './ModelSettingsView';
+import ProvidersView from './ProvidersView';
+import ApiKeysView from './ApiKeysView';
+import StorageView from './StorageView';
+import MembersView from './MembersView';
+import SsoSettingsView from './SsoSettingsView';
+import PlansView from './PlansView';
 import DiagnosticUtility from './diagnostics/DiagnosticUtility';
 import EnvVariablesManager from './env/EnvVariablesManager';
 import FirstLaunchEnvModal from './env/FirstLaunchEnvModal';
 import { useUserPreferences, type MathMode } from '@/lib/preferences/userPreferences';
+// i18n lookups are aliased as `tr` throughout this component.
+import { t as tr } from '@/lib/i18n';
 import { renderArabicToString } from 'katex4arabic';
 import katex from 'katex';
 import { Calculator, Sigma, Key, Lock } from 'lucide-react';
@@ -70,7 +84,19 @@ const MathPreview: React.FC<{ mode: MathMode; arabicNumerals: boolean }> = ({ mo
   );
 };
 
-type TabType = 'account' | 'appearance' | 'aiModels' | 'ingestion' | 'envVars' | 'diagnostics';
+type TabType =
+  | 'account'
+  | 'appearance'
+  | 'aiModels'
+  | 'providers'
+  | 'apiKeys'
+  | 'members'
+  | 'sso'
+  | 'plans'
+  | 'storage'
+  | 'ingestion'
+  | 'envVars'
+  | 'diagnostics';
 
 /**
  * Data-driven settings navigation. The previous implementation hand-wrote
@@ -78,19 +104,22 @@ type TabType = 'account' | 'appearance' | 'aiModels' | 'ingestion' | 'envVars' |
  * content was decorative theater (notification toggles that were never
  * persisted, a hardcoded sessions table, an API key nothing validated).
  * Those fake controls were REMOVED rather than wired to pretend.
+ *
+ * Labels live in the i18n dictionaries (Phase 7) under `settings.tabs.*`.
  */
-const SETTINGS_TABS: Array<{ id: TabType; icon: React.ElementType; labelAr: string; labelEn: string }> = [
-  { id: 'account', icon: User, labelAr: 'الملف الشخصي', labelEn: 'Profile Settings' },
-  { id: 'appearance', icon: Sliders, labelAr: 'المظهر والخطوط', labelEn: 'Appearance & Font' },
-  { id: 'aiModels', icon: Sparkles, labelAr: 'إعدادات الذكاء الاصطناعي', labelEn: 'AI Engine Settings' },
-  {
-    id: 'ingestion',
-    icon: HardDrive,
-    labelAr: 'معالجة المستندات والبنية التحتية',
-    labelEn: 'Document Ingestion & Infra',
-  },
-  { id: 'envVars', icon: Key, labelAr: 'متغيرات البيئة والربط', labelEn: 'Environment Variables' },
-  { id: 'diagnostics', icon: Activity, labelAr: 'فحص الاتصال والتشخيص', labelEn: 'System Diagnostics' },
+const SETTINGS_TABS: Array<{ id: TabType; icon: React.ElementType; labelKey: string }> = [
+  { id: 'account', icon: User, labelKey: 'settings.tabs.account' },
+  { id: 'appearance', icon: Sliders, labelKey: 'settings.tabs.appearance' },
+  { id: 'aiModels', icon: Sparkles, labelKey: 'settings.tabs.aiModels' },
+  { id: 'providers', icon: Cpu, labelKey: 'settings.tabs.providers' },
+  { id: 'apiKeys', icon: KeySquare, labelKey: 'settings.tabs.apiKeys' },
+  { id: 'members', icon: Users, labelKey: 'settings.tabs.members' },
+  { id: 'sso', icon: Fingerprint, labelKey: 'settings.tabs.sso' },
+  { id: 'plans', icon: CreditCard, labelKey: 'settings.tabs.plans' },
+  { id: 'storage', icon: Database, labelKey: 'settings.tabs.storage' },
+  { id: 'ingestion', icon: HardDrive, labelKey: 'settings.tabs.ingestion' },
+  { id: 'envVars', icon: Key, labelKey: 'settings.tabs.envVars' },
+  { id: 'diagnostics', icon: Activity, labelKey: 'settings.tabs.diagnostics' },
 ];
 
 export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: SettingsViewProps) {
@@ -181,106 +210,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (e) {
       console.error('Failed to persist profile settings:', e);
-      setSaveError(lang === 'ar' ? 'تعذر الحفظ في التخزين المحلي' : 'Could not write to local storage');
+      setSaveError(tr(lang, 'settings.saveErrorLocal'));
     } finally {
       setIsSaving(false);
     }
   };
-
-  const translations = {
-    ar: {
-      title: 'الإعدادات والملف الشخصي',
-      desc: 'إدارة تفضيلات حسابك المعرفي، وتخصيص الواجهة، ونماذج الذكاء الاصطناعي ومتغيرات البيئة.',
-      tabAccount: 'الملف الشخصي',
-      tabAppearance: 'المظهر والخطوط',
-      tabAiModels: 'إعدادات الذكاء الاصطناعي',
-      tabIngestion: 'معالجة المستندات والبنية التحتية',
-      tabEnvVars: 'متغيرات البيئة والربط',
-      tabDiagnostics: 'فحص الاتصال والتشخيص',
-      profileDetails: 'بيانات الملف الشخصي',
-      displayName: 'الاسم المعروض',
-      jobTitle: 'المسمى الوظيفي',
-      phoneNumber: 'رقم الهاتف',
-      bio: 'نبذة تعريفية',
-      organization: 'المؤسسة / الشركة',
-      avatarStyle: 'لون الرمز التعريفي',
-      emailAddress: 'عنوان البريد الإلكتروني',
-      tenantId: 'معرف المستأجر المخصص',
-      saveChanges: 'حفظ التغييرات',
-      saving: 'جاري الحفظ...',
-      saved: 'تم حفظ بيانات الملف الشخصي بنجاح!',
-      dangerZone: 'منطقة الخطر والتحكم',
-      logOut: 'تسجيل الخروج الآمن',
-      logOutDesc: 'سيتم إنهاء الجلسة الحالية وتشفير ملفات التخزين المؤقت فوراً.',
-      themeTitle: 'سمة النظام الأساسية',
-      light: 'نهاري فاتح',
-      dark: 'ليلي داكن',
-      system: 'تلقائي (حسب النظام)',
-      arabicFontTitle: 'نوع الخط العربي',
-      fontSizeTitle: 'حجم النصوص',
-      densityTitle: 'كثافة عرض الواجهة',
-      comfortable: 'عرض متباعد مريح',
-      compact: 'عرض مكثف سريع',
-      mathTitle: 'عرض المعادلات الرياضية',
-      mathDesc:
-        'يُطبق هذا الإعداد تلقائياً على جميع المحادثات — لا حاجة لأي أزرار داخل الرسائل. تُكتب المعادلات بصيغة LaTeX وتُعرض فوراً.',
-      mathStandard: 'قياسي (KaTeX)',
-      mathStandardDesc: 'عرض عالمي بالرموز اللاتينية x, y, sin من اليسار لليمين.',
-      mathArabic: 'عربي (KaTeX4Arabic)',
-      mathArabicDesc: 'رموز عربية أصيلة: س، ص، جا، جتا، تكامل — من اليمين لليسار.',
-      mathNumerals: 'الأرقام العربية الهندية (٠-٩)',
-      mathNumeralsDesc: 'تحويل الأرقام داخل المعادلات إلى ٠١٢٣٤٥٦٧٨٩.',
-      mathPreview: 'معاينة حية',
-      mathAppliedNote: 'التغيير فوري — افتح أي محادثة رياضية لترى الأثر مباشرة.',
-    },
-    en: {
-      title: 'Settings & Profile',
-      desc: 'Manage your cognitive account preferences, interface options, AI models, and environment variables.',
-      tabAccount: 'Profile Settings',
-      tabAppearance: 'Appearance & Font',
-      tabAiModels: 'AI Engine Settings',
-      tabIngestion: 'Document Ingestion & Infra',
-      tabEnvVars: 'Environment Variables',
-      tabDiagnostics: 'System Diagnostics',
-      profileDetails: 'Profile Details',
-      displayName: 'Display Name',
-      jobTitle: 'Job Title',
-      phoneNumber: 'Phone Number',
-      bio: 'Bio / Description',
-      organization: 'Organization / Company',
-      avatarStyle: 'Avatar Color Theme',
-      emailAddress: 'Email Address',
-      tenantId: 'Secure Tenant ID',
-      saveChanges: 'Save Changes',
-      saving: 'Saving...',
-      saved: 'Profile details saved successfully!',
-      dangerZone: 'Danger Control Zone',
-      logOut: 'Secure Log Out',
-      logOutDesc: 'Instantly terminate your current session and encrypt local workspace caches.',
-      themeTitle: 'Core Interface Theme',
-      light: 'Light Theme',
-      dark: 'Dark Theme',
-      system: 'System Adaptive',
-      arabicFontTitle: 'Arabic Font Family',
-      fontSizeTitle: 'Text Sizing',
-      densityTitle: 'Display Density Layout',
-      comfortable: 'Comfortable Spacing',
-      compact: 'Compact Dense Layout',
-      mathTitle: 'Mathematical Equations Display',
-      mathDesc:
-        'This setting applies automatically to every conversation — no per-message buttons needed. Equations are written in LaTeX and rendered instantly.',
-      mathStandard: 'Standard (KaTeX)',
-      mathStandardDesc: 'Universal rendering with Latin symbols x, y, sin, left-to-right.',
-      mathArabic: 'Arabic (KaTeX4Arabic)',
-      mathArabicDesc: 'Authentic Arabic notation: س، ص، جا، جتا، integral — right-to-left.',
-      mathNumerals: 'Arabic-Indic Numerals (٠-٩)',
-      mathNumeralsDesc: 'Convert digits inside equations to ٠١٢٣٤٥٦٧٨٩.',
-      mathPreview: 'Live Preview',
-      mathAppliedNote: 'Changes are instant — open any math conversation to see the effect.',
-    },
-  };
-
-  const t = lang === 'ar' ? translations.ar : translations.en;
 
   // Set avatar bg color class
   const getAvatarBg = (color: string) => {
@@ -334,7 +268,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
           id="settings-save-success-banner"
         >
           <CheckCircle2 className={`w-5 h-5 shrink-0 ${saveError ? 'text-rose-500' : 'text-emerald-500'}`} />
-          <span>{saveError || t.saved}</span>
+          <span>{saveError || tr(lang, 'settings.profile.saved')}</span>
         </div>
       )}
 
@@ -343,18 +277,14 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
           <div className="p-2 bg-indigo-600/10 rounded-xl text-indigo-700 border border-indigo-600/20">
             <Settings className="w-6 h-6 animate-spin-slow text-indigo-600" />
           </div>
-          {t.title}
+          {tr(lang, 'settings.title')}
         </h1>
-        <p className="text-sm text-slate-500 mt-2 max-w-3xl leading-relaxed">{t.desc}</p>
+        <p className="text-sm text-slate-500 mt-2 max-w-3xl leading-relaxed">{tr(lang, 'settings.desc')}</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8" id="settings-grid-layout">
         {/* Navigation Sidebar — data-driven */}
-        <nav
-          className="lg:col-span-1 space-y-1.5"
-          id="settings-sidebar"
-          aria-label={lang === 'ar' ? 'أقسام الإعدادات' : 'Settings sections'}
-        >
+        <nav className="lg:col-span-1 space-y-1.5" id="settings-sidebar" aria-label={tr(lang, 'settings.sectionsAria')}>
           {SETTINGS_TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -371,7 +301,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               >
                 <span className="flex items-center gap-2.5">
                   <Icon className="w-4 h-4" />
-                  {lang === 'ar' ? tab.labelAr : tab.labelEn}
+                  {tr(lang, tab.labelKey)}
                 </span>
                 <ChevronRight
                   className={`w-4 h-4 transition ${lang === 'ar' ? 'rotate-180' : ''} ${isActive ? 'opacity-100' : 'opacity-40'}`}
@@ -392,10 +322,10 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <div className="px-6 py-5 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <User className="w-5 h-5 text-indigo-600" />
-                  <h2 className="text-lg font-bold text-slate-900">{t.profileDetails}</h2>
+                  <h2 className="text-lg font-bold text-slate-900">{tr(lang, 'settings.profile.details')}</h2>
                 </div>
                 <span className="text-[10px] font-mono font-bold bg-indigo-50 text-indigo-600 px-2 py-1 rounded border border-indigo-100 uppercase tracking-wide">
-                  {lang === 'ar' ? 'أمان الهوية' : 'Identity Secure'}
+                  {tr(lang, 'settings.identitySecure')}
                 </span>
               </div>
 
@@ -413,7 +343,9 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                     </div>
                   </div>
                   <div className="space-y-3 flex-1 text-center sm:text-start">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t.avatarStyle}</h4>
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      {tr(lang, 'settings.profile.avatarStyle')}
+                    </h4>
                     <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
                       {(['indigo', 'teal', 'rose', 'emerald', 'amber', 'violet'] as const).map((color) => (
                         <button
@@ -444,7 +376,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                   <div className="space-y-1.5">
                     <label htmlFor="profile-name" className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                      {t.displayName}
+                      {tr(lang, 'settings.profile.displayName')}
                     </label>
                     <input
                       id="profile-name"
@@ -458,7 +390,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
 
                   <div className="space-y-1.5">
                     <label htmlFor="profile-title" className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                      {t.jobTitle}
+                      {tr(lang, 'settings.profile.jobTitle')}
                     </label>
                     <input
                       id="profile-title"
@@ -472,7 +404,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
 
                   <div className="space-y-1.5">
                     <label htmlFor="profile-phone" className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                      {t.phoneNumber}
+                      {tr(lang, 'settings.profile.phoneNumber')}
                     </label>
                     <input
                       id="profile-phone"
@@ -486,7 +418,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
 
                   <div className="space-y-1.5">
                     <label htmlFor="profile-org" className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                      {t.organization}
+                      {tr(lang, 'settings.profile.organization')}
                     </label>
                     <input
                       id="profile-org"
@@ -500,7 +432,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
 
                   <div className="sm:col-span-2 space-y-1.5">
                     <label htmlFor="profile-bio" className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                      {t.bio}
+                      {tr(lang, 'settings.profile.bio')}
                     </label>
                     <textarea
                       id="profile-bio"
@@ -518,7 +450,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                   <div className="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                        {t.emailAddress}
+                        {tr(lang, 'settings.profile.emailAddress')}
                       </span>
                       <Lock className="w-3.5 h-3.5 text-slate-400" />
                     </div>
@@ -527,7 +459,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                   <div className="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                        {t.tenantId}
+                        {tr(lang, 'settings.profile.tenantId')}
                       </span>
                       <Lock className="w-3.5 h-3.5 text-slate-400" />
                     </div>
@@ -540,9 +472,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                     views each ship their own explicit save controls. */}
                 <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
                   <p className="text-[11px] text-slate-500 leading-relaxed max-w-md font-medium text-center sm:text-start">
-                    {lang === 'ar'
-                      ? 'تُخزَّن بيانات الملف الشخصي محلياً على جهازك، ويظهر اسمك ولون رمزك في رأس التطبيق.'
-                      : 'Profile details are stored locally on your device; your name and avatar color appear in the app header.'}
+                    {tr(lang, 'settings.profileLocalNote')}
                   </p>
                   <button
                     type="button"
@@ -554,12 +484,12 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                     {isSaving ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>{t.saving}</span>
+                        <span>{tr(lang, 'settings.profile.saving')}</span>
                       </>
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>{t.saveChanges}</span>
+                        <span>{tr(lang, 'settings.profile.saveChanges')}</span>
                       </>
                     )}
                   </button>
@@ -574,14 +504,14 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
               <div className="px-6 py-5 border-b border-slate-200 bg-slate-50/50">
                 <div className="flex items-center gap-2">
                   <Sliders className="w-5 h-5 text-indigo-600" />
-                  <h2 className="text-lg font-bold text-slate-900">{t.tabAppearance}</h2>
+                  <h2 className="text-lg font-bold text-slate-900">{tr(lang, 'settings.tabs.appearance')}</h2>
                 </div>
               </div>
               <div className="p-6 space-y-6">
                 {/* Theme Selector */}
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">
-                    {t.themeTitle}
+                    {tr(lang, 'settings.appearance.themeTitle')}
                   </label>
                   <div className="grid grid-cols-3 gap-3">
                     {(['light', 'dark', 'system'] as const).map((tType) => (
@@ -599,7 +529,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                         {tType === 'dark' && <MoonPlaceholder />}
                         {tType === 'system' && <Monitor className="w-5 h-5 mb-2 text-slate-500" />}
                         <span className="text-xs font-semibold">
-                          {tType === 'light' ? t.light : tType === 'dark' ? t.dark : t.system}
+                          {tType === 'light'
+                            ? tr(lang, 'settings.appearance.light')
+                            : tType === 'dark'
+                              ? tr(lang, 'settings.appearance.dark')
+                              : tr(lang, 'settings.appearance.system')}
                         </span>
                       </button>
                     ))}
@@ -612,7 +546,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-1.5">
                     <Type className="w-4 h-4 text-indigo-600" />
-                    {t.arabicFontTitle}
+                    {tr(lang, 'settings.appearance.arabicFontTitle')}
                   </label>
                   <div className="grid grid-cols-3 gap-3">
                     {(['cairo', 'tajawal', 'ibm'] as const).map((f) => (
@@ -645,7 +579,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                 {/* Font Size Selector */}
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">
-                    {t.fontSizeTitle}
+                    {tr(lang, 'settings.appearance.fontSizeTitle')}
                   </label>
                   <div className="grid grid-cols-3 gap-3">
                     {(['sm', 'md', 'lg'] as const).map((sz) => (
@@ -664,17 +598,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                             sz === 'sm' ? 'text-[11px]' : sz === 'md' ? 'text-xs' : 'text-sm'
                           }`}
                         >
-                          {lang === 'ar'
-                            ? sz === 'sm'
-                              ? 'صغير'
-                              : sz === 'md'
-                                ? 'طبيعي'
-                                : 'كبير جداً'
-                            : sz === 'sm'
-                              ? 'Small'
-                              : sz === 'md'
-                                ? 'Medium'
-                                : 'Large'}
+                          {sz === 'sm'
+                            ? tr(lang, 'settings.appearance.sizeSmall')
+                            : sz === 'md'
+                              ? tr(lang, 'settings.appearance.sizeMedium')
+                              : tr(lang, 'settings.appearance.sizeLarge')}
                         </span>
                       </button>
                     ))}
@@ -685,7 +613,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                 <div>
                   <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-1.5">
                     <LayoutGrid className="w-4 h-4 text-indigo-600" />
-                    {t.densityTitle}
+                    {tr(lang, 'settings.appearance.densityTitle')}
                   </label>
                   <div className="grid grid-cols-2 gap-3">
                     {(['comfortable', 'compact'] as const).map((d) => (
@@ -699,7 +627,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                             : 'border-slate-200 hover:border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
                         }`}
                       >
-                        <span className="text-xs font-semibold">{d === 'comfortable' ? t.comfortable : t.compact}</span>
+                        <span className="text-xs font-semibold">
+                          {d === 'comfortable'
+                            ? tr(lang, 'settings.appearance.comfortable')
+                            : tr(lang, 'settings.appearance.compact')}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -709,9 +641,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                 <div className="pt-5 border-t border-slate-100">
                   <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">
                     <Sigma className="w-4 h-4 text-indigo-600" />
-                    {t.mathTitle}
+                    {tr(lang, 'settings.math.title')}
                   </label>
-                  <p className="text-xs text-slate-500 leading-relaxed mb-3 max-w-2xl">{t.mathDesc}</p>
+                  <p className="text-xs text-slate-500 leading-relaxed mb-3 max-w-2xl">
+                    {tr(lang, 'settings.math.desc')}
+                  </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                     <button
@@ -729,15 +663,17 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                         <span
                           className={`text-xs font-bold ${mathMode === 'standard' ? 'text-indigo-700' : 'text-slate-700'}`}
                         >
-                          {t.mathStandard}
+                          {tr(lang, 'settings.math.standard')}
                         </span>
                         {mathMode === 'standard' && (
                           <span className="ms-auto text-[9px] font-bold bg-indigo-600 text-white px-1.5 py-0.5 rounded">
-                            {lang === 'ar' ? 'نشط' : 'ACTIVE'}
+                            {tr(lang, 'settings.activeBadge')}
                           </span>
                         )}
                       </span>
-                      <span className="block text-[11px] text-slate-500 leading-relaxed">{t.mathStandardDesc}</span>
+                      <span className="block text-[11px] text-slate-500 leading-relaxed">
+                        {tr(lang, 'settings.math.standardDesc')}
+                      </span>
                       <span
                         className="mt-2 block text-center text-sm text-slate-800 bg-slate-50 border border-slate-100 rounded-lg py-1.5"
                         dir="ltr"
@@ -761,15 +697,17 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                         <span
                           className={`text-xs font-bold ${mathMode === 'arabic' ? 'text-indigo-700' : 'text-slate-700'}`}
                         >
-                          {t.mathArabic}
+                          {tr(lang, 'settings.math.arabic')}
                         </span>
                         {mathMode === 'arabic' && (
                           <span className="ms-auto text-[9px] font-bold bg-indigo-600 text-white px-1.5 py-0.5 rounded">
-                            {lang === 'ar' ? 'نشط' : 'ACTIVE'}
+                            {tr(lang, 'settings.activeBadge')}
                           </span>
                         )}
                       </span>
-                      <span className="block text-[11px] text-slate-500 leading-relaxed">{t.mathArabicDesc}</span>
+                      <span className="block text-[11px] text-slate-500 leading-relaxed">
+                        {tr(lang, 'settings.math.arabicDesc')}
+                      </span>
                       <span className="mt-2 block text-center text-sm text-slate-800 bg-amber-50/60 border border-amber-100 rounded-lg py-1.5 font-arabic">
                         س = (−ب ± √(ب²−٤أج)) / ٢أ
                       </span>
@@ -779,8 +717,8 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                   {/* Arabic-Indic numerals toggle (only relevant in Arabic mode) */}
                   {mathMode === 'arabic' && (
                     <ToggleRow
-                      title={t.mathNumerals}
-                      desc={t.mathNumeralsDesc}
+                      title={tr(lang, 'settings.math.numerals')}
+                      desc={tr(lang, 'settings.math.numeralsDesc')}
                       checked={mathArabicNumerals}
                       onChange={(checked) => setMathArabicNumerals(checked)}
                       labelAr={lang === 'ar'}
@@ -790,11 +728,11 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                   {/* Live preview of the selected engine */}
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                      {t.mathPreview}
+                      {tr(lang, 'settings.math.preview')}
                     </span>
                     <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" />
-                      {t.mathAppliedNote}
+                      {tr(lang, 'settings.math.appliedNote')}
                     </span>
                   </div>
                   <MathPreview mode={mathMode} arabicNumerals={mathArabicNumerals} />
@@ -806,6 +744,30 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
           {/* PERSISTENT CHILD SECTIONS — never unmount on tab switch */}
           <section id="section-aimodels" className={activeTab === 'aiModels' ? '' : 'hidden'}>
             <ModelSettingsView />
+          </section>
+
+          <section id="section-providers" className={activeTab === 'providers' ? '' : 'hidden'}>
+            <ProvidersView lang={lang} />
+          </section>
+
+          <section id="section-apikeys" className={activeTab === 'apiKeys' ? '' : 'hidden'}>
+            <ApiKeysView lang={lang} />
+          </section>
+
+          <section id="section-members" className={activeTab === 'members' ? '' : 'hidden'}>
+            <MembersView lang={lang} />
+          </section>
+
+          <section id="section-sso" className={activeTab === 'sso' ? '' : 'hidden'}>
+            <SsoSettingsView lang={lang} />
+          </section>
+
+          <section id="section-plans" className={activeTab === 'plans' ? '' : 'hidden'}>
+            <PlansView lang={lang} />
+          </section>
+
+          <section id="section-storage" className={activeTab === 'storage' ? '' : 'hidden'}>
+            <StorageView lang={lang} />
           </section>
 
           <section id="section-ingestion" className={activeTab === 'ingestion' ? '' : 'hidden'}>
@@ -834,7 +796,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
             <div className="px-6 py-5 border-b border-rose-200 bg-rose-50/80 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <LogOut className="w-5 h-5 text-rose-700" />
-                <h2 className="text-lg font-bold text-rose-900">{t.dangerZone}</h2>
+                <h2 className="text-lg font-bold text-rose-900">{tr(lang, 'settings.profile.dangerZone')}</h2>
               </div>
               <span className="text-[10px] font-mono font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded border border-rose-200">
                 CRITICAL
@@ -843,8 +805,10 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
             <div className="p-6">
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-center sm:text-start">
-                  <h3 className="font-bold text-slate-900 text-xs">{t.logOut}</h3>
-                  <p className="text-xs text-slate-500 mt-1 max-w-md leading-relaxed">{t.logOutDesc}</p>
+                  <h3 className="font-bold text-slate-900 text-xs">{tr(lang, 'settings.profile.logOut')}</h3>
+                  <p className="text-xs text-slate-500 mt-1 max-w-md leading-relaxed">
+                    {tr(lang, 'settings.profile.logOutDesc')}
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -853,7 +817,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
                   id="logout-danger-btn"
                 >
                   <LogOut className="w-4 h-4" />
-                  {t.logOut}
+                  {tr(lang, 'settings.profile.logOut')}
                 </button>
               </div>
             </div>

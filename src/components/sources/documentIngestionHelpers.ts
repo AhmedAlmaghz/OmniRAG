@@ -1,4 +1,5 @@
 import { getIngestionSettings } from '@/lib/config/ingestionSettings';
+import { t } from '@/lib/i18n';
 
 /**
  * Supported upload file extensions for the Document Ingestion Studio.
@@ -52,8 +53,8 @@ export const SUPPORTED_EXTENSIONS = new Set([
 
 export interface ValidationResult {
   isValid: boolean;
-  errorAr?: string;
-  errorEn?: string;
+  /** Localized error message for the requested language. */
+  error?: string;
 }
 
 export interface YoutubeValidationResult extends ValidationResult {
@@ -62,19 +63,18 @@ export interface YoutubeValidationResult extends ValidationResult {
 
 /**
  * Validates an uploaded file against the configured size limit and the
- * supported extension/MIME allowlist. Returns localized (ar/en) error reasons
- * so the caller can surface the right message without duplicating strings.
+ * supported extension/MIME allowlist. Errors are localized through the i18n
+ * dictionary for the given language.
  */
-export function validateUploadedFile(file: File): ValidationResult {
+export function validateUploadedFile(file: File, lang: 'ar' | 'en' = 'ar'): ValidationResult {
   if (!file) {
-    return { isValid: false, errorAr: 'لم يتم اختيار أي ملف.', errorEn: 'No file selected.' };
+    return { isValid: false, error: t(lang, 'ingest.valNoFile') };
   }
 
   if (file.size === 0) {
     return {
       isValid: false,
-      errorAr: 'الملف المختار فارغ (0 بايت). يرجى اختيار ملف يحتوي على بيانات ومحتوى نصي.',
-      errorEn: 'The selected file is empty (0 bytes). Please choose a valid file containing text content.',
+      error: t(lang, 'ingest.valEmptyFile'),
     };
   }
 
@@ -84,8 +84,10 @@ export function validateUploadedFile(file: File): ValidationResult {
   if (file.size > MAX_SIZE_BYTES) {
     return {
       isValid: false,
-      errorAr: `حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)}MB) يتجاوز الحد الأقصى المسموح به (${maxMb} ميجابايت).`,
-      errorEn: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit (${maxMb} MB).`,
+      error: t(lang, 'ingest.valFileTooLarge', {
+        size: (file.size / (1024 * 1024)).toFixed(1),
+        limit: maxMb,
+      }),
     };
   }
 
@@ -102,8 +104,7 @@ export function validateUploadedFile(file: File): ValidationResult {
   if (!isSupportedExt && !isSupportedMime) {
     return {
       isValid: false,
-      errorAr: `صيغة الملف (.${ext || 'غير معروفة'}) غير مدعومة. الصيغ المدعومة حالياً: PDF، DOCX، TXT، Markdown (MD)، JSON، CSV، وشفرات البرمجة (Python, JS, TS).`,
-      errorEn: `Unsupported file format (.${ext || 'unknown'}). Supported formats: PDF, DOCX, TXT, Markdown (MD), JSON, CSV, and code files (Python, JS, TS).`,
+      error: t(lang, 'ingest.valUnsupportedFormat', { ext: ext || t(lang, 'ingest.valUnknownExt') }),
     };
   }
 
@@ -114,13 +115,12 @@ export function validateUploadedFile(file: File): ValidationResult {
  * Validates a YouTube URL and extracts the 11-character video id. Accepts the
  * common youtube.com/watch, youtu.be/, /embed/, /shorts/, and /v/ shapes.
  */
-export function validateYoutubeUrl(url: string): YoutubeValidationResult {
+export function validateYoutubeUrl(url: string, lang: 'ar' | 'en' = 'ar'): YoutubeValidationResult {
   const trimmed = url.trim();
   if (!trimmed) {
     return {
       isValid: false,
-      errorAr: 'يرجى إدخال رابط فيديو يوتيوب أولاً.',
-      errorEn: 'Please enter a YouTube video URL first.',
+      error: t(lang, 'ingest.valYtEmpty'),
     };
   }
 
@@ -131,10 +131,7 @@ export function validateYoutubeUrl(url: string): YoutubeValidationResult {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     return {
       isValid: false,
-      errorAr:
-        'رابط فيديو يوتيوب غير صالح أو غير مكتمل. النسق المطلوب مثال: https://www.youtube.com/watch?v=dQw4w9WgXcQ أو https://youtu.be/dQw4w9WgXcQ',
-      errorEn:
-        'Invalid YouTube video URL structure. Required format example: https://www.youtube.com/watch?v=dQw4w9WgXcQ or https://youtu.be/dQw4w9WgXcQ',
+      error: t(lang, 'ingest.valYtInvalid'),
     };
   }
 
@@ -162,13 +159,12 @@ const PRIVATE_HOST_PATTERNS: RegExp[] = [
  * gets instant feedback on obviously-blocked targets (non-http schemes,
  * localhost / private-range hosts); the server re-validates everything.
  */
-export function validateWebFileUrl(url: string): ValidationResult {
+export function validateWebFileUrl(url: string, lang: 'ar' | 'en' = 'ar'): ValidationResult {
   const trimmed = url.trim();
   if (!trimmed) {
     return {
       isValid: false,
-      errorAr: 'يرجى إدخال رابط الملف أولاً.',
-      errorEn: 'Please enter a file URL first.',
+      error: t(lang, 'ingest.valWebEmpty'),
     };
   }
 
@@ -178,34 +174,28 @@ export function validateWebFileUrl(url: string): ValidationResult {
   } catch {
     return {
       isValid: false,
-      errorAr: 'الرابط غير صالح. النسق المطلوب مثال: https://example.com/files/report.pdf',
-      errorEn: 'Invalid URL. Required format example: https://example.com/files/report.pdf',
+      error: t(lang, 'ingest.valWebInvalid'),
     };
   }
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return {
       isValid: false,
-      errorAr: `يُسمح فقط بروابط http/https (تم رفض ${parsed.protocol.replace(':', '')}).`,
-      errorEn: `Only http/https URLs are allowed (${parsed.protocol.replace(':', '')} was rejected).`,
+      error: t(lang, 'ingest.valWebProtocol', { protocol: parsed.protocol.replace(':', '') }),
     };
   }
 
   if (!parsed.hostname) {
     return {
       isValid: false,
-      errorAr: 'الرابط لا يحتوي على اسم مضيف صالح.',
-      errorEn: 'The URL has no valid host name.',
+      error: t(lang, 'ingest.valWebNoHost'),
     };
   }
 
   if (PRIVATE_HOST_PATTERNS.some((re) => re.test(parsed.hostname))) {
     return {
       isValid: false,
-      errorAr:
-        'لا يمكن جلب الملفات من عناوين الشبكة الداخلية أو المحلية (حماية SSRF). استخدم رابطاً عاماً على الإنترنت.',
-      errorEn:
-        'Files cannot be fetched from local or internal network addresses (SSRF protection). Use a public internet URL.',
+      error: t(lang, 'ingest.valWebPrivateHost'),
     };
   }
 

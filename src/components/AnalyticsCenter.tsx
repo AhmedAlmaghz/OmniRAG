@@ -24,6 +24,7 @@ import {
 import { AuditLogEntry, SearchResult } from '@/lib/types/omnirag';
 import { runHookHarness } from '@/actions/hookHarnessAction';
 import { AnalyticsStats } from '@/lib/analytics/computeStats';
+import { t } from '@/lib/i18n';
 
 interface AnalyticsCenterProps {
   tenantId: string;
@@ -61,7 +62,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
       const res = await fetchWithAuth(`/api/v1/analytics?tenantId=${tenantId}`);
       const data = await res.json();
       if (!res.ok || data.error) {
-        throw new Error(data.error || (lang === 'ar' ? 'فشل تحميل التحليلات' : 'Failed to load analytics'));
+        throw new Error(data.error || t(lang, 'analytics.loadFailed'));
       }
       setStats(data.stats ?? null);
       setAuditLogs(Array.isArray(data.auditLogs) ? data.auditLogs : []);
@@ -69,7 +70,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
       setConversationsCount(typeof data.conversationsCount === 'number' ? data.conversationsCount : null);
     } catch (e: any) {
       console.error(e);
-      setAnalyticsError(e?.message || (lang === 'ar' ? 'خطأ غير متوقع' : 'Unexpected error'));
+      setAnalyticsError(e?.message || t(lang, 'analytics.unexpectedError'));
     } finally {
       setIsAnalyticsLoading(false);
     }
@@ -114,62 +115,13 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
   };
 
   const policies = [
-    {
-      code: 'H1. TenantGate',
-      desc:
-        lang === 'ar'
-          ? 'فرض عزل المستأجرين على مستوى الاستعلام وقواعد البيانات'
-          : 'Strict tenant isolation across query and database pools',
-      level: 'Critical',
-    },
-    {
-      code: 'H2. ModeGuard',
-      desc:
-        lang === 'ar'
-          ? 'حظر الهروب من الوضع الخاص (Private) إلى البحث المباشر'
-          : 'Prevent private mode leak to live web search',
-      level: 'High',
-    },
-    {
-      code: 'H3. ScopeGuard',
-      desc:
-        lang === 'ar'
-          ? 'فحص تصاريح وسماحيات أدوات MCP المعرّفة للمستأجر'
-          : 'Verify permissions for tenant defined MCP tools',
-      level: 'Critical',
-    },
-    {
-      code: 'H5. SideEffectGate',
-      desc:
-        lang === 'ar'
-          ? 'تعليق وتأكيد استدعاءات الأدوات ذات الآثار الجانبية حتمياً'
-          : 'Hold and prompt verify state-altering tool executions',
-      level: 'Critical',
-    },
-    {
-      code: 'H6. InputSanitizer',
-      desc:
-        lang === 'ar'
-          ? 'كشف وحظر هجمات الحقن المباشر (Prompt Injection Defense)'
-          : 'Detect and sanitize Prompt Injection attempts',
-      level: 'Critical',
-    },
-    {
-      code: 'H8. CitationVerifier',
-      desc:
-        lang === 'ar'
-          ? 'التحقق من صحة المراجع وحذف المراجع الوهمية قبل البث'
-          : 'Verify source material to prevent AI hallucinated citations',
-      level: 'High',
-    },
-    {
-      code: 'H9. PIIRedactor',
-      desc:
-        lang === 'ar'
-          ? 'إخفاء الإيميلات وأرقام الهواتف تلقائياً بوسط [REDACTED]'
-          : 'Automatically mask emails and phone numbers with [REDACTED]',
-      level: 'High',
-    },
+    { code: 'H1. TenantGate', descKey: 'analytics.policyH1', levelKey: 'analytics.levelCritical' },
+    { code: 'H2. ModeGuard', descKey: 'analytics.policyH2', levelKey: 'analytics.levelHigh' },
+    { code: 'H3. ScopeGuard', descKey: 'analytics.policyH3', levelKey: 'analytics.levelCritical' },
+    { code: 'H5. SideEffectGate', descKey: 'analytics.policyH5', levelKey: 'analytics.levelCritical' },
+    { code: 'H6. InputSanitizer', descKey: 'analytics.policyH6', levelKey: 'analytics.levelCritical' },
+    { code: 'H8. CitationVerifier', descKey: 'analytics.policyH8', levelKey: 'analytics.levelHigh' },
+    { code: 'H9. PIIRedactor', descKey: 'analytics.policyH9', levelKey: 'analytics.levelHigh' },
   ];
 
   // --- Retrieval Playground State ---
@@ -205,12 +157,12 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
 
       const data = await res.json();
       if (!res.ok || data.error || !Array.isArray(data.chunks)) {
-        throw new Error(data.error || (lang === 'ar' ? 'فشل استعلام البحث' : 'Search query failed'));
+        throw new Error(data.error || t(lang, 'analytics.searchQueryFailed'));
       }
       setSearchResult(data as SearchResult);
     } catch (err: any) {
       console.error(err);
-      setSearchError(err?.message || (lang === 'ar' ? 'خطأ غير متوقع' : 'Unexpected error'));
+      setSearchError(err?.message || t(lang, 'analytics.unexpectedError'));
     } finally {
       setIsSearchLoading(false);
     }
@@ -243,18 +195,12 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
               </div>
               <div>
                 <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
-                  <span>
-                    {lang === 'ar' ? 'مركز التحليلات والحوكمة الشامل' : 'Unified Analytics & Governance Center'}
-                  </span>
+                  <span>{t(lang, 'analytics.title')}</span>
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
                     SECURE RAG
                   </span>
                 </h1>
-                <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
-                  {lang === 'ar'
-                    ? 'لوحة إدارة ومراقبة موحدة تضم: قياسات أداء الاسترجاع ونسب زمن الاستجابة، مصفوفة حوكمة HookHarness الحتمية، ومختبر محاكاة البحث الهجين RRF.'
-                    : 'A central mission-control deck uniting search metrics, deterministic safety guardrails, and hybrid retrieval tuning playground.'}
-                </p>
+                <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">{t(lang, 'analytics.subtitle')}</p>
               </div>
             </div>
           </div>
@@ -268,7 +214,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {lang === 'ar' ? 'التحليلات وسجلات التدقيق' : 'Analytics & Audits'}
+              {t(lang, 'analytics.tabAnalytics')}
             </button>
             <button
               onClick={() => setActiveSubTab('security')}
@@ -278,7 +224,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {lang === 'ar' ? 'الأمن والحوكمة' : 'Security Guardrails'}
+              {t(lang, 'analytics.tabSecurity')}
             </button>
             <button
               onClick={() => setActiveSubTab('playground')}
@@ -288,7 +234,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {lang === 'ar' ? 'مختبر الاسترجاع الهجين' : 'Hybrid Retrieval'}
+              {t(lang, 'analytics.tabPlayground')}
             </button>
           </div>
         </div>
@@ -303,7 +249,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
               <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium flex items-center justify-between">
                 <span>{analyticsError}</span>
                 <button onClick={fetchAnalytics} className="underline cursor-pointer font-bold">
-                  {lang === 'ar' ? 'إعادة المحاولة' : 'Retry'}
+                  {t(lang, 'analytics.retry')}
                 </button>
               </div>
             )}
@@ -312,76 +258,56 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <div
                 className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-1"
-                title={
-                  lang === 'ar'
-                    ? 'نسبة المستندات المفهرسة بنجاح من الإجمالي. مقاييس MRR/Recall@K تتطلب مجموعة إسناد معنونة غير مسجلة حالياً.'
-                    : 'Indexed / total documents ratio. MRR & Recall@K require a labelled relevance set that is not recorded yet.'
-                }
+                title={t(lang, 'analytics.indexHealthTooltip')}
               >
-                <span className="text-xs text-slate-500 font-medium">
-                  {lang === 'ar' ? 'صحة الفهرسة (Retrieval Health)' : 'Index Health'}
-                </span>
+                <span className="text-xs text-slate-500 font-medium">{t(lang, 'analytics.indexHealth')}</span>
                 <div className="text-2xl font-bold font-mono text-indigo-600">
                   {fmtPct(stats?.retrievalHealth ?? null)}
                 </div>
                 <span className="text-[11px] text-slate-400 font-medium block truncate">
                   {stats
-                    ? lang === 'ar'
-                      ? `${stats.indexedDocuments}/${stats.totalDocuments} مستنداً مفهرساً`
-                      : `${stats.indexedDocuments}/${stats.totalDocuments} docs indexed`
+                    ? t(lang, 'analytics.docsIndexed', {
+                        indexed: stats.indexedDocuments,
+                        total: stats.totalDocuments,
+                      })
                     : '…'}
                 </span>
               </div>
 
               <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-1">
-                <span className="text-xs text-slate-500 font-medium">
-                  {lang === 'ar' ? 'زمن أدوات MCP (P95)' : 'MCP Tools P95 Latency'}
-                </span>
+                <span className="text-xs text-slate-500 font-medium">{t(lang, 'analytics.p95Latency')}</span>
                 <div className="text-2xl font-bold font-mono text-emerald-600">
                   {stats?.p95LatencyMs != null ? `${stats.p95LatencyMs} ms` : '—'}
                 </div>
                 <span className="text-[11px] text-slate-400">
                   {stats?.toolCallCount
-                    ? lang === 'ar'
-                      ? `متوسط ${stats.avgToolLatencyMs ?? '—'} ms من ${stats.toolCallCount} استدعاء`
-                      : `avg ${stats.avgToolLatencyMs ?? '—'} ms over ${stats.toolCallCount} calls`
-                    : lang === 'ar'
-                      ? 'لا توجد استدعاءات أدوات بعد'
-                      : 'No tool calls recorded yet'}
+                    ? t(lang, 'analytics.avgLatencyOverCalls', {
+                        avg: stats.avgToolLatencyMs ?? '—',
+                        count: stats.toolCallCount,
+                      })
+                    : t(lang, 'analytics.noToolCalls')}
                 </span>
               </div>
 
               <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-1">
-                <span className="text-xs text-slate-500 font-medium">
-                  {lang === 'ar' ? 'الهجمات المحظورة (HookHarness)' : 'Blocked Attacks (HookHarness)'}
-                </span>
+                <span className="text-xs text-slate-500 font-medium">{t(lang, 'analytics.blockedAttacks')}</span>
                 <div className="text-2xl font-bold font-mono text-rose-600">{stats?.blockedAttacks ?? 0}</div>
                 <span className="text-[11px] text-rose-600 font-medium">
                   {stats?.attackRatio != null
-                    ? lang === 'ar'
-                      ? `${fmtPct(stats.attackRatio)} من محاولات الفحص`
-                      : `${fmtPct(stats.attackRatio)} of inference checks`
-                    : lang === 'ar'
-                      ? 'لا توجد فحوص حقن مسجلة'
-                      : 'No inference checks recorded'}
+                    ? t(lang, 'analytics.attackRatio', { ratio: fmtPct(stats.attackRatio) })
+                    : t(lang, 'analytics.noInferenceChecks')}
                 </span>
               </div>
 
               <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-1">
-                <span className="text-xs text-slate-500 font-medium">
-                  {lang === 'ar' ? 'إجمالي المستندات والقطع' : 'Total Documents & Chunks'}
-                </span>
+                <span className="text-xs text-slate-500 font-medium">{t(lang, 'analytics.totalDocsChunks')}</span>
                 <div className="text-2xl font-bold font-mono text-slate-900">
                   {isAnalyticsLoading && !stats ? '…' : `${stats?.totalDocuments ?? 0} / ${stats?.totalChunks ?? 0}`}
                 </div>
                 <span className="text-[11px] text-slate-400">
                   {conversationsCount != null
-                    ? lang === 'ar'
-                      ? `و${conversationsCount} محادثة — مفهرسة ومعزولة لكل مستأجر`
-                      : `+${conversationsCount} conversations — indexed and tenant-isolated`
-                    : lang === 'ar'
-                      ? 'مفهرسة مع عزل المستأجرين'
-                      : 'Indexed with tenant isolation'}
+                    ? t(lang, 'analytics.conversationsCount', { count: conversationsCount })
+                    : t(lang, 'analytics.tenantIsolated')}
                 </span>
               </div>
             </div>
@@ -397,44 +323,40 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
               <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-4">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <Wrench className="w-4 h-4 text-indigo-600" />
-                  <span>{lang === 'ar' ? 'أداء أدوات MCP' : 'MCP Tool Performance'}</span>
+                  <span>{t(lang, 'analytics.toolPerformance')}</span>
                 </h3>
 
                 {!stats || stats.toolCallCount === 0 ? (
                   <div className="h-40 flex flex-col items-center justify-center gap-2 text-center px-4">
                     <Inbox className="w-8 h-8 text-slate-300" />
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      {lang === 'ar'
-                        ? 'لم تُنفَّذ أي استدعاءات أدوات MCP بعد. جرّب استدعاء أداة من الدردشة أو بوابة الخوادم ليظهر الأداء هنا.'
-                        : 'No MCP tool calls executed yet. Call a tool from chat or the gateway to populate performance.'}
+                      {t(lang, 'analytics.toolPerformanceEmpty')}
                     </p>
                   </div>
                 ) : (
                   <>
                     <div className="grid grid-cols-3 gap-3 text-center">
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-[10px] text-slate-500 block">
-                          {lang === 'ar' ? 'الاستدعاءات' : 'Calls'}
-                        </span>
+                        <span className="text-[10px] text-slate-500 block">{t(lang, 'analytics.calls')}</span>
                         <span className="text-sm font-bold font-mono text-slate-900">{stats.toolCallCount}</span>
                       </div>
                       <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100">
-                        <span className="text-[10px] text-slate-500 block">{lang === 'ar' ? 'نجحت' : 'Succeeded'}</span>
+                        <span className="text-[10px] text-slate-500 block">{t(lang, 'analytics.succeeded')}</span>
                         <span className="text-sm font-bold font-mono text-emerald-700">{stats.toolCompletedCount}</span>
                       </div>
                       <div className="p-3 bg-rose-50/60 rounded-xl border border-rose-100">
-                        <span className="text-[10px] text-slate-500 block">{lang === 'ar' ? 'فشلت' : 'Failed'}</span>
+                        <span className="text-[10px] text-slate-500 block">{t(lang, 'analytics.failed')}</span>
                         <span className="text-sm font-bold font-mono text-rose-700">{stats.toolFailedCount}</span>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between text-[11px] text-slate-500">
                       <span>
-                        {lang === 'ar' ? 'معدل النجاح:' : 'Success rate:'}
+                        {t(lang, 'analytics.successRate')}
                         <b className="font-mono text-slate-800"> {fmtPct(stats.toolSuccessRate)}</b>
                       </span>
                       <span>
-                        {lang === 'ar' ? 'متوسط الزمن:' : 'Avg latency:'}
+                        {t(lang, 'analytics.avgLatency')}
                         <b className="font-mono text-slate-800"> {stats.avgToolLatencyMs ?? '—'} ms</b>
                       </span>
                     </div>
@@ -442,9 +364,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                     {latencySparkline && (
                       <div className="pt-1">
                         <span className="text-[10px] text-slate-400 block mb-1">
-                          {lang === 'ar'
-                            ? `آخر ${stats!.toolLatencySamples.length} استدعاء (زمن التنفيذ ms)`
-                            : `Last ${stats!.toolLatencySamples.length} calls (latency ms)`}
+                          {t(lang, 'analytics.lastCalls', { count: stats!.toolLatencySamples.length })}
                         </span>
                         <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="w-full h-14">
                           <polyline
@@ -468,14 +388,10 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <Activity className="w-4 h-4 text-indigo-600" />
                   <span>
-                    {lang === 'ar' ? 'سجل التدقيق الأمني' : 'Security Audit Log'}
+                    {t(lang, 'analytics.auditLog')}
                     {auditLogsTotal != null && auditLogsTotal > auditLogs.length && (
                       <span className="text-[10px] font-normal text-slate-400 mr-1">
-                        (
-                        {lang === 'ar'
-                          ? `أحدث ${auditLogs.length} من ${auditLogsTotal}`
-                          : `latest ${auditLogs.length} of ${auditLogsTotal}`}
-                        )
+                        ({t(lang, 'analytics.auditShown', { shown: auditLogs.length, total: auditLogsTotal })})
                       </span>
                     )}
                   </span>
@@ -486,7 +402,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition flex items-center gap-1 text-xs cursor-pointer select-none"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isAnalyticsLoading ? 'animate-spin' : ''}`} />
-                  <span>{lang === 'ar' ? 'تحديث' : 'Refresh'}</span>
+                  <span>{t(lang, 'analytics.refresh')}</span>
                 </button>
               </div>
 
@@ -495,10 +411,10 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                 <ListFilter className="w-3.5 h-3.5 text-slate-400" />
                 {(
                   [
-                    ['all', lang === 'ar' ? 'الكل' : 'All'],
-                    ['success', lang === 'ar' ? 'نجاح' : 'Success'],
-                    ['error', lang === 'ar' ? 'أخطاء' : 'Errors'],
-                    ['blocked', lang === 'ar' ? 'محظور' : 'Blocked'],
+                    ['all', t(lang, 'analytics.filterAll')],
+                    ['success', t(lang, 'analytics.filterSuccess')],
+                    ['error', t(lang, 'analytics.filterErrors')],
+                    ['blocked', t(lang, 'analytics.filterBlocked')],
                   ] as [StatusFilterType, string][]
                 ).map(([value, label]) => {
                   const count =
@@ -533,9 +449,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                     setActionSearch(e.target.value);
                     setVisibleRows(AUDIT_PAGE_STEP);
                   }}
-                  placeholder={
-                    lang === 'ar' ? 'بحث في الإجراء/الفاعل/التفاصيل...' : 'Filter by action/actor/details...'
-                  }
+                  placeholder={t(lang, 'analytics.auditSearchPlaceholder')}
                   className="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg border border-slate-200 text-[11px] focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -544,20 +458,18 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                 <table className="w-full text-xs text-slate-700">
                   <thead className="bg-slate-50 border-y border-slate-200 text-slate-600 font-bold text-right">
                     <tr>
-                      <th className="p-3 text-right">{lang === 'ar' ? 'الإجراء' : 'Action'}</th>
-                      <th className="p-3 text-right">{lang === 'ar' ? 'الفاعل (Actor)' : 'Actor ID'}</th>
-                      <th className="p-3 text-right">{lang === 'ar' ? 'الحالة' : 'Status'}</th>
-                      <th className="p-3 text-right">{lang === 'ar' ? 'التفاصيل' : 'Details'}</th>
-                      <th className="p-3 text-right">{lang === 'ar' ? 'التوقيت' : 'Timestamp'}</th>
+                      <th className="p-3 text-right">{t(lang, 'analytics.colAction')}</th>
+                      <th className="p-3 text-right">{t(lang, 'analytics.colActor')}</th>
+                      <th className="p-3 text-right">{t(lang, 'analytics.colStatus')}</th>
+                      <th className="p-3 text-right">{t(lang, 'analytics.colDetails')}</th>
+                      <th className="p-3 text-right">{t(lang, 'analytics.colTimestamp')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono text-right">
                     {filteredAuditLogs.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="p-8 text-center text-slate-400 font-sans">
-                          {lang === 'ar'
-                            ? 'لا توجد سجلات تدقيق مطابقة للتصفية الحالية.'
-                            : 'No audit logs match the current filter.'}
+                          {t(lang, 'analytics.auditEmpty')}
                         </td>
                       </tr>
                     ) : (
@@ -604,9 +516,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   onClick={() => setVisibleRows((v) => v + AUDIT_PAGE_STEP)}
                   className="w-full py-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-600 transition cursor-pointer"
                 >
-                  {lang === 'ar'
-                    ? `عرض المزيد (${filteredAuditLogs.length - visibleRows} متبقياً)`
-                    : `Show more (${filteredAuditLogs.length - visibleRows} remaining)`}
+                  {t(lang, 'analytics.showMore', { count: filteredAuditLogs.length - visibleRows })}
                 </button>
               )}
             </div>
@@ -621,21 +531,17 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs text-center space-y-0.5">
                 <ShieldAlert className="w-4 h-4 text-rose-600 mx-auto" />
                 <div className="text-lg font-bold font-mono text-rose-600">{stats?.blockedAttacks ?? 0}</div>
-                <span className="text-[10px] text-slate-500">{lang === 'ar' ? 'هجمات محظورة' : 'Blocked attacks'}</span>
+                <span className="text-[10px] text-slate-500">{t(lang, 'analytics.blockedAttacksChip')}</span>
               </div>
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs text-center space-y-0.5">
                 <EyeOff className="w-4 h-4 text-amber-600 mx-auto" />
                 <div className="text-lg font-bold font-mono text-amber-600">{fmtPct(stats?.attackRatio ?? null)}</div>
-                <span className="text-[10px] text-slate-500">
-                  {lang === 'ar' ? 'نسبة الحظر من الفحوص' : 'Block ratio'}
-                </span>
+                <span className="text-[10px] text-slate-500">{t(lang, 'analytics.blockRatio')}</span>
               </div>
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs text-center space-y-0.5">
                 <Wrench className="w-4 h-4 text-indigo-600 mx-auto" />
                 <div className="text-lg font-bold font-mono text-indigo-600">{stats?.toolCallCount ?? 0}</div>
-                <span className="text-[10px] text-slate-500">
-                  {lang === 'ar' ? 'استدعاءات أدوات MCP' : 'MCP tool calls'}
-                </span>
+                <span className="text-[10px] text-slate-500">{t(lang, 'analytics.mcpToolCalls')}</span>
               </div>
             </div>
 
@@ -644,11 +550,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
               <div className="lg:col-span-2 bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-4">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <Lock className="w-4 h-4 text-indigo-600" />
-                  <span>
-                    {lang === 'ar'
-                      ? 'سياسات الحوكمة والدروع الحتمية (Deterministic Guardrails)'
-                      : 'Enforced Hook Matrix'}
-                  </span>
+                  <span>{t(lang, 'analytics.hookMatrix')}</span>
                 </h3>
 
                 <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
@@ -661,15 +563,15 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs font-bold text-indigo-600">{p.code}</span>
                           <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 text-[9px] font-bold">
-                            {p.level}
+                            {t(lang, p.levelKey)}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-600 mt-0.5">{p.desc}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">{t(lang, p.descKey)}</p>
                       </div>
 
                       <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-bold shrink-0">
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>{lang === 'ar' ? 'نشط' : 'Active'}</span>
+                        <span>{t(lang, 'analytics.policyActive')}</span>
                       </div>
                     </div>
                   ))}
@@ -681,12 +583,10 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 mb-2 flex items-center gap-2">
                     <ShieldAlert className="w-4 h-4 text-rose-600" />
-                    <span>{lang === 'ar' ? 'مختبر كشف هجمات الحقن والكسر:' : 'Prompt Injection Tester'}</span>
+                    <span>{t(lang, 'analytics.injectionTester')}</span>
                   </h3>
                   <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                    {lang === 'ar'
-                      ? 'اكتب أي أسلوب هجوم أو محاولة تجاوز للتأكد من حظرها فوراً عبر دروع HookHarness قبل التمرير لـ LLM.'
-                      : 'Simulate system instruction overrides or jailbreak tactics to test the HookHarness sandbox.'}
+                    {t(lang, 'analytics.injectionTesterDesc')}
                   </p>
 
                   <textarea
@@ -706,15 +606,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                     ) : (
                       <Play className="w-3.5 h-3.5 text-emerald-400" />
                     )}
-                    <span>
-                      {isSecurityTesting
-                        ? lang === 'ar'
-                          ? 'جاري الفحص...'
-                          : 'Inspecting...'
-                        : lang === 'ar'
-                          ? 'اختبار الفحص الحتمي'
-                          : 'Run Deterministic Test'}
-                    </span>
+                    <span>{t(lang, isSecurityTesting ? 'analytics.inspecting' : 'analytics.runTest')}</span>
                   </button>
                 </div>
 
@@ -728,9 +620,9 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   >
                     <div className="flex items-center justify-between font-bold">
                       <span>
-                        {lang === 'ar'
-                          ? `النتيجة: ${securityResult.allow ? 'مسموح' : 'محظور!'}`
-                          : `Result: ${securityResult.allow ? 'ALLOWED' : 'BLOCKED!'}`}
+                        {t(lang, 'analytics.result', {
+                          verdict: t(lang, securityResult.allow ? 'analytics.allowed' : 'analytics.blocked'),
+                        })}
                       </span>
                       {!securityResult.allow && (
                         <span className="font-mono text-[9px] bg-rose-200 px-1.5 py-0.5 rounded text-rose-900">
@@ -738,11 +630,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                         </span>
                       )}
                     </div>
-                    <p className="leading-relaxed mt-1">
-                      {lang === 'ar'
-                        ? securityResult.reason || 'الطلب مأمون واجتاز الفحص الحتمي بنجاح.'
-                        : securityResult.reason || 'Prompt clean. Bypassed Guardrails safely.'}
-                    </p>
+                    <p className="leading-relaxed mt-1">{securityResult.reason || t(lang, 'analytics.promptClean')}</p>
                   </div>
                 )}
               </div>
@@ -758,22 +646,14 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
               <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-5">
                 <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
                   <Sliders className="w-4 h-4 text-indigo-600" />
-                  <span>{lang === 'ar' ? 'معايير وزن الخوارزميات' : 'Search Algorithm Tuning'}</span>
+                  <span>{t(lang, 'analytics.tuning')}</span>
                 </h3>
 
                 {/* Semantic vs Lexical Weight Slider */}
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs font-medium text-slate-700">
-                    <span>
-                      {lang === 'ar'
-                        ? `الوزن الدلالي المتجهي: ${(semanticWeight * 100).toFixed(0)}%`
-                        : `Semantic Weight: ${(semanticWeight * 100).toFixed(0)}%`}
-                    </span>
-                    <span>
-                      {lang === 'ar'
-                        ? `الوزن المعجمي: ${(lexicalWeight * 100).toFixed(0)}%`
-                        : `Lexical Weight: ${(lexicalWeight * 100).toFixed(0)}%`}
-                    </span>
+                    <span>{t(lang, 'analytics.semanticWeight', { pct: (semanticWeight * 100).toFixed(0) })}</span>
+                    <span>{t(lang, 'analytics.lexicalWeight', { pct: (lexicalWeight * 100).toFixed(0) })}</span>
                   </div>
                   <input
                     type="range"
@@ -788,17 +668,13 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                     }}
                     className="w-full accent-indigo-600 cursor-pointer"
                   />
-                  <p className="text-[10px] text-slate-400 leading-relaxed">
-                    {lang === 'ar'
-                      ? 'موازنة نتائج دمج Qdrant (المعاني الدلالية) مع Neon (الكلمات المفتاحية الدقيقة BM25).'
-                      : 'Balances deep-context vector results (Qdrant) with precise keyword match scores (Neon).'}
-                  </p>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">{t(lang, 'analytics.weightHint')}</p>
                 </div>
 
                 {/* Top-K Slider */}
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-700 block">
-                    {lang === 'ar' ? `عدد القطع المسترجعة (Top-K): ${topK}` : `Max Retrieved Chunks (Top-K): ${topK}`}
+                    {t(lang, 'analytics.topK', { k: topK })}
                   </label>
                   <input
                     type="range"
@@ -813,9 +689,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                 {/* HyDE Option Toggle */}
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-bold text-slate-900 block">
-                      {lang === 'ar' ? 'توليد HyDE الافتراضي' : 'Use HyDE Generation'}
-                    </span>
+                    <span className="text-xs font-bold text-slate-900 block">{t(lang, 'analytics.useHyde')}</span>
                     <span className="text-[10px] text-slate-400 font-mono">Hypothetical Document Embeddings</span>
                   </div>
                   <input
@@ -832,15 +706,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-xs cursor-pointer"
                 >
                   <Zap className={`w-4 h-4 ${isSearchLoading ? 'animate-bounce' : ''}`} />
-                  <span>
-                    {isSearchLoading
-                      ? lang === 'ar'
-                        ? 'جاري الاستعلام...'
-                        : 'Running...'
-                      : lang === 'ar'
-                        ? 'تشغيل استعلام هجين'
-                        : 'Execute Hybrid Query'}
-                  </span>
+                  <span>{t(lang, isSearchLoading ? 'analytics.running' : 'analytics.executeHybrid')}</span>
                 </button>
               </div>
 
@@ -851,11 +717,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={
-                      lang === 'ar'
-                        ? 'اكتب موضوع البحث التجريبي (مثلاً: إجازة الأمومة والتعويضات)'
-                        : 'Enter evaluation search query...'
-                    }
+                    placeholder={t(lang, 'analytics.playgroundPlaceholder')}
                     className="flex-1 px-4 py-3 rounded-xl bg-white border border-slate-300 text-xs focus:outline-none focus:border-indigo-500 shadow-2xs"
                   />
                   <button
@@ -863,13 +725,13 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                     disabled={isSearchLoading || !searchQuery.trim()}
                     className="px-5 py-3 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 disabled:opacity-60 transition cursor-pointer select-none"
                   >
-                    {lang === 'ar' ? 'بحث' : 'Search'}
+                    {t(lang, 'analytics.search')}
                   </button>
                 </form>
 
                 {searchError && (
                   <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">
-                    {lang === 'ar' ? 'فشل الاستعلام: ' : 'Query failed: '}
+                    {t(lang, 'analytics.queryFailedPrefix')}
                     {searchError}
                   </div>
                 )}
@@ -878,31 +740,23 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-4 max-h-[500px] overflow-y-auto">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-[10px] text-slate-500 block">
-                          {lang === 'ar' ? 'زمن الاستجابة الفعلي' : 'Measured Latency'}
-                        </span>
+                        <span className="text-[10px] text-slate-500 block">{t(lang, 'analytics.measuredLatency')}</span>
                         <span className="text-sm font-bold font-mono text-indigo-600">{searchResult.latencyMs} ms</span>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-[10px] text-slate-500 block">
-                          {lang === 'ar' ? 'القطع المندمجة' : 'Chunks Fused'}
-                        </span>
+                        <span className="text-[10px] text-slate-500 block">{t(lang, 'analytics.chunksFused')}</span>
                         <span className="text-sm font-bold font-mono text-emerald-600">
                           {searchResult.chunks.length}
                         </span>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-[10px] text-slate-500 block">
-                          {lang === 'ar' ? 'مطابقات المتجهي' : 'Semantic Matches'}
-                        </span>
+                        <span className="text-[10px] text-slate-500 block">{t(lang, 'analytics.semanticMatches')}</span>
                         <span className="text-sm font-bold font-mono text-violet-600">
                           {searchResult.distribution.semanticMatches}
                         </span>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-[10px] text-slate-500 block">
-                          {lang === 'ar' ? 'مطابقات المعجمي' : 'Lexical Matches'}
-                        </span>
+                        <span className="text-[10px] text-slate-500 block">{t(lang, 'analytics.lexicalMatches')}</span>
                         <span className="text-sm font-bold font-mono text-sky-600">
                           {searchResult.distribution.lexicalMatches}
                         </span>
@@ -914,9 +768,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                       <div className="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100 text-xs">
                         <span className="font-bold text-indigo-900 block mb-1 flex items-center gap-1">
                           <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                          {lang === 'ar'
-                            ? 'المستند الافتراضي المولّد (HyDE Expansion):'
-                            : 'Generated Hypothetical Answer (HyDE Expansion):'}
+                          {t(lang, 'analytics.hydeExpansion')}
                         </span>
                         <p className="text-indigo-800 italic leading-relaxed">"{searchResult.hydePrompt}"</p>
                       </div>
@@ -924,17 +776,9 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
 
                     {/* Chunks results */}
                     <div className="space-y-3 pt-2">
-                      <span className="text-xs font-bold text-slate-800 block">
-                        {lang === 'ar'
-                          ? 'نتائج الترتيب النهائي المسترجعة عبر RRF:'
-                          : 'Reciprocal Rank Fusion (RRF) Scored Chunks:'}
-                      </span>
+                      <span className="text-xs font-bold text-slate-800 block">{t(lang, 'analytics.rrfChunks')}</span>
                       {searchResult.chunks.length === 0 && (
-                        <p className="text-xs text-slate-400 text-center py-6">
-                          {lang === 'ar'
-                            ? 'لا توجد قطع مطابقة فوق حد الصلة — جرّب صياغة أخرى أو فعّل HyDE.'
-                            : 'No chunks matched above the relevance floor — try another phrasing or enable HyDE.'}
-                        </p>
+                        <p className="text-xs text-slate-400 text-center py-6">{t(lang, 'analytics.noChunks')}</p>
                       )}
                       {searchResult.chunks.map((chunk, idx) => (
                         <div
@@ -947,13 +791,13 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                             </span>
                             <div className="flex items-center gap-2 font-mono text-[10px]">
                               <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-bold">
-                                Fused Score: {chunk.score}
+                                {t(lang, 'analytics.fusedScore', { score: chunk.score ?? '—' })}
                               </span>
                               <span className="bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
-                                Sem: {chunk.semanticScore ?? '—'}
+                                {t(lang, 'analytics.semScore', { score: chunk.semanticScore ?? '—' })}
                               </span>
                               <span className="bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
-                                Lex: {chunk.lexicalScore ?? '—'}
+                                {t(lang, 'analytics.lexScore', { score: chunk.lexicalScore ?? '—' })}
                               </span>
                             </div>
                           </div>

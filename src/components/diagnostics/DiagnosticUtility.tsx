@@ -25,6 +25,7 @@ import {
   HardDrive,
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { t } from '@/lib/i18n';
 
 interface DiagnosticUtilityProps {
   lang?: 'ar' | 'en';
@@ -66,23 +67,12 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
 
   const runFullDiagnostics = useCallback(async () => {
     setIsRunning(true);
-    addLog(lang === 'ar' ? 'بدء الفحص التشخيصي الكامل للنظام...' : 'Starting full system diagnostic suite...', 'info');
+    addLog(t(lang, 'diag.logStarting'), 'info');
 
     try {
-      addLog(
-        lang === 'ar' ? 'اختبار الاتصال بقاعدة بيانات PostgreSQL...' : 'Testing PostgreSQL database connection...',
-        'info',
-      );
-      addLog(
-        lang === 'ar' ? 'اختبار محرك المتجهات Qdrant Vector Engine...' : 'Testing Qdrant vector cluster connection...',
-        'info',
-      );
-      addLog(
-        lang === 'ar'
-          ? 'المصادقة مع واجهة Mistral Document AI API...'
-          : 'Authenticating with Mistral Document AI API...',
-        'info',
-      );
+      addLog(t(lang, 'diag.logTestPg'), 'info');
+      addLog(t(lang, 'diag.logTestQd'), 'info');
+      addLog(t(lang, 'diag.logTestMs'), 'info');
 
       const res = await fetchWithAuth('/api/v1/diagnostics');
       if (res.ok) {
@@ -94,68 +84,40 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
         const pg = data.diagnostics?.postgresql;
         if (pg?.status === 'connected') {
           addLog(
-            lang === 'ar'
-              ? `تم الاتصال بنجاح بـ PostgreSQL (${pg.latencyMs}ms) - الإصدار: ${pg.version} - الجداول النشطة: ${pg.activeTablesCount}`
-              : `PostgreSQL connected successfully (${pg.latencyMs}ms) - Version: ${pg.version} - Tables: ${pg.activeTablesCount}`,
+            t(lang, 'diag.logPgConnected', {
+              latency: pg.latencyMs,
+              version: pg.version,
+              tables: pg.activeTablesCount,
+            }),
             'success',
           );
         } else {
-          addLog(
-            lang === 'ar'
-              ? `فشل الاتصال بـ PostgreSQL: ${pg?.message || 'غير معروف'}`
-              : `PostgreSQL connection issue: ${pg?.message || 'Unknown error'}`,
-            'warn',
-          );
+          addLog(t(lang, 'diag.logPgIssue', { message: pg?.message || t(lang, 'diag.unknownError') }), 'warn');
         }
 
         const qd = data.diagnostics?.qdrant;
         if (qd?.status === 'connected') {
           addLog(
-            lang === 'ar'
-              ? `تم الاتصال بمحرك Qdrant (${qd.latencyMs}ms) - مجموعة البيانات: omnirag_chunks (${qd.collectionInfo?.pointsCount || 0} متجهات)`
-              : `Qdrant cluster connected (${qd.latencyMs}ms) - Collection: omnirag_chunks (${qd.collectionInfo?.pointsCount || 0} vectors)`,
+            t(lang, 'diag.logQdConnected', { latency: qd.latencyMs, points: qd.collectionInfo?.pointsCount || 0 }),
             'success',
           );
         } else {
-          addLog(
-            lang === 'ar'
-              ? `تنبيه محرك المتجهات Qdrant: ${qd?.message || 'غير متصل'}`
-              : `Qdrant vector engine alert: ${qd?.message || 'Disconnected'}`,
-            'warn',
-          );
+          addLog(t(lang, 'diag.logQdAlert', { message: qd?.message || t(lang, 'diag.disconnected') }), 'warn');
         }
 
         const ms = data.diagnostics?.mistral;
         if (ms?.status === 'connected') {
-          addLog(
-            lang === 'ar'
-              ? `تمت مصادقة Mistral API بنجاح (${ms.latencyMs}ms) - عدد النماذج المتاحة: ${ms.modelsCount}`
-              : `Mistral API authenticated successfully (${ms.latencyMs}ms) - Models available: ${ms.modelsCount}`,
-            'success',
-          );
+          addLog(t(lang, 'diag.logMsAuthenticated', { latency: ms.latencyMs, models: ms.modelsCount }), 'success');
         } else {
-          addLog(
-            lang === 'ar'
-              ? `تنبيه Mistral Document AI: ${ms?.message || 'فشل المصادقة'}`
-              : `Mistral Document AI alert: ${ms?.message || 'Authentication failed'}`,
-            'warn',
-          );
+          addLog(t(lang, 'diag.logMsAlert', { message: ms?.message || t(lang, 'diag.authFailed') }), 'warn');
         }
 
-        addLog(
-          lang === 'ar'
-            ? `اكتمل الفحص التشخيصي بنجاح! نسبة الجاهزية للإنتاج: ${data.readinessScore}%`
-            : `Diagnostics finished! Production Readiness Score: ${data.readinessScore}%`,
-          'success',
-        );
+        addLog(t(lang, 'diag.logFinished', { score: data.readinessScore }), 'success');
       } else {
-        addLog(
-          lang === 'ar' ? 'تعذر جلب تقرير التشخيص من الخادم' : 'Failed to retrieve diagnostic report from server',
-          'error',
-        );
+        addLog(t(lang, 'diag.logFetchFailed'), 'error');
       }
     } catch (err: any) {
-      addLog(lang === 'ar' ? `خطأ أثناء التشخيص: ${err.message}` : `Diagnostic error: ${err.message}`, 'error');
+      addLog(t(lang, 'diag.logError', { error: err.message }), 'error');
     } finally {
       setIsRunning(false);
     }
@@ -164,7 +126,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
   const testSingleTarget = async (target: 'postgres' | 'qdrant' | 'mistral') => {
     setTestingTarget(target);
     const label = target === 'postgres' ? 'PostgreSQL' : target === 'qdrant' ? 'Qdrant' : 'Mistral API';
-    addLog(lang === 'ar' ? `جاري اختبار اتصال ${label} منفصلاً...` : `Re-testing connection for ${label}...`, 'info');
+    addLog(t(lang, 'diag.logRetesting', { label }), 'info');
 
     try {
       const res = await fetchWithAuth('/api/v1/diagnostics', {
@@ -190,27 +152,14 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           });
 
           if (singleResult.status === 'connected') {
-            addLog(
-              lang === 'ar'
-                ? `اختبار ${label} ناجح! زمن الاستجابة: ${singleResult.latencyMs}ms`
-                : `${label} re-test succeeded! Latency: ${singleResult.latencyMs}ms`,
-              'success',
-            );
+            addLog(t(lang, 'diag.logRetestOk', { label, latency: singleResult.latencyMs }), 'success');
           } else {
-            addLog(
-              lang === 'ar'
-                ? `فشل اختبار ${label}: ${singleResult.message}`
-                : `${label} re-test failed: ${singleResult.message}`,
-              'error',
-            );
+            addLog(t(lang, 'diag.logRetestFailed', { label, message: singleResult.message }), 'error');
           }
         }
       }
     } catch (err: any) {
-      addLog(
-        lang === 'ar' ? `خطأ أثناء إعادة اختبار ${label}: ${err.message}` : `Error re-testing ${label}: ${err.message}`,
-        'error',
-      );
+      addLog(t(lang, 'diag.logRetestError', { label, error: err.message }), 'error');
     } finally {
       setTestingTarget(null);
     }
@@ -242,77 +191,6 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const t = {
-    ar: {
-      title: 'أداة التشخيص والتحقق من الخدمات',
-      desc: 'فحص الاتصال الفعلي بقاعدة بيانات PostgreSQL، ومحرك المتجهات Qdrant، وواجهة Mistral API للتأكد من مطابقة البيئة الإنتاجية.',
-      runButton: 'تشغيل الفحص التشخيصي',
-      running: 'جاري إجراء الاتصالات...',
-      exportReport: 'تصدير التقرير JSON',
-      lastCheckedAt: 'آخر فحص:',
-      readinessScore: 'نسبة جاهزية البيئة الإنتاجية',
-      connectionsTab: 'الاتصالات والخدمات',
-      environmentTab: 'تدقيق متغيرات البيئة',
-      logsTab: 'سجل الفحص المباشر',
-      postgresTitle: 'قاعدة بيانات PostgreSQL',
-      qdrantTitle: 'محرك المتجهات Qdrant',
-      mistralTitle: 'واجهة Mistral Document AI',
-      statusConnected: 'متصل وجاهز',
-      statusDisconnected: 'غير متصل',
-      statusMissingConfig: 'غير مكون بملف البيئة',
-      statusAuthFailed: 'خطأ في المصادقة',
-      latency: 'زمن الاستجابة',
-      databaseName: 'اسم قاعدة البيانات',
-      activeTables: 'الجداول النشطة',
-      vectorCollection: 'مجموعة المتجهات',
-      pointsCount: 'عدد المتجهات',
-      vectorDimensions: 'أبعاد المتجه',
-      availableModels: 'النماذج المتاحة',
-      maskedEndpoint: 'عنوان الخدمة المشفر',
-      maskedApiKey: 'مفتاح الوصول المشفر',
-      retest: 'إعادة الاختبار',
-      envVarName: 'اسم المتغير',
-      envCategory: 'التصنيف',
-      envStatus: 'الحالة ببيئة التشغيل',
-      envPreview: 'المعيار / القيمة المشفرة',
-      envRequired: 'مطلوب للإنتاج',
-    },
-    en: {
-      title: 'Production Connection Diagnostic Utility',
-      desc: 'Live connection verification for PostgreSQL, Qdrant Vector DB, and Mistral Document AI API, ensuring production credentials are correctly read.',
-      runButton: 'Run Full Diagnostics',
-      running: 'Running Diagnostics...',
-      exportReport: 'Export JSON Report',
-      lastCheckedAt: 'Last checked:',
-      readinessScore: 'Production Readiness Score',
-      connectionsTab: 'Service Connections',
-      environmentTab: 'Environment Audit',
-      logsTab: 'Live Execution Stream',
-      postgresTitle: 'PostgreSQL Database',
-      qdrantTitle: 'Qdrant Vector Engine',
-      mistralTitle: 'Mistral Document AI API',
-      statusConnected: 'Connected & Healthy',
-      statusDisconnected: 'Disconnected',
-      statusMissingConfig: 'Missing Config',
-      statusAuthFailed: 'Authentication Failed',
-      latency: 'Latency',
-      databaseName: 'Database Name',
-      activeTables: 'Active Tables',
-      vectorCollection: 'Vector Collection',
-      pointsCount: 'Indexed Vectors',
-      vectorDimensions: 'Vector Dimensions',
-      availableModels: 'Available Models',
-      maskedEndpoint: 'Masked Endpoint',
-      maskedApiKey: 'Masked Credentials',
-      retest: 'Re-test',
-      envVarName: 'Variable Name',
-      envCategory: 'Category',
-      envStatus: 'Status',
-      envPreview: 'Value Preview',
-      envRequired: 'Required',
-    },
-  }[lang];
-
   const pg = report?.diagnostics?.postgresql;
   const qd = report?.diagnostics?.qdrant;
   const ms = report?.diagnostics?.mistral;
@@ -327,13 +205,13 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs font-bold border border-indigo-500/20">
               <Activity className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
-              <span>{lang === 'ar' ? 'بيئة التشغيل والإنتاج' : 'Runtime Environment Health'}</span>
+              <span>{t(lang, 'diag.badgeTitle')}</span>
             </div>
             <h2 className="text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
               <Server className="w-6 h-6 text-cyan-400" />
-              {t.title}
+              {t(lang, 'diag.title')}
             </h2>
-            <p className="text-slate-300 text-xs leading-relaxed">{t.desc}</p>
+            <p className="text-slate-300 text-xs leading-relaxed">{t(lang, 'diag.desc')}</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
@@ -343,7 +221,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
               className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md cursor-pointer"
             >
               <RefreshCw className={`w-4 h-4 ${isRunning ? 'animate-spin' : ''}`} />
-              {isRunning ? t.running : t.runButton}
+              {t(lang, isRunning ? 'diag.running' : 'diag.runButton')}
             </button>
 
             {report && (
@@ -352,7 +230,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                 className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                {t.exportReport}
+                {t(lang, 'diag.exportReport')}
               </button>
             )}
           </div>
@@ -364,7 +242,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
             <div className="flex justify-between items-center text-xs font-bold">
               <span className="text-slate-300 flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                {t.readinessScore}
+                {t(lang, 'diag.readinessScore')}
               </span>
               <span className="text-cyan-400 font-mono text-sm">{score}%</span>
             </div>
@@ -385,7 +263,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
             <Clock className="w-4 h-4 text-slate-500 shrink-0" />
             <span>
-              {t.lastCheckedAt} <strong className="text-slate-200">{lastChecked || '—'}</strong>
+              {t(lang, 'diag.lastCheckedAt')} <strong className="text-slate-200">{lastChecked || '—'}</strong>
             </span>
           </div>
 
@@ -402,13 +280,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                   report?.overallStatus === 'healthy' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
                 }`}
               />
-              {report?.overallStatus === 'healthy'
-                ? lang === 'ar'
-                  ? 'البيئة تعمل بكفاءة'
-                  : 'Operational & Ready'
-                : lang === 'ar'
-                  ? 'تحذير في إحدى الخدمات'
-                  : 'Degraded State'}
+              {t(lang, report?.overallStatus === 'healthy' ? 'diag.opReady' : 'diag.degradedState')}
             </span>
           </div>
         </div>
@@ -425,7 +297,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           }`}
         >
           <Database className="w-4 h-4" />
-          {t.connectionsTab}
+          {t(lang, 'diag.connectionsTab')}
         </button>
 
         <button
@@ -437,7 +309,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           }`}
         >
           <Key className="w-4 h-4" />
-          {t.environmentTab}
+          {t(lang, 'diag.environmentTab')}
         </button>
 
         <button
@@ -449,7 +321,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           }`}
         >
           <Terminal className="w-4 h-4" />
-          {t.logsTab}
+          {t(lang, 'diag.logsTab')}
           {logs.length > 0 && (
             <span className="ml-1 px-1.5 py-0.2 rounded-full bg-indigo-800 text-white text-[10px] font-mono">
               {logs.length}
@@ -470,8 +342,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     <Database className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-900 text-sm">{t.postgresTitle}</h3>
-                    <p className="text-[11px] text-slate-500 font-mono">Lexical & Metadata Storage</p>
+                    <h3 className="font-bold text-slate-900 text-sm">{t(lang, 'diag.postgresTitle')}</h3>
+                    <p className="text-[11px] text-slate-500 font-mono">{t(lang, 'diag.pgSubtitle')}</p>
                   </div>
                 </div>
 
@@ -490,10 +362,10 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     <AlertTriangle className="w-3 h-3 text-amber-600" />
                   )}
                   {pg?.status === 'connected'
-                    ? t.statusConnected
+                    ? t(lang, 'diag.statusConnected')
                     : pg?.status === 'missing_config'
-                      ? t.statusMissingConfig
-                      : t.statusDisconnected}
+                      ? t(lang, 'diag.statusMissingConfig')
+                      : t(lang, 'diag.statusDisconnected')}
                 </span>
               </div>
 
@@ -501,20 +373,22 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
 
               <div className="space-y-2 pt-2 border-t border-slate-100 text-xs font-mono">
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.latency}:</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.latency')}:</span>
                   <span className="font-bold text-slate-800">{pg?.latencyMs ?? 0} ms</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.databaseName}:</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.databaseName')}:</span>
                   <span className="font-bold text-slate-800">{pg?.databaseName || '—'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.activeTables}:</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.activeTables')}:</span>
                   <span className="font-bold text-indigo-600">{pg?.activeTablesCount ?? 0}</span>
                 </div>
                 {pg?.maskedUrl && (
                   <div className="py-1">
-                    <span className="text-[10px] text-slate-400 block mb-0.5 font-sans">{t.maskedEndpoint}:</span>
+                    <span className="text-[10px] text-slate-400 block mb-0.5 font-sans">
+                      {t(lang, 'diag.maskedEndpoint')}:
+                    </span>
                     <span className="text-[10px] bg-slate-50 p-1.5 rounded border border-slate-200 block truncate text-slate-600">
                       {pg.maskedUrl}
                     </span>
@@ -529,7 +403,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
               className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${testingTarget === 'postgres' ? 'animate-spin' : ''}`} />
-              {t.retest}
+              {t(lang, 'diag.retest')}
             </button>
           </div>
 
@@ -542,8 +416,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     <Layers className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-900 text-sm">{t.qdrantTitle}</h3>
-                    <p className="text-[11px] text-slate-500 font-mono">Vector Semantic Index</p>
+                    <h3 className="font-bold text-slate-900 text-sm">{t(lang, 'diag.qdrantTitle')}</h3>
+                    <p className="text-[11px] text-slate-500 font-mono">{t(lang, 'diag.qdSubtitle')}</p>
                   </div>
                 </div>
 
@@ -562,10 +436,10 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     <AlertTriangle className="w-3 h-3 text-amber-600" />
                   )}
                   {qd?.status === 'connected'
-                    ? t.statusConnected
+                    ? t(lang, 'diag.statusConnected')
                     : qd?.status === 'missing_config'
-                      ? t.statusMissingConfig
-                      : t.statusDisconnected}
+                      ? t(lang, 'diag.statusMissingConfig')
+                      : t(lang, 'diag.statusDisconnected')}
                 </span>
               </div>
 
@@ -573,20 +447,22 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
 
               <div className="space-y-2 pt-2 border-t border-slate-100 text-xs font-mono">
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.latency}:</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.latency')}:</span>
                   <span className="font-bold text-slate-800">{qd?.latencyMs ?? 0} ms</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.vectorCollection}:</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.vectorCollection')}:</span>
                   <span className="font-bold text-indigo-600">omnirag_chunks</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.pointsCount}:</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.pointsCount')}:</span>
                   <span className="font-bold text-slate-800">{qd?.collectionInfo?.pointsCount ?? 0}</span>
                 </div>
                 {qd?.maskedUrl && (
                   <div className="py-1">
-                    <span className="text-[10px] text-slate-400 block mb-0.5 font-sans">{t.maskedEndpoint}:</span>
+                    <span className="text-[10px] text-slate-400 block mb-0.5 font-sans">
+                      {t(lang, 'diag.maskedEndpoint')}:
+                    </span>
                     <span className="text-[10px] bg-slate-50 p-1.5 rounded border border-slate-200 block truncate text-slate-600">
                       {qd.maskedUrl}
                     </span>
@@ -601,7 +477,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
               className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${testingTarget === 'qdrant' ? 'animate-spin' : ''}`} />
-              {t.retest}
+              {t(lang, 'diag.retest')}
             </button>
           </div>
 
@@ -614,8 +490,8 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     <Cpu className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-900 text-sm">{t.mistralTitle}</h3>
-                    <p className="text-[11px] text-slate-500 font-mono">OCR & Document AI Parsing</p>
+                    <h3 className="font-bold text-slate-900 text-sm">{t(lang, 'diag.mistralTitle')}</h3>
+                    <p className="text-[11px] text-slate-500 font-mono">{t(lang, 'diag.msSubtitle')}</p>
                   </div>
                 </div>
 
@@ -634,10 +510,10 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     <AlertTriangle className="w-3 h-3 text-amber-600" />
                   )}
                   {ms?.status === 'connected'
-                    ? t.statusConnected
+                    ? t(lang, 'diag.statusConnected')
                     : ms?.status === 'missing_config'
-                      ? t.statusMissingConfig
-                      : t.statusAuthFailed}
+                      ? t(lang, 'diag.statusMissingConfig')
+                      : t(lang, 'diag.statusAuthFailed')}
                 </span>
               </div>
 
@@ -645,16 +521,20 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
 
               <div className="space-y-2 pt-2 border-t border-slate-100 text-xs font-mono">
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.latency}:</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.latency')}:</span>
                   <span className="font-bold text-slate-800">{ms?.latencyMs ?? 0} ms</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-50 text-slate-600">
-                  <span className="text-slate-400 font-sans">{t.availableModels}:</span>
-                  <span className="font-bold text-emerald-600">{ms?.modelsCount ?? 0} models</span>
+                  <span className="text-slate-400 font-sans">{t(lang, 'diag.availableModels')}:</span>
+                  <span className="font-bold text-emerald-600">
+                    {t(lang, 'diag.modelsCount', { count: ms?.modelsCount ?? 0 })}
+                  </span>
                 </div>
                 {ms?.maskedApiKey && (
                   <div className="py-1">
-                    <span className="text-[10px] text-slate-400 block mb-0.5 font-sans">{t.maskedApiKey}:</span>
+                    <span className="text-[10px] text-slate-400 block mb-0.5 font-sans">
+                      {t(lang, 'diag.maskedApiKey')}:
+                    </span>
                     <span className="text-[10px] bg-slate-50 p-1.5 rounded border border-slate-200 block truncate text-slate-600">
                       {ms.maskedApiKey}
                     </span>
@@ -669,7 +549,7 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
               className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${testingTarget === 'mistral' ? 'animate-spin' : ''}`} />
-              {t.retest}
+              {t(lang, 'diag.retest')}
             </button>
           </div>
         </div>
@@ -681,13 +561,11 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Key className="w-5 h-5 text-indigo-600" />
-              <h3 className="font-bold text-slate-900 text-sm">
-                {lang === 'ar' ? 'تدقيق متغيرات البيئة بملف .env.example' : 'Environment Variables Audit Matrix'}
-              </h3>
+              <h3 className="font-bold text-slate-900 text-sm">{t(lang, 'diag.envAuditTitle')}</h3>
             </div>
             <span className="text-xs text-slate-500 font-medium">
               {report?.envAudit?.filter((e: any) => e.present).length || 0} / {report?.envAudit?.length || 0}{' '}
-              {lang === 'ar' ? 'مكوّن ببيئة الخادم' : 'Configured'}
+              {t(lang, 'diag.envConfiguredWord')}
             </span>
           </div>
 
@@ -695,11 +573,11 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
             <table className="w-full text-left rtl:text-right text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-100/60 text-slate-500 font-bold">
-                  <th className="py-3 px-4">{t.envVarName}</th>
-                  <th className="py-3 px-4">{t.envCategory}</th>
-                  <th className="py-3 px-4">{t.envStatus}</th>
-                  <th className="py-3 px-4">{t.envPreview}</th>
-                  <th className="py-3 px-4 text-center">{t.envRequired}</th>
+                  <th className="py-3 px-4">{t(lang, 'diag.envVarName')}</th>
+                  <th className="py-3 px-4">{t(lang, 'diag.envCategory')}</th>
+                  <th className="py-3 px-4">{t(lang, 'diag.envStatus')}</th>
+                  <th className="py-3 px-4">{t(lang, 'diag.envPreview')}</th>
+                  <th className="py-3 px-4 text-center">{t(lang, 'diag.envRequired')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono">
@@ -722,12 +600,12 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                         {v.present ? (
                           <>
                             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            {lang === 'ar' ? 'موجود ومتوفر' : 'Configured'}
+                            {t(lang, 'diag.envPresent')}
                           </>
                         ) : (
                           <>
                             <XCircle className="w-3 h-3 text-rose-600" />
-                            {lang === 'ar' ? 'غير معرف' : 'Missing'}
+                            {t(lang, 'diag.envMissing')}
                           </>
                         )}
                       </span>
@@ -736,11 +614,11 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
                     <td className="py-3 px-4 text-center">
                       {v.required ? (
                         <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 font-sans">
-                          {lang === 'ar' ? 'إجباري' : 'Required'}
+                          {t(lang, 'diag.envRequiredYes')}
                         </span>
                       ) : (
                         <span className="text-[10px] font-medium text-slate-400 font-sans">
-                          {lang === 'ar' ? 'اختياري' : 'Optional'}
+                          {t(lang, 'diag.envOptional')}
                         </span>
                       )}
                     </td>
@@ -758,20 +636,20 @@ export default function DiagnosticUtility({ lang = 'ar', autoRunOnMount = true }
           <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400">
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-cyan-400" />
-              <span className="font-bold text-slate-300">Live Diagnostic Terminal Stream</span>
+              <span className="font-bold text-slate-300">{t(lang, 'diag.logStreamTitle')}</span>
             </div>
             <button
               onClick={copyLogText}
               className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-sans flex items-center gap-1 transition cursor-pointer"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied ? 'Copied!' : 'Copy Logs'}
+              {t(lang, copied ? 'diag.copiedLogs' : 'diag.copyLogsBtn')}
             </button>
           </div>
 
           <div className="h-64 overflow-y-auto space-y-1.5 pr-2 font-mono text-[11px]">
             {logs.length === 0 ? (
-              <p className="text-slate-600 italic py-4 text-center">No diagnostic logs generated yet.</p>
+              <p className="text-slate-600 italic py-4 text-center">{t(lang, 'diag.noLogsYet')}</p>
             ) : (
               logs.map((l) => (
                 <div key={l.id} className="flex items-start gap-2 leading-relaxed">

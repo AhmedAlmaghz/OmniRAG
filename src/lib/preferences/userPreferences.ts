@@ -30,6 +30,8 @@ export type Density = 'comfortable' | 'compact';
 export type ArabicFont = 'cairo' | 'tajawal' | 'ibm';
 /** Math rendering engine: standard KaTeX (LTR) or KaTeX4Arabic (RTL Arabic). */
 export type MathMode = 'standard' | 'arabic';
+/** UI language (Phase 7 i18n). Personal preference — stays client-side. */
+export type UiLanguage = 'ar' | 'en';
 
 export interface UserPreferences {
   theme: ThemeMode;
@@ -40,6 +42,8 @@ export interface UserPreferences {
   mathMode: MathMode;
   /** When mathMode === 'arabic': render digits as Arabic-Indic (٠-٩). */
   mathArabicNumerals: boolean;
+  /** UI language for the i18n dictionaries (ar/en). */
+  language: UiLanguage;
 }
 
 export const STORAGE_KEY = 'omnirag_user_preferences_v1';
@@ -52,6 +56,8 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   // OmniRAG is an Arabic-first platform: KaTeX4Arabic is the default engine.
   mathMode: 'arabic',
   mathArabicNumerals: false,
+  // Arabic-first default UI language.
+  language: 'ar',
 };
 
 /* ── Validation helpers (never trust storage blindly) ─────────────────── */
@@ -69,6 +75,7 @@ function sanitize(raw: Partial<UserPreferences> | null | undefined): UserPrefere
     mathMode: pick(r.mathMode, ['standard', 'arabic'] as const, DEFAULT_PREFERENCES.mathMode),
     mathArabicNumerals:
       typeof r.mathArabicNumerals === 'boolean' ? r.mathArabicNumerals : DEFAULT_PREFERENCES.mathArabicNumerals,
+    language: pick(r.language, ['ar', 'en'] as const, DEFAULT_PREFERENCES.language),
   };
 }
 

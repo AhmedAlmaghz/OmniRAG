@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { Plus, MessageSquare, Pencil, Trash2, Check, X, Search, PanelLeftClose, Sparkles } from 'lucide-react';
 import { Conversation } from '@/lib/types/omnirag';
+import { t } from '@/lib/i18n';
 
 interface ChatSidebarProps {
   conversations: Conversation[];
@@ -88,7 +89,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
     if (diffDays === 1) {
-      return lang === 'ar' ? 'أمس' : 'Yesterday';
+      return t(lang, 'chatSidebar.yesterday');
     }
     if (diffDays < 7) {
       return date.toLocaleDateString([], { weekday: 'short' });
@@ -133,7 +134,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
             type="button"
             onClick={onToggle}
             className="p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer shrink-0"
-            title={lang === 'ar' ? 'طي الشريط الجانبي' : 'Collapse sidebar'}
+            title={t(lang, 'chatSidebar.collapseTitle')}
           >
             <PanelLeftClose className={`w-4 h-4 text-slate-500 ${isRtl ? 'rtl:-scale-x-100' : ''}`} />
           </button>
@@ -146,7 +147,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
           className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer shadow-sm hover:shadow-md active:scale-[0.98]"
         >
           <Plus className="w-4 h-4" />
-          <span>{lang === 'ar' ? 'محادثة جديدة' : 'New Chat'}</span>
+          <span>{t(lang, 'chatSidebar.newChat')}</span>
         </button>
       </div>
 
@@ -160,7 +161,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={lang === 'ar' ? 'بحث في المحادثات...' : 'Search conversations...'}
+            placeholder={t(lang, 'chatSidebar.searchPlaceholder')}
             className={`w-full bg-white border border-slate-200 text-xs placeholder:text-slate-400 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 transition py-2 ${
               isRtl ? 'pr-9 pl-3' : 'pl-9 pr-3'
             }`}
@@ -173,19 +174,13 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
         {isLoading ? (
           <div className="py-8 text-center">
             <div className="w-6 h-6 rounded-full border-2 border-indigo-200 border-t-indigo-600 animate-spin mx-auto mb-2" />
-            <p className="text-[11px] text-slate-400">{lang === 'ar' ? 'جاري التحميل...' : 'Loading...'}</p>
+            <p className="text-[11px] text-slate-400">{t(lang, 'chatSidebar.loading')}</p>
           </div>
         ) : filteredConversations.length === 0 ? (
           <div className="py-8 text-center px-4">
             <MessageSquare className="w-8 h-8 text-slate-300 mx-auto mb-2" />
             <p className="text-xs text-slate-400">
-              {searchQuery
-                ? lang === 'ar'
-                  ? 'لا توجد نتائج مطابقة'
-                  : 'No matching results'
-                : lang === 'ar'
-                  ? 'لا توجد محادثات بعد'
-                  : 'No conversations yet'}
+              {searchQuery ? t(lang, 'chatSidebar.noMatchingResults') : t(lang, 'chatSidebar.noConversationsYet')}
             </p>
           </div>
         ) : (
@@ -289,7 +284,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                         className={`p-1 rounded-md transition cursor-pointer ${
                           isActive ? 'hover:bg-indigo-500 text-indigo-200' : 'hover:bg-slate-200 text-slate-500'
                         }`}
-                        title={lang === 'ar' ? 'إعادة تسمية' : 'Rename'}
+                        title={t(lang, 'chatSidebar.renameTitle')}
                       >
                         <Pencil className="w-3 h-3" />
                       </button>
@@ -301,7 +296,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                             ? 'hover:bg-rose-500 text-indigo-200'
                             : 'hover:bg-rose-100 text-slate-500 hover:text-rose-600'
                         }`}
-                        title={lang === 'ar' ? 'حذف' : 'Delete'}
+                        title={t(lang, 'common.delete')}
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
@@ -334,7 +329,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
               role="tooltip"
             >
               <span className="block text-[9px] font-bold text-indigo-300 mb-1 uppercase tracking-wide">
-                {lang === 'ar' ? 'طلب المستخدم' : 'User Request'}
+                {t(lang, 'chatSidebar.userRequest')}
               </span>
               <span className="line-clamp-4">{conv.firstUserMessage}</span>
             </div>
@@ -343,9 +338,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
 
       {/* Sidebar Footer */}
       <div className="p-3 border-t border-slate-200 bg-white shrink-0">
-        <p className="text-[10px] text-slate-400 text-center font-mono">
-          {lang === 'ar' ? 'حفظ تلقائي في PostgreSQL' : 'Auto-saved to PostgreSQL'}
-        </p>
+        <p className="text-[10px] text-slate-400 text-center font-mono">{t(lang, 'chatSidebar.autoSaved')}</p>
       </div>
     </aside>
   );

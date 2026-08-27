@@ -25,6 +25,7 @@ import {
   Info,
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { t } from '@/lib/i18n';
 import { Modal } from '@/components/ui/Modal';
 import {
   loadEnvStatus as loadEnvStatusApi,
@@ -151,28 +152,22 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
             <div className="flex items-center gap-2">
               <span className="px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-bold font-mono flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-                <span>{lang === 'ar' ? 'معالج التشغيل الأول (First Launch Wizard)' : 'First Launch Setup Wizard'}</span>
+                <span>{t(lang, 'firstLaunch.badgeTitle')}</span>
               </span>
               <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold font-mono">
                 v0.3.5 Production
               </span>
             </div>
 
-            <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-white">
-              {lang === 'ar' ? 'تهيئة متغيرات البيئة ومحركات النظام' : 'Configure System Environment Variables'}
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              {lang === 'ar'
-                ? 'مرحباً بك في منصة OmniRAG. قم بمراجعة وإدخال مفاتيح وعناوين الاتصال بقواعد البيانات والذكاء الاصطناعي لضمان الجاهزية التشغيلية القصوى.'
-                : 'Welcome to OmniRAG. Review and configure API keys and database endpoints to ensure full system readiness.'}
-            </p>
+            <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-white">{t(lang, 'firstLaunch.title')}</h2>
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">{t(lang, 'firstLaunch.welcomeBody')}</p>
           </div>
 
           <button
             type="button"
             onClick={onClose}
             className="relative z-10 p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
-            title={lang === 'ar' ? 'إغلاق' : 'Close'}
+            title={t(lang, 'firstLaunch.close')}
           >
             <X className="w-5 h-5" />
           </button>
@@ -193,7 +188,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
               <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-mono">
                 1
               </span>
-              <span>{lang === 'ar' ? 'المعمارية والترحيب' : 'Architecture'}</span>
+              <span>{t(lang, 'firstLaunch.stepArchitecture')}</span>
             </button>
 
             <button
@@ -208,7 +203,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
               <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-mono">
                 2
               </span>
-              <span>{lang === 'ar' ? 'إدخال المتغيرات' : 'Configure Env'}</span>
+              <span>{t(lang, 'firstLaunch.stepConfigure')}</span>
             </button>
 
             <button
@@ -223,12 +218,12 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
               <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-mono">
                 3
               </span>
-              <span>{lang === 'ar' ? 'الفحص والتفعيل' : 'Test & Verify'}</span>
+              <span>{t(lang, 'firstLaunch.stepVerify')}</span>
             </button>
           </div>
 
           <div className="hidden sm:flex items-center gap-2 font-mono text-xs">
-            <span className="text-slate-500">{lang === 'ar' ? 'نسبة الجاهزية:' : 'Readiness:'}</span>
+            <span className="text-slate-500">{t(lang, 'firstLaunch.readinessLabel')}</span>
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-bold">
               {readinessScore}%
             </span>
@@ -240,11 +235,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
           {loading ? (
             <div className="py-16 text-center space-y-3">
               <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
-              <p className="text-xs text-slate-500 font-bold">
-                {lang === 'ar'
-                  ? 'جاري فحص متغيرات البيئة والحالة الحالية...'
-                  : 'Auditing system environment variables...'}
-              </p>
+              <p className="text-xs text-slate-500 font-bold">{t(lang, 'firstLaunch.auditing')}</p>
             </div>
           ) : (
             <>
@@ -257,12 +248,10 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                         <Cpu className="w-5 h-5" />
                       </div>
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                        {lang === 'ar' ? '1. محرك الذكاء والـ RAG' : '1. Gemini AI & RAG Engine'}
+                        {t(lang, 'firstLaunch.card1Title')}
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                        {lang === 'ar'
-                          ? 'يعتمد النظام على Google Gemini Pro للتحليل والتوليد الذكي. يتم إيقان المفتاح تلقائياً من خادم Cloud Run.'
-                          : 'Powered by Gemini 2.5 Pro & Flash. Keys are injected securely on Cloud Run server side.'}
+                        {t(lang, 'firstLaunch.card1Body')}
                       </p>
                     </div>
 
@@ -271,12 +260,10 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                         <Database className="w-5 h-5" />
                       </div>
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                        {lang === 'ar' ? '2. قواعد البيانات الهجينة' : '2. Hybrid Storage Architecture'}
+                        {t(lang, 'firstLaunch.card2Title')}
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                        {lang === 'ar'
-                          ? 'استعلامات هجينة تجمع بين PostgreSQL للبحث اللفظي (Lexical) و Qdrant Vector للبحث الدلالي (Dense Semantic).'
-                          : 'Combines PostgreSQL for relational metadata and Qdrant Vector database for dense semantic embeddings.'}
+                        {t(lang, 'firstLaunch.card2Body')}
                       </p>
                     </div>
 
@@ -285,12 +272,10 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                         <Zap className="w-5 h-5" />
                       </div>
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                        {lang === 'ar' ? '3. معالجة الـ OCR والـ MCP' : '3. Mistral OCR & MCP Connectors'}
+                        {t(lang, 'firstLaunch.card3Title')}
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                        {lang === 'ar'
-                          ? 'دعم متكامل لـ Mistral Document AI لقراءة المخططات والـ PDF باللغة العربية مع موصلات بروتوكول MCP.'
-                          : 'Integrated with Mistral OCR for document layout analysis and Model Context Protocol integrations.'}
+                        {t(lang, 'firstLaunch.card3Body')}
                       </p>
                     </div>
                   </div>
@@ -299,9 +284,11 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                       <span className="flex items-center gap-2 text-indigo-400 font-bold">
                         <Terminal className="w-4 h-4" />
-                        <span>{lang === 'ar' ? 'ملخص حالة الاتصال الحالية:' : 'Current Live Audit Summary:'}</span>
+                        <span>{t(lang, 'firstLaunch.auditSummaryTitle')}</span>
                       </span>
-                      <span className="text-emerald-400 font-bold">Readiness: {readinessScore}%</span>
+                      <span className="text-emerald-400 font-bold">
+                        {t(lang, 'firstLaunch.readinessValue', { score: readinessScore })}
+                      </span>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-300">
@@ -316,13 +303,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                               item.isConfigured ? 'text-emerald-400' : 'text-amber-400'
                             }`}
                           >
-                            {item.isConfigured
-                              ? lang === 'ar'
-                                ? 'مكوّن ✅'
-                                : 'Configured ✅'
-                              : lang === 'ar'
-                                ? 'مفقود ⚠️'
-                                : 'Missing ⚠️'}
+                            {t(lang, item.isConfigured ? 'firstLaunch.configured' : 'firstLaunch.missing')}
                           </span>
                         </div>
                       ))}
@@ -335,7 +316,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                       onClick={() => setStep(2)}
                       className="px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-2 transition cursor-pointer shadow-lg shadow-indigo-600/20"
                     >
-                      <span>{lang === 'ar' ? 'الانتقال لتهيئة المتغيرات' : 'Proceed to Env Configuration'}</span>
+                      <span>{t(lang, 'firstLaunch.proceedBtn')}</span>
                       <ArrowLeft className={`w-4 h-4 ${lang === 'en' ? 'rotate-180' : ''}`} />
                     </button>
                   </div>
@@ -349,9 +330,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                     <div className="flex items-center gap-3">
                       <Sliders className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
                       <p className="text-xs text-indigo-950 dark:text-indigo-200 leading-relaxed font-medium">
-                        {lang === 'ar'
-                          ? 'ملاحظة: المتغيرات المدخلة تجري حفظها بأمان في الجلسة المحلية وتحقن في الخادم للاتصالات المباشرة.'
-                          : 'Note: Entered values are stored securely in local app configuration and injected into active backend clients.'}
+                        {t(lang, 'firstLaunch.noteStored')}
                       </p>
                     </div>
                     <button
@@ -364,15 +343,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
-                      <span>
-                        {copiedEnv
-                          ? lang === 'ar'
-                            ? 'تم النسخ!'
-                            : 'Copied!'
-                          : lang === 'ar'
-                            ? 'نسخ .env'
-                            : 'Copy .env'}
-                      </span>
+                      <span>{t(lang, copiedEnv ? 'firstLaunch.copied' : 'firstLaunch.copyEnv')}</span>
                     </button>
                   </div>
 
@@ -396,17 +367,17 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                                 </span>
                                 {item.required ? (
                                   <span className="px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
-                                    {lang === 'ar' ? 'مطلوب' : 'Required'}
+                                    {t(lang, 'firstLaunch.required')}
                                   </span>
                                 ) : (
                                   <span className="px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-bold">
-                                    {lang === 'ar' ? 'اختياري' : 'Optional'}
+                                    {t(lang, 'firstLaunch.optional')}
                                   </span>
                                 )}
 
                                 {item.isInjectedBySystem && (
                                   <span className="px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
-                                    {lang === 'ar' ? 'محقون تلقائياً' : 'System Injected'}
+                                    {t(lang, 'firstLaunch.systemInjected')}
                                   </span>
                                 )}
                               </div>
@@ -421,7 +392,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                               rel="noreferrer"
                               className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 font-semibold shrink-0"
                             >
-                              <span>{lang === 'ar' ? 'جلب المفتاح' : 'Get Key'}</span>
+                              <span>{t(lang, 'firstLaunch.getKey')}</span>
                               <ExternalLink className="w-3 h-3" />
                             </a>
                           </div>
@@ -462,7 +433,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                               ) : (
                                 <Activity className="w-3.5 h-3.5 text-emerald-400" />
                               )}
-                              <span>{lang === 'ar' ? 'فحص الاتصال' : 'Test'}</span>
+                              <span>{t(lang, 'firstLaunch.testBtn')}</span>
                             </button>
                           </div>
 
@@ -501,7 +472,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                       onClick={() => setStep(1)}
                       className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold transition cursor-pointer"
                     >
-                      {lang === 'ar' ? 'السابق' : 'Back'}
+                      {t(lang, 'firstLaunch.back')}
                     </button>
 
                     <button
@@ -509,7 +480,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                       onClick={() => setStep(3)}
                       className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-md shadow-indigo-600/20"
                     >
-                      <span>{lang === 'ar' ? 'متابعة لاختبار الجاهزية' : 'Continue to Verification'}</span>
+                      <span>{t(lang, 'firstLaunch.continueVerifyBtn')}</span>
                       <ArrowLeft className={`w-4 h-4 ${lang === 'en' ? 'rotate-180' : ''}`} />
                     </button>
                   </div>
@@ -525,20 +496,16 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
 
                   <div className="max-w-md mx-auto space-y-2">
                     <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                      {lang === 'ar' ? 'النظام جاهز للتشغيل بنجاح!' : 'System Fully Ready for Launch!'}
+                      {t(lang, 'firstLaunch.readyTitle')}
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                      {lang === 'ar'
-                        ? 'تم التحقق من إعدادات ومتغيرات البيئة الأساسية. يمكنك الوصول والتعديل على هذه المتغيرات في أي وقت من تبويب الإعدادات.'
-                        : 'Environment variables configured. You can inspect or update these values anytime from the Settings tab.'}
+                      {t(lang, 'firstLaunch.readyBody')}
                     </p>
                   </div>
 
                   <div className="p-4 bg-slate-900 text-white rounded-2xl max-w-lg mx-auto space-y-3 font-mono text-xs">
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                      <span className="text-slate-400">
-                        {lang === 'ar' ? 'مؤشر الجاهزية التشغيلية:' : 'Readiness Index:'}
-                      </span>
+                      <span className="text-slate-400">{t(lang, 'firstLaunch.readinessIndexLabel')}</span>
                       <span className="text-emerald-400 font-bold">{readinessScore}%</span>
                     </div>
 
@@ -548,11 +515,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                       className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition cursor-pointer text-xs"
                     >
                       <Activity className="w-4 h-4" />
-                      <span>
-                        {lang === 'ar'
-                          ? 'إعادة فحص واختبار جميع الاتصالات المباشرة'
-                          : 'Run Full Connection Healthcheck'}
-                      </span>
+                      <span>{t(lang, 'firstLaunch.healthcheckBtn')}</span>
                     </button>
                   </div>
 
@@ -562,7 +525,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                       onClick={() => setStep(2)}
                       className="px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold transition cursor-pointer"
                     >
-                      {lang === 'ar' ? 'مراجعة المتغيرات' : 'Review Variables'}
+                      {t(lang, 'firstLaunch.reviewVarsBtn')}
                     </button>
 
                     <button
@@ -571,7 +534,7 @@ export default function FirstLaunchEnvModal({ lang, isOpen, onClose, onComplete 
                       className="px-8 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-lg shadow-emerald-600/20 hover:scale-[1.02]"
                     >
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>{lang === 'ar' ? 'إكمال الإعداد والانطلاق للتطبيق' : 'Complete Setup & Enter App'}</span>
+                      <span>{t(lang, 'firstLaunch.completeBtn')}</span>
                     </button>
                   </div>
                 </div>

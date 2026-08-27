@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, useCallback, memo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { PluggableList } from 'unified';
 import remarkGfm from 'remark-gfm';
@@ -28,6 +28,7 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  BarChart3,
 } from 'lucide-react';
 import { CodeBlock } from '@/components/ui/CodeBlock';
 import { containsMathExpressions } from '@/lib/utils/arabicMath';
@@ -35,6 +36,8 @@ import rehypeKatexArabic from '@/lib/math/rehypeKatexArabic';
 import { useUserPreferences } from '@/lib/preferences/userPreferences';
 import { CitationInline } from '@/components/chat/CitationInline';
 import { Citation } from '@/lib/types/omnirag';
+import { normalizeChartSpec, toEChartsOption } from '@/lib/skills/charts';
+import { t } from '@/lib/i18n';
 
 interface RichMessageRendererProps {
   content: string;
@@ -67,35 +70,35 @@ function matchAlertType(text: string): AlertType | null {
 
 const ALERT_META: Record<
   AlertType,
-  { icon: React.ComponentType<{ className?: string }>; label: { ar: string; en: string }; cls: string; iconCls: string }
+  { icon: React.ComponentType<{ className?: string }>; labelKey: string; cls: string; iconCls: string }
 > = {
   NOTE: {
     icon: Info,
-    label: { ar: 'ملاحظة', en: 'Note' },
+    labelKey: 'renderer.alertNote',
     cls: 'border-blue-200 bg-blue-50/70 text-blue-950',
     iconCls: 'text-blue-600',
   },
   TIP: {
     icon: Lightbulb,
-    label: { ar: 'تلميح', en: 'Tip' },
+    labelKey: 'renderer.alertTip',
     cls: 'border-emerald-200 bg-emerald-50/70 text-emerald-950',
     iconCls: 'text-emerald-600',
   },
   IMPORTANT: {
     icon: ShieldAlert,
-    label: { ar: 'مهم', en: 'Important' },
+    labelKey: 'renderer.alertImportant',
     cls: 'border-indigo-200 bg-indigo-50/70 text-indigo-950',
     iconCls: 'text-indigo-600',
   },
   WARNING: {
     icon: TriangleAlert,
-    label: { ar: 'تنبيه', en: 'Warning' },
+    labelKey: 'renderer.alertWarning',
     cls: 'border-amber-300 bg-amber-50/80 text-amber-950',
     iconCls: 'text-amber-600',
   },
   CAUTION: {
     icon: OctagonAlert,
-    label: { ar: 'تحذير', en: 'Caution' },
+    labelKey: 'renderer.alertCaution',
     cls: 'border-rose-300 bg-rose-50/80 text-rose-950',
     iconCls: 'text-rose-600',
   },
@@ -152,7 +155,7 @@ const MermaidBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lan
       <div className="my-3 rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-xs text-rose-700">
         <div className="flex items-center gap-1.5 font-bold mb-1">
           <FileText className="w-3.5 h-3.5" />
-          {lang === 'ar' ? 'خطأ في مخطط Mermaid' : 'Mermaid render error'}
+          {t(lang, 'renderer.mermaidError')}
         </div>
         <pre className="text-[11px] font-mono whitespace-pre-wrap">{error}</pre>
       </div>
@@ -162,7 +165,7 @@ const MermaidBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lan
   if (!svg) {
     return (
       <div className="my-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-500 animate-pulse">
-        {lang === 'ar' ? 'جاري عرض المخطط...' : 'Rendering diagram...'}
+        {t(lang, 'renderer.mermaidRendering')}
       </div>
     );
   }
@@ -172,6 +175,79 @@ const MermaidBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lan
       className="my-3 rounded-xl border border-slate-200 bg-white p-3 overflow-x-auto shadow-xs mermaid-container"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/* Interactive ECharts chart (lazy-loaded) — ```chart fences           */
+/* ------------------------------------------------------------------ */
+
+const ChartBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lang }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+
+  // The fence embeds the normalized ChartSpec JSON produced by the
+  // create_chart skill; re-validate it through the same normalizer so malformed
+  // or tampered specs fail with a readable error instead of a raw crash.
+  const parsed = useMemo<{ option: Record<string, unknown> | null; error: string | null; title: string }>(() => {
+    try {
+      const raw = JSON.parse(code);
+      const spec = normalizeChartSpec(raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {});
+      return { option: toEChartsOption(spec), error: null, title: spec.title };
+    } catch (e: any) {
+      return { option: null, error: e?.message || 'chart spec parse failed', title: '' };
+    }
+  }, [code]);
+
+  useEffect(() => {
+    if (!parsed.option) return;
+    let disposed = false;
+    let chart: { setOption: (o: unknown) => void; resize: () => void; dispose: () => void } | null = null;
+    let observer: ResizeObserver | null = null;
+    (async () => {
+      try {
+        const echarts = await import('echarts');
+        const el = containerRef.current;
+        if (!el || disposed) return;
+        chart = echarts.init(el);
+        chart.setOption(parsed.option);
+        observer = new ResizeObserver(() => chart?.resize());
+        observer.observe(el);
+      } catch (e: any) {
+        if (!disposed) setRuntimeError(e?.message || 'echarts init failed');
+      }
+    })();
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+      chart?.dispose();
+    };
+  }, [parsed.option]);
+
+  const error = parsed.error || runtimeError;
+  if (error) {
+    return (
+      <div className="my-3 rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-xs text-rose-700">
+        <div className="flex items-center gap-1.5 font-bold mb-1">
+          <BarChart3 className="w-3.5 h-3.5" />
+          {t(lang, 'renderer.chartError')}
+        </div>
+        <pre className="text-[11px] font-mono whitespace-pre-wrap">{error}</pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-3 rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-100 bg-slate-50/60">
+        <BarChart3 className="w-3.5 h-3.5 text-indigo-500" />
+        <span className="text-xs font-bold text-slate-700 truncate">
+          {parsed.title || t(lang, 'renderer.chartTitle')}
+        </span>
+      </div>
+      {/* LTR canvas keeps axis coordinates stable even for Arabic labels */}
+      <div ref={containerRef} dir="ltr" className="w-full h-80 p-2" />
+    </div>
   );
 };
 
@@ -243,7 +319,7 @@ const SortableTable: React.FC<{ children: React.ReactNode; lang: 'ar' | 'en' }> 
                   className={`p-2.5 font-semibold text-slate-900 text-right whitespace-nowrap cursor-pointer select-none transition-colors hover:bg-slate-200/70 ${
                     active ? 'bg-indigo-50 text-indigo-800' : ''
                   }`}
-                  title={lang === 'ar' ? 'اضغط للفرز' : 'Click to sort'}
+                  title={t(lang, 'renderer.clickToSort')}
                 >
                   <span className="inline-flex items-center gap-1.5">
                     <span>{cell}</span>
@@ -288,7 +364,7 @@ const AlertBox: React.FC<{ type: AlertType; lang: 'ar' | 'en'; children: React.R
     <div className={`my-3 rounded-xl border p-3.5 ${meta.cls}`}>
       <div className={`flex items-center gap-2 font-bold text-xs mb-1.5 ${meta.iconCls}`}>
         <Icon className="w-4 h-4 shrink-0" />
-        <span>{lang === 'ar' ? meta.label.ar : meta.label.en}</span>
+        <span>{t(lang, meta.labelKey)}</span>
       </div>
       <div className="text-xs md:text-sm leading-relaxed [&>p]:my-1">{children}</div>
     </div>
@@ -377,7 +453,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   const handleToggleSpeak = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       toast({
-        title: lang === 'ar' ? 'متصفحك لا يدعم قراءة النصوص صوتياً' : 'Text-to-Speech not supported in browser',
+        title: t(lang, 'renderer.ttsNotSupported'),
         variant: 'warning',
       });
       return;
@@ -389,7 +465,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
     }
     const cleanText = content
       .replace(/[*_#`$~\[\]()]/g, ' ')
-      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 على $2')
+      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, `$1 ${t(lang, 'renderer.fracSpoken')} $2`)
       .trim();
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
@@ -432,6 +508,9 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
           const blockLang = match ? match[1] : 'typescript';
           if (blockLang === 'mermaid') {
             return <MermaidBlock code={codeString} lang={lang} />;
+          }
+          if (blockLang === 'chart') {
+            return <ChartBlock code={codeString} lang={lang} />;
           }
           return <CodeBlock code={codeString} language={blockLang} title={blockLang.toUpperCase()} lang={lang} />;
         }
@@ -488,7 +567,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
             <span className="my-2.5 inline-block max-w-md rounded-xl overflow-hidden border border-slate-200 shadow-md align-middle">
               <img
                 src={href}
-                alt={extractText(children) || 'صورة مدمجة'}
+                alt={extractText(children) || t(lang, 'renderer.embeddedImageAlt')}
                 loading="lazy"
                 className="w-full h-auto cursor-pointer hover:scale-102 transition-transform duration-200"
                 onClick={() => setSelectedImage(href)}
@@ -504,7 +583,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                   className="text-cyan-300 hover:underline flex items-center gap-0.5 cursor-pointer"
                 >
                   <Maximize2 className="w-3 h-3" />
-                  <span>{lang === 'ar' ? 'تكبير' : 'Zoom'}</span>
+                  <span>{t(lang, 'renderer.zoom')}</span>
                 </button>
               </span>
             </span>
@@ -516,7 +595,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
             <span className="my-3 block rounded-xl overflow-hidden border border-slate-800 bg-slate-950 p-2 shadow-lg">
               <span className="flex items-center gap-1.5 text-xs text-amber-400 mb-2 font-semibold">
                 <VideoIcon className="w-4 h-4" />
-                <span>{lang === 'ar' ? 'مشغل فيديو مدمج:' : 'Embedded Video Player:'}</span>
+                <span>{t(lang, 'renderer.embeddedVideo')}</span>
               </span>
               {href.includes('youtube.com') || href.includes('youtu.be') ? (
                 <span className="aspect-video w-full rounded-lg overflow-hidden block">
@@ -530,9 +609,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
               ) : (
                 <video controls className="w-full h-auto rounded-lg bg-black max-h-80">
                   <source src={href} />
-                  {lang === 'ar'
-                    ? 'متصفحك لا يدعم تشغيل الفيديو المباشر.'
-                    : 'Your browser does not support HTML5 video.'}
+                  {t(lang, 'renderer.videoNotSupported')}
                 </video>
               )}
             </span>
@@ -544,12 +621,12 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
             <span className="my-2.5 block rounded-xl border border-indigo-200 bg-indigo-50/90 p-3 shadow-xs">
               <span className="flex items-center gap-2 text-xs font-semibold text-indigo-900 mb-1.5">
                 <MusicIcon className="w-4 h-4 text-indigo-600 animate-pulse" />
-                <span>{lang === 'ar' ? 'ملف صوتي مدمج:' : 'Embedded Audio:'}</span>
+                <span>{t(lang, 'renderer.embeddedAudio')}</span>
                 <span className="truncate text-slate-600 font-normal">{href.split('/').pop()}</span>
               </span>
               <audio controls className="w-full h-9 rounded-md">
                 <source src={href} />
-                {lang === 'ar' ? 'متصفحك لا يدعم التشغيل الصوتي المباشر.' : 'Audio playback not supported.'}
+                {t(lang, 'renderer.audioNotSupported')}
               </audio>
             </span>
           );
@@ -724,27 +801,17 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
             {hasMath && (
               <div
                 className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg text-amber-900 font-medium"
-                title={
-                  lang === 'ar'
-                    ? 'تُعرض المعادلات تلقائياً حسب إعدادك العمومي في: الإعدادات ← المظهر والخطوط'
-                    : 'Equations render automatically per your global setting in: Settings → Appearance'
-                }
+                title={t(lang, 'renderer.mathTooltip')}
               >
                 <Calculator className="w-3.5 h-3.5 text-amber-600" />
                 <span className="text-[11px]">
-                  {mathMode === 'arabic'
-                    ? lang === 'ar'
-                      ? 'رياضيات عربية (KaTeX4Arabic)'
-                      : 'Arabic Math (KaTeX4Arabic)'
-                    : lang === 'ar'
-                      ? 'رياضيات قياسية (KaTeX)'
-                      : 'Standard Math (KaTeX)'}
+                  {t(lang, mathMode === 'arabic' ? 'renderer.mathArabic' : 'renderer.mathStandard')}
                 </span>
               </div>
             )}
 
             <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5 text-slate-600">
-              <span className="text-[10px] px-1 font-semibold">{lang === 'ar' ? 'الحجم:' : 'Size:'}</span>
+              <span className="text-[10px] px-1 font-semibold">{t(lang, 'renderer.sizeLabel')}</span>
               {(['text-xs', 'text-sm', 'text-base'] as const).map((sz) => (
                 <button
                   key={sz}
@@ -769,42 +836,34 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                   ? 'bg-rose-50 text-rose-700 border-rose-300 animate-pulse font-bold'
                   : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
               }`}
-              title={lang === 'ar' ? 'قراءة النص صوتيا' : 'Read aloud'}
+              title={t(lang, 'renderer.readAloudTitle')}
             >
               {isSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-indigo-600" />}
-              <span>
-                {isSpeaking
-                  ? lang === 'ar'
-                    ? 'إيقاف الصوتي'
-                    : 'Stop Audio'
-                  : lang === 'ar'
-                    ? 'قراءة ناطقة'
-                    : 'Read Out'}
-              </span>
+              <span>{t(lang, isSpeaking ? 'renderer.stopAudio' : 'renderer.readOut')}</span>
             </button>
 
             <button
               type="button"
               onClick={handleCopyText}
               className="flex items-center gap-1 px-2 py-1 rounded-lg border bg-white hover:bg-slate-100 text-slate-700 border-slate-200 text-xs cursor-pointer transition"
-              title={lang === 'ar' ? 'نسخ الإجابة الكاملة' : 'Copy full answer'}
+              title={t(lang, 'renderer.copyFullTitle')}
             >
               {copied ? (
                 <Check className="w-3.5 h-3.5 text-emerald-600" />
               ) : (
                 <Copy className="w-3.5 h-3.5 text-slate-500" />
               )}
-              <span>{copied ? (lang === 'ar' ? 'تم النسخ' : 'Copied') : lang === 'ar' ? 'نسخ' : 'Copy'}</span>
+              <span>{t(lang, copied ? 'renderer.copied' : 'renderer.copy')}</span>
             </button>
 
             <button
               type="button"
               onClick={handleExportMarkdown}
               className="flex items-center gap-1 px-2 py-1 rounded-lg border bg-white hover:bg-slate-100 text-slate-700 border-slate-200 text-xs cursor-pointer transition"
-              title={lang === 'ar' ? 'تصدير كملف ماركداون' : 'Export as Markdown'}
+              title={t(lang, 'renderer.exportMdTitle')}
             >
               <Download className="w-3.5 h-3.5 text-slate-500" />
-              <span>{lang === 'ar' ? 'تصدير .md' : 'Export'}</span>
+              <span>{t(lang, 'renderer.exportMd')}</span>
             </button>
           </div>
         </div>
@@ -841,7 +900,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
                 onClick={() => setSelectedImage(null)}
                 className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-bold cursor-pointer shrink-0"
               >
-                {lang === 'ar' ? 'إغلاق المعاينة' : 'Close Preview'}
+                {t(lang, 'renderer.closePreview')}
               </button>
             </div>
           </div>

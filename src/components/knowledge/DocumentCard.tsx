@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Document } from '@/lib/types/omnirag';
+import { t } from '@/lib/i18n';
 import {
   FileText,
   FileCode,
@@ -105,7 +106,7 @@ export function DocumentCard({
           return {
             icon: <FileText className="w-4 h-4 text-rose-500" />,
             bg: 'bg-rose-50/60 border-rose-100',
-            badgeText: lang === 'ar' ? 'ملف PDF' : 'PDF DOC',
+            badgeText: t(lang, 'docCard.badgePdf'),
             badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
           };
         }
@@ -115,7 +116,7 @@ export function DocumentCard({
           return {
             icon: <FileText className="w-4 h-4 text-blue-500" />,
             bg: 'bg-blue-50/60 border-blue-100',
-            badgeText: lang === 'ar' ? 'مستند وورد' : 'WORD DOC',
+            badgeText: t(lang, 'docCard.badgeWord'),
             badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
           };
         }
@@ -125,7 +126,7 @@ export function DocumentCard({
           return {
             icon: <Presentation className="w-4 h-4 text-amber-500" />,
             bg: 'bg-amber-50/60 border-amber-100',
-            badgeText: lang === 'ar' ? 'عرض تقدمي' : 'PPT SLIDES',
+            badgeText: t(lang, 'docCard.badgePpt'),
             badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
           };
         }
@@ -135,7 +136,7 @@ export function DocumentCard({
           return {
             icon: <FileSpreadsheet className="w-4 h-4 text-emerald-500" />,
             bg: 'bg-emerald-50/60 border-emerald-100',
-            badgeText: lang === 'ar' ? 'جدول بيانات' : 'EXCEL SHEET',
+            badgeText: t(lang, 'docCard.badgeExcel'),
             badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
           };
         }
@@ -152,7 +153,7 @@ export function DocumentCard({
           return {
             icon: <ImageIcon className="w-4 h-4 text-cyan-500" />,
             bg: 'bg-cyan-50/60 border-cyan-100',
-            badgeText: lang === 'ar' ? 'صورة' : 'IMAGE OCR',
+            badgeText: t(lang, 'docCard.badgeImage'),
             badgeClass: 'bg-cyan-50 text-cyan-700 border-cyan-200',
           };
         }
@@ -169,7 +170,7 @@ export function DocumentCard({
           return {
             icon: <Music className="w-4 h-4 text-violet-500" />,
             bg: 'bg-violet-50/60 border-violet-100',
-            badgeText: lang === 'ar' ? 'ملف صوتي' : 'AUDIO CAST',
+            badgeText: t(lang, 'docCard.badgeAudio'),
             badgeClass: 'bg-violet-50 text-violet-700 border-violet-200',
           };
         }
@@ -184,7 +185,7 @@ export function DocumentCard({
           return {
             icon: <Video className="w-4 h-4 text-purple-500" />,
             bg: 'bg-purple-50/60 border-purple-100',
-            badgeText: lang === 'ar' ? 'فيديو' : 'VIDEO CAST',
+            badgeText: t(lang, 'docCard.badgeVideo'),
             badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
           };
         }
@@ -203,7 +204,7 @@ export function DocumentCard({
           return {
             icon: <FileCode className="w-4 h-4 text-indigo-600" />,
             bg: 'bg-indigo-50 border-indigo-100',
-            badgeText: lang === 'ar' ? 'ملف نصي' : 'DOC/CODE',
+            badgeText: t(lang, 'docCard.badgeCode'),
             badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
           };
         }
@@ -212,7 +213,7 @@ export function DocumentCard({
         return {
           icon: <FileText className="w-4 h-4 text-indigo-600" />,
           bg: 'bg-indigo-50 border-indigo-100',
-          badgeText: lang === 'ar' ? 'ملف' : 'FILE',
+          badgeText: t(lang, 'docCard.badgeFile'),
           badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
         };
       }
@@ -228,7 +229,7 @@ export function DocumentCard({
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 shadow-3xs uppercase tracking-wide">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            {isRtl ? 'مفهرس' : 'Indexed'}
+            {t(lang, 'docCard.statusIndexed')}
           </span>
         );
       case 'processing':
@@ -236,14 +237,14 @@ export function DocumentCard({
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/60 shadow-3xs uppercase tracking-wide">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-            {isRtl ? 'جاري الفهرسة' : 'Indexing'}
+            {t(lang, 'docCard.statusIndexing')}
           </span>
         );
       case 'pending':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-amber-50 text-amber-700 border border-amber-200/60 shadow-3xs uppercase tracking-wide">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-            {isRtl ? 'معلق' : 'Pending'}
+            {t(lang, 'docCard.statusPending')}
           </span>
         );
       case 'failed':
@@ -251,10 +252,10 @@ export function DocumentCard({
         return (
           <span
             className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-rose-50 text-rose-700 border border-rose-200/60 shadow-3xs uppercase tracking-wide"
-            title={indexErrors?.join('؛ ')}
+            title={indexErrors?.join(lang === 'ar' ? '؛ ' : '; ')}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-            {isRtl ? 'فشل' : 'Failed'}
+            {t(lang, 'docCard.statusFailed')}
           </span>
         );
       default:
@@ -298,7 +299,7 @@ export function DocumentCard({
             </span>
             <span
               className="text-[9px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200/80 font-mono shrink-0 flex items-center gap-0.5"
-              title={isRtl ? `إصدار المستند: v${document.version || 1}` : `Document Version: v${document.version || 1}`}
+              title={t(lang, 'docCard.versionTitle', { version: document.version || 1 })}
             >
               <GitBranch className="w-2.5 h-2.5" />
               <span>v{document.version || 1}</span>
@@ -335,9 +336,7 @@ export function DocumentCard({
         <div className="flex items-center gap-2.5 flex-wrap">
           <span className="flex items-center gap-1 font-bold text-indigo-700 bg-indigo-50/80 px-1.5 py-0.5 rounded border border-indigo-100">
             <Layers className="w-3 h-3 text-indigo-500" />
-            <span>
-              {document.chunkCount || 0} {isRtl ? 'مقطع' : 'chunks'}
-            </span>
+            <span>{t(lang, 'docCard.chunksCount', { count: document.chunkCount || 0 })}</span>
           </span>
           <span className="flex items-center gap-1 text-slate-600">
             <Sparkles className="w-3 h-3 text-amber-500" />
@@ -371,10 +370,10 @@ export function DocumentCard({
                 onViewHistory();
               }}
               className="px-2 py-1 bg-slate-100 hover:bg-violet-50 text-slate-700 hover:text-violet-700 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer border border-slate-200 hover:border-violet-200"
-              title={isRtl ? 'سجل وتاريخ الإصدارات والتراجع' : 'Version History & Revert'}
+              title={t(lang, 'docCard.historyTitle')}
             >
               <History className="w-3 h-3 text-violet-600" />
-              <span>{isRtl ? 'الإصدارات' : 'History'}</span>
+              <span>{t(lang, 'docCard.historyLabel')}</span>
             </button>
           )}
 
@@ -385,10 +384,10 @@ export function DocumentCard({
                 onInspectChunks();
               }}
               className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer border border-slate-200 hover:border-indigo-200"
-              title={isRtl ? 'فحص المقاطع والمتجهات' : 'Inspect Chunks'}
+              title={t(lang, 'docCard.inspectTitle')}
             >
               <Layers className="w-3 h-3" />
-              <span>{isRtl ? 'المقاطع' : 'Vectors'}</span>
+              <span>{t(lang, 'docCard.vectorsLabel')}</span>
             </button>
           )}
 
@@ -399,10 +398,10 @@ export function DocumentCard({
                 onPreview();
               }}
               className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer border border-slate-200"
-              title={isRtl ? 'قراءة المحتوى' : 'Preview Content'}
+              title={t(lang, 'docCard.previewTitle')}
             >
               <Eye className="w-3 h-3 text-slate-500" />
-              <span>{isRtl ? 'معاينة' : 'Preview'}</span>
+              <span>{t(lang, 'docCard.previewLabel')}</span>
             </button>
           )}
         </div>
@@ -416,8 +415,8 @@ export function DocumentCard({
               }}
               disabled={isReindexing}
               className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
-              title={isRtl ? 'إعادة الفهرسة والتضمين' : 'Re-index Document'}
-              aria-label={isRtl ? `إعادة فهرسة ${document.title}` : `Re-index ${document.title}`}
+              title={t(lang, 'docCard.reindexTitle')}
+              aria-label={t(lang, 'docCard.reindexAria', { title: document.title })}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isReindexing ? 'animate-spin text-indigo-600' : ''}`} />
             </button>
@@ -430,8 +429,8 @@ export function DocumentCard({
                 onDelete();
               }}
               className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-              title={isRtl ? 'حذف المستند نهائيا' : 'Delete Document'}
-              aria-label={isRtl ? `حذف ${document.title}` : `Delete ${document.title}`}
+              title={t(lang, 'docCard.deleteTitle')}
+              aria-label={t(lang, 'docCard.deleteAria', { title: document.title })}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>

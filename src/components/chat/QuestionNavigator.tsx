@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import type { Message } from '@/lib/types/omnirag';
+import { t } from '@/lib/i18n';
 
 interface QuestionNavigatorProps {
   messages: Message[];
@@ -48,7 +49,7 @@ export const QuestionNavigator: React.FC<QuestionNavigatorProps> = ({
     <div
       className="no-print absolute top-1/2 -translate-y-1/2 z-20 flex flex-col items-center gap-1.5"
       style={{ insetInlineEnd: '0.375rem' }}
-      aria-label={lang === 'ar' ? 'التنقل في المحادثة' : 'Conversation navigation'}
+      aria-label={t(lang, 'chatNav.ariaLabel')}
     >
       {/* Scroll to top — sits above the rail */}
       {showScrollTop && onScrollToTop && (
@@ -56,8 +57,8 @@ export const QuestionNavigator: React.FC<QuestionNavigatorProps> = ({
           type="button"
           onClick={onScrollToTop}
           className={navButtonCls}
-          title={lang === 'ar' ? 'الانتقال إلى الأعلى' : 'Jump to top'}
-          aria-label={lang === 'ar' ? 'الانتقال إلى الأعلى' : 'Jump to top'}
+          title={t(lang, 'chatNav.jumpToTop')}
+          aria-label={t(lang, 'chatNav.jumpToTop')}
         >
           <ArrowUp className="w-3.5 h-3.5" />
         </button>
@@ -79,7 +80,7 @@ export const QuestionNavigator: React.FC<QuestionNavigatorProps> = ({
                   style={{ insetInlineEnd: 'calc(100% + 0.5rem)' }}
                 >
                   <span className="block text-[9px] font-bold text-indigo-300 mb-0.5">
-                    {lang === 'ar' ? `سؤال ${i + 1}` : `Question ${i + 1}`}
+                    {t(lang, 'chatNav.questionN', { n: i + 1 })}
                   </span>
                   <span className="line-clamp-3">{q.content}</span>
                 </div>
@@ -93,8 +94,8 @@ export const QuestionNavigator: React.FC<QuestionNavigatorProps> = ({
                 onFocus={() => setHoveredId(q.id)}
                 onBlur={() => setHoveredId(null)}
                 className="w-3.5 h-[5px] rounded-full bg-slate-400/70 hover:bg-indigo-500 hover:w-4 hover:h-[7px] transition-all duration-150 cursor-pointer"
-                title={lang === 'ar' ? `سؤال ${i + 1}` : `Question ${i + 1}`}
-                aria-label={lang === 'ar' ? `سؤال ${i + 1}: ${q.content.slice(0, 60)}` : `Question ${i + 1}`}
+                title={t(lang, 'chatNav.questionN', { n: i + 1 })}
+                aria-label={t(lang, 'chatNav.questionAria', { n: i + 1, preview: q.content.slice(0, 60) })}
               />
             </div>
           ))}
@@ -107,8 +108,8 @@ export const QuestionNavigator: React.FC<QuestionNavigatorProps> = ({
           type="button"
           onClick={onScrollToBottom}
           className={navButtonCls}
-          title={lang === 'ar' ? 'الانتقال إلى الأسفل' : 'Jump to bottom'}
-          aria-label={lang === 'ar' ? 'الانتقال إلى الأسفل' : 'Jump to bottom'}
+          title={t(lang, 'chatNav.jumpToBottom')}
+          aria-label={t(lang, 'chatNav.jumpToBottom')}
         >
           <ArrowDown className="w-3.5 h-3.5" />
         </button>
