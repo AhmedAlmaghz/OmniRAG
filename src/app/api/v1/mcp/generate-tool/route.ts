@@ -6,7 +6,8 @@ import { db } from '@/lib/storage/db';
 import { getAiModel, parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 import { getEnv } from '@/lib/env/runtimeEnv';
-import { google, resolveGeminiApiKey } from '@/lib/rag/googleProvider';
+import { resolveLanguageModel } from '@/lib/ai/registry/resolve';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   return await runWithModelConfig(modelConfig, async () => {
     try {
+      const denied = await guardPermission(authCtx, 'mcp:manage');
+      if (denied) return denied;
+
       const body = await req.json();
       const { action = 'generate', prompt, serverId, toolSchema } = body;
       const tenantId = authCtx.tenantId;
@@ -48,7 +52,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         // resolves through the shared provider so runtime-provisioned secrets
         // (x-env headers / env-config store) work exactly like host secrets.
         const { object: generatedSchema } = await generateObject({
-          model: google(modelName),
+          model: await resolveLanguageModel(modelName),
           system: systemInstruction,
           prompt: `قم بتحويل وصف الأداة التالي إلى مخطط أداة MCP دقيق ورسمي:
 

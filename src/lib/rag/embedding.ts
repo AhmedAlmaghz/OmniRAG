@@ -1,6 +1,7 @@
 import { embed } from 'ai';
 import { getAiModel } from '../config/aiModels';
-import { getGoogleProvider, resolveGeminiApiKey } from './googleProvider';
+import { resolveEmbeddingModel, isModelRefConfigured } from '../ai/registry/resolve';
+import { parseModelRef, LEGACY_DEFAULT_PROVIDER } from '../ai/registry/modelRef';
 
 // In-Memory LRU Cache for Embeddings
 const cacheMap = new Map<string, number[]>();
@@ -20,77 +21,85 @@ function setCachedEmbedding(key: string, vector: number[]): void {
 }
 
 /**
- * Generates a vector embedding for the given text using the Vercel AI SDK v7
- * (`embed` + the shared @ai-sdk/google provider) with LRU caching and a
- * deterministic fallback. The API key resolves through the shared provider
- * (runtime-env aware), and the model chain walks configured primary → known
- * Gemini embedding models so one deprecated/renamed model doesn't break
- * ingestion.
+ * The platform-wide embedding dimensionality. Qdrant's `omnirag_chunks`
+ * collection is fixed at 3072 dims, so every provider's native vector is
+ * normalized to this width before indexing. Swapping to per-collection
+ * dimensions is a Phase-2 vector-store concern; until then this constant keeps
+ * all providers interoperable with the existing collection.
+ */
+export const PLATFORM_EMBEDDING_DIMENSIONS = 3072;
+
+/**
+ * Generates a vector embedding for the given text using the Vercel AI SDK v7,
+ * resolving the configured embedding model through the multi-provider registry
+ * (any provider with an embedding capability — Google, OpenAI, Mistral,
+ * Ollama, …). LRU caching and a deterministic no-key fallback are preserved.
+ *
+ * Fallback policy: for the legacy Google provider we walk a chain of known
+ * Gemini embedding models so a renamed/deprecated model doesn't break
+ * ingestion. For any other provider we attempt only the configured primary —
+ * we never silently substitute a different provider, since cross-provider
+ * vectors live in different similarity spaces.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const normalizedText = text.trim();
   if (!normalizedText) {
-    return new Array(3072).fill(0);
+    return new Array(PLATFORM_EMBEDDING_DIMENSIONS).fill(0);
   }
 
-  const primaryModel = getAiModel('embeddingModel');
-  const cacheKey = `${primaryModel}:${normalizedText}`;
+  const primaryRef = getAiModel('embeddingModel');
+  const cacheKey = `${primaryRef}:${normalizedText}`;
 
   const cached = getCachedEmbedding(cacheKey);
   if (cached) {
     return cached;
   }
 
-  if (!resolveGeminiApiKey()) {
-    // No API key (dev/sandbox): return the deterministic fallback WITHOUT
-    // caching it — otherwise the hash vector would be pinned until LRU
-    // eviction even after a real key becomes available.
+  if (!(await isModelRefConfigured(primaryRef))) {
+    // No provider key (dev/sandbox): return the deterministic fallback WITHOUT
+    // caching it — otherwise the hash vector would be pinned until LRU eviction
+    // even after a real key becomes available.
     return generateFallbackVector(normalizedText);
   }
 
-  const candidateModels = Array.from(
-    new Set([primaryModel, 'gemini-embedding-2', 'text-embedding-004', 'embedding-001']),
-  );
+  const { providerId } = parseModelRef(primaryRef);
+  const candidateRefs =
+    providerId === LEGACY_DEFAULT_PROVIDER
+      ? Array.from(
+          new Set([primaryRef, 'google/gemini-embedding-2', 'google/text-embedding-004', 'google/embedding-001']),
+        )
+      : [primaryRef];
 
-  const provider = getGoogleProvider();
-  for (const modelName of candidateModels) {
+  for (const ref of candidateRefs) {
     try {
-      const { embedding } = await embed({
-        model: (provider as any).embeddingModel(modelName),
-        value: normalizedText,
-      });
+      const model = await resolveEmbeddingModel(ref);
+      if (!model) continue;
+      const { embedding } = await embed({ model, value: normalizedText });
 
       if (embedding && Array.isArray(embedding) && embedding.length > 0) {
-        const normalized = normalizeTo3072(embedding);
+        const normalized = normalizeToPlatformDim(embedding);
         setCachedEmbedding(cacheKey, normalized);
         return normalized;
       }
     } catch {
-      // Proceed to try next candidate model or fallback
+      // Proceed to try next candidate (Google chain) or fall through.
     }
   }
 
   // All candidate models failed (transient outage/quota): return the fallback
-  // vector but leave it UNCACHEd so the next call retries the real API instead
+  // vector but leave it UNCACHED so the next call retries the real API instead
   // of serving a poisoned hash vector until LRU eviction.
   return generateFallbackVector(normalizedText);
 }
 
 /**
  * Maximum number of concurrent embedding API requests in a batch. Bounded so a
- * large ingestion (50+ chunks) parallelizes without overwhelming Gemini quotas.
+ * large ingestion (50+ chunks) parallelizes without overwhelming provider quotas.
  */
 const EMBED_BATCH_CONCURRENCY = 5;
 
 /**
  * Generates embeddings for many texts in parallel with a bounded concurrency.
- *
- * Designed for the ingestion hot path: previously each chunk issued a serial
- * `generateEmbedding` round-trip, so 50 chunks cost 50 sequential API calls.
- * This runs them in waves of `EMBED_BATCH_CONCURRENCY`, reusing the same LRU
- * cache and fallback logic as the single-text path — so cached/mocked texts
- * resolve instantly and only misses hit the network in parallel.
- *
  * Returns vectors in the SAME order as the input texts.
  */
 export async function embedBatch(texts: string[], concurrency: number = EMBED_BATCH_CONCURRENCY): Promise<number[][]> {
@@ -111,12 +120,16 @@ export async function embedBatch(texts: string[], concurrency: number = EMBED_BA
 }
 
 /**
- * Ensures vectors returned to Qdrant or internal stores consistently match 3072 dimensions.
+ * Ensures vectors returned to the vector store consistently match the platform
+ * dimensionality (3072). Preserves the historical cyclic-fill + L2-normalize
+ * behavior so newly embedded chunks remain comparable with vectors already
+ * indexed under the same scheme.
  */
-function normalizeTo3072(values: number[]): number[] {
-  if (values.length === 3072) return values;
-  const result: number[] = new Array(3072);
-  for (let i = 0; i < 3072; i++) {
+function normalizeToPlatformDim(values: number[]): number[] {
+  const dim = PLATFORM_EMBEDDING_DIMENSIONS;
+  if (values.length === dim) return values;
+  const result: number[] = new Array(dim);
+  for (let i = 0; i < dim; i++) {
     result[i] = values[i % values.length];
   }
   const magnitude = Math.sqrt(result.reduce((sum, val) => sum + val * val, 0)) || 1.0;
@@ -124,15 +137,16 @@ function normalizeTo3072(values: number[]): number[] {
 }
 
 /**
- * Generates a deterministic fallback vector of 3072 elements for development/testing
- * when Gemini API key is missing or calls fail.
+ * Generates a deterministic fallback vector for development/testing when no
+ * embedding provider key is configured or all calls fail.
  */
 function generateFallbackVector(text: string): number[] {
-  const vector: number[] = new Array(3072).fill(0);
+  const dim = PLATFORM_EMBEDDING_DIMENSIONS;
+  const vector: number[] = new Array(dim).fill(0);
 
   for (let i = 0; i < text.length; i++) {
     const charCode = text.charCodeAt(i);
-    const index = (i * 31 + charCode) % 3072;
+    const index = (i * 31 + charCode) % dim;
     vector[index] = (vector[index] + charCode / 255.0) / 2.0;
   }
 

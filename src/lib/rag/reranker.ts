@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DocumentChunk } from '../types/omnirag';
 import { getAiModel } from '../config/aiModels';
 import { SYSTEM_CONFIG } from '../config/systemConfig';
-import { google } from './googleProvider';
+import { resolveLanguageModel, isModelRefConfigured } from '../ai/registry/resolve';
 
 /**
  * Re-ranks a list of document chunks based on their semantic relevance to the query
@@ -39,11 +39,12 @@ export async function rerankChunks(query: string, chunks: DocumentChunk[]): Prom
     .join('\n\n');
 
   try {
-    const analysisModel = getAiModel('analysisModel'); // gemini-3.5-pro or similar
+    const analysisModel = getAiModel('analysisModel');
+    if (!(await isModelRefConfigured(analysisModel))) return chunks;
 
-    // We ask Gemini to output an array of scores.
+    // We ask the analysis model to output an array of scores.
     const { object } = await generateObject({
-      model: google(analysisModel),
+      model: await resolveLanguageModel(analysisModel),
       schema: z.object({
         rankings: z.array(
           z.object({

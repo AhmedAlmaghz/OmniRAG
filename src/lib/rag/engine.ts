@@ -1,14 +1,13 @@
-import { google } from './googleProvider';
 import { generateText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
 import { SearchQuery, SearchResult, DocumentChunk, Citation, MCPToolCall } from '../types/omnirag';
 import { db } from '../storage/db';
 import { searchPostgresLexical, normalizeArabicForSearch } from '../storage/postgres';
-import { searchQdrantSemantic } from '../storage/qdrant';
+import { getVectorStoreSelection } from '../storage/vectors/registry';
 import { generateEmbedding } from './embedding';
 import { rerankChunks } from './reranker';
 import { getAiModel } from '../config/aiModels';
 import { getEnv } from '../env/runtimeEnv';
-import { resolveGeminiApiKey } from './googleProvider';
+import { resolveLanguageModel, isModelRefConfigured } from '../ai/registry/resolve';
 import { generateTextResilient } from '../ai/resilientGenerate';
 import { SYSTEM_CONFIG } from '../config/systemConfig';
 import { buildTenantMcpTools, type CustomToolSchema } from '../mcp/aiSdkTools';
@@ -20,7 +19,7 @@ import { ToolExecutionOutcome, executeMcpToolCall } from '../mcp/dispatcher';
  * loop can explain the failure to the user rather than collapsing into the
  * deterministic fallback response.
  */
-async function runToolSafely(
+export async function runToolSafely(
   tenantId: string,
   toolName: string,
   args: Record<string, any>,
@@ -49,7 +48,7 @@ async function runToolSafely(
  * response, normal response, and the deterministic fallback), so any change to
  * citation shape had to be made three times. Single source of truth now.
  */
-function buildCitations(contextChunks: DocumentChunk[]): Citation[] {
+export function buildCitations(contextChunks: DocumentChunk[]): Citation[] {
   return contextChunks.map((chunk, idx) => ({
     index: idx + 1,
     chunkId: chunk.id,
@@ -72,6 +71,78 @@ function buildCitationSnippet(content: string): string {
 }
 
 /**
+ * Collects the tenant's enabled MCP tools + custom schemas from healthy
+ * servers, applying the private-mode external-tool containment filter.
+ * Shared by the completions path (generateRagCompletion) and the streaming
+ * path (chat/stream) so both offer the identical tool surface.
+ */
+export async function collectTenantMcpTools(
+  tenantId: string,
+  mode: string,
+): Promise<{
+  toolsToOffer: string[];
+  requireApprovalTools: string[];
+  customSchemas: Record<string, CustomToolSchema>;
+}> {
+  const servers = await db.getMcpServers(tenantId);
+  const enabledTools: string[] = [];
+  const requireApprovalTools: string[] = [];
+  const customSchemas: Record<string, CustomToolSchema> = {};
+
+  for (const server of servers) {
+    Object.assign(customSchemas, ((server as any).customToolSchemas || {}) as Record<string, CustomToolSchema>);
+    if (server.status === 'healthy') {
+      for (const tool of server.enabledTools) {
+        enabledTools.push(tool);
+        if (server.requireConfirmationTools?.includes(tool)) {
+          requireApprovalTools.push(tool);
+        }
+      }
+    }
+  }
+
+  let toolsToOffer = Array.from(new Set(enabledTools));
+  if (mode === 'private') {
+    const externalPrefixes = ['slack_', 'github_', 'web_', 'fetch_'];
+    toolsToOffer = toolsToOffer.filter((t) => !externalPrefixes.some((pref) => t.startsWith(pref)));
+  }
+
+  return { toolsToOffer, requireApprovalTools, customSchemas };
+}
+
+/**
+ * The agentic system instruction shared by the completions and streaming
+ * paths. Kept in one place so tool guidance (including the Phase-4 production
+ * skills) cannot drift between the two chat surfaces.
+ */
+export function buildAgenticSystemInstruction(modelToUse: string, mode: string, toolsToOffer: string[]): string {
+  return `أنت مساعد ذكي ومحرك وكلاء متمكن (Agentic RAG Engine) ضمن منصة OmniRAG للمؤسسات.
+أنت متصل مباشرة ببروتوكول سياق النموذج MCP (Model Context Protocol) لربط الأنظمة والخوادم الحية.
+النموذج النشط: ${modelToUse} | الوضع الحالي: ${mode}.
+الأدوات والخوادم المربوطة والمتاحة لك فوراَ: ${toolsToOffer.length > 0 ? toolsToOffer.join(', ') : 'لا توجد أدوات خارجية مفعلة حالياَ'}.
+
+ذاكرة المحادثة والسياق:
+1. تم تزويدك بسجل المحادثة السابقة بينك وبين المستخدم. استخدم هذا السياق لفهم السياق الكامل للمحادثة.
+2. إذا أشار المستخدم بكلمات مثل "هذا"، "ذلك"، "المذكور"، "الموضوع"، "مرة أخرى" وغيرها من الإشارات، فاستخدم سياق المحادثة السابقة لفهم المراد.
+3. لا تعيد ذكر معلومات سبق إخبار المستخدم بها إلا إذا طلب ذلك صراحة.
+4. رد بشكل طبيعي ومتصل كأنك تعرف تاريخ المحادثة.
+
+توجيهات واستخدام أدوات الـ MCP:
+1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، أو البحث في قاعدة المعرفة (search_knowledge_base) أو فهرسة محتوى جديد فيها (knowledge_ingest_document)، فيجب عليك فوراَ استدعاء الأداة المناسبة عبر Function Call.
+2. مهارات الإنتاج: إذا طلب المستخدم رسما بيانيا أو مخططا فاستدع create_chart ومرر البيانات الرقمية كاملة؛ وإذا طلب صورة فاستدع generate_image مع وصف دقيق؛ وإذا طلب ملف Word/Excel/PowerPoint/PDF فاستدع create_office_document مع المحتوى بصيغة Markdown؛ وإذا طلب تقريرا منظما فاستدع build_report؛ وإذا طلب دليلا تعليميا أو شرحا خطوة-بخطوة فاستدع create_tutorial_guide؛ وإذا طلب إرسال بريد إلكتروني فاستدع send_email (سيتطلب موافقة المستخدم قبل الإرسال). عند استلام نتيجة أي من هذه المهارات، ضمّن في ردك عنصر العرض المرفق في النتيجة (markdownFence للمخططات، markdownImage للصور، markdownLink للملفات) كما هو حرفيا.
+3. اختر دائماَ الأداة الأنسب لنية المستخدم، ومرّر المدخلات المطلوبة كاملة وصحيحة حسب مخطط كل أداة. إذا لم تكن أي أداة مناسبة، أجب من المستندات المتاحة مباشرة دون استدعاء.
+4. ملاحظة صدق البيانات: بعض النتائج تأتي موسومة بـ "simulated: true" وهي بيانات تجريبية توضيحية وليست تكاملا حيا — وضّح للمستخدم بلطف أن هذه البيانات تجريبية. أما النتائج الموسومة بـ "simulated: false" فهي من تكامل حقيقي.
+5. إذا فشلت الأداة وأعادت خطأ، لا تختلق نتائج: اعتذر باختصار، اشرح سبب الفشل، واقترح خطوة بديلة.
+6. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمان طلب الموافقة البشرية قبل التنفيذ تلقائيا.
+
+قواعد الإسناد والاستشهاد المضمن:
+1. عند استخدام معلومة من المستندات المرفقة، ضع رقم الاستشهاد مباشرة في النص كرقم بين أقواس مربعة مثل [1] أو [2] المطابق لرقم المصدر.
+2. لا تبتكر مراجع وهمية غير موجودة في النص.
+3. لا تضع قائمة منفصلة للمصادر في نهاية الرد — فقط الأرقام المضمنة في النص.
+${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحالي مغلق وخاص بالكامل (Private Mode). تم إيقاف وتصفية جميع أدوات الـ MCP الخارجية لشبكة الويب أو الخدمات الخارجية للطرف الثالث حماية لسرية بيانات المستأجر.' : ''}`;
+}
+
+/**
  * Smart Router: selects the optimal model based on query complexity and mode from central settings
  */
 export function selectSmartModel(query: string, mode: string): string {
@@ -85,14 +156,13 @@ export function selectSmartModel(query: string, mode: string): string {
  * HyDE (Hypothetical Document Embeddings) Generator using Vercel AI SDK
  */
 export async function generateHydeDocument(query: string): Promise<string> {
-  const apiKey = resolveGeminiApiKey();
-  if (!apiKey) return query;
+  const hydeModelName = getAiModel('hydeModel');
+  if (!(await isModelRefConfigured(hydeModelName))) return query;
 
   try {
-    const hydeModelName = getAiModel('hydeModel');
     const { text } = await generateText({
-      model: google(hydeModelName),
-      prompt: `اكتب مستنداً افتراضياً مثالياً يبين الإجابة الشاملة على السؤال التالي بغرض استخدامه في محرك الاسترجاع المتجهي (HyDE):\n\nالسؤال: ${query}`,
+      model: await resolveLanguageModel(hydeModelName),
+      prompt: `اكتب مستندا افتراضيا مثاليا يبين الإجابة الشاملة على السؤال التالي بغرض استخدامه في محرك الاسترجاع المتجهي (HyDE):\n\nالسؤال: ${query}`,
     });
     return text || query;
   } catch (e) {
@@ -172,24 +242,30 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
   // Check if we can use real database connections
   const isPostgresActive = !!(getEnv('DATABASE_URL') || getEnv('POSTGRES_URL'));
-  const isQdrantActive = !!getEnv('QDRANT_URL');
+  // Resolve the tenant's vector backend through the storage registry. The
+  // in-memory backend only participates in semantic search when a tenant
+  // explicitly selected it — otherwise a nothing-configured deployment keeps
+  // the historical keyword-only behavior.
+  const { store: vectorStore, explicit: vectorStoreExplicit } = await getVectorStoreSelection(tenantId);
+  const isVectorActive = vectorStore.isConfigured() && (vectorStore.id !== 'memory' || vectorStoreExplicit);
 
   let resultChunks: any[] = [];
   let totalCount = 0;
   let semanticMatches = 0;
   let lexicalMatches = 0;
 
-  if (isPostgresActive || isQdrantActive) {
+  if (isPostgresActive || isVectorActive) {
     try {
       // Run semantic and lexical search in parallel. The semantic backend is
       // asked for ALL chunks meeting the similarity floor (score_threshold),
       // capped only by an over-fetch hint that protects the round-trip cost
-      // — Qdrant pre-filters below the floor server-side, so fused RRF ranks
-      // over genuinely-relevant chunks instead of arbitrary rank truncation.
+      // — vector stores pre-filter below the floor server-side, so fused RRF
+      // ranks over genuinely-relevant chunks instead of arbitrary rank
+      // truncation.
       const [semanticResults, lexicalResults] = await Promise.all([
-        isQdrantActive
+        isVectorActive
           ? generateEmbedding(semanticSearchContent).then((vector) =>
-              searchQdrantSemantic({
+              vectorStore.search({
                 vector,
                 tenantId,
                 collectionIds,
@@ -511,60 +587,16 @@ export async function generateRagCompletion(params: {
     }`;
   }
 
-  const apiKey = resolveGeminiApiKey();
+  const modelAlias = modelToUse || (mode === 'analysis' ? getAiModel('analysisModel') : getAiModel('chatModel'));
+  const providerConfigured = await isModelRefConfigured(modelAlias);
 
-  if (apiKey) {
+  if (providerConfigured) {
     try {
-      const modelAlias = modelToUse || (mode === 'analysis' ? getAiModel('analysisModel') : getAiModel('chatModel'));
-
-      // Fetch Tenant MCP configuration to extract enabled/approved tools and
-      // custom (AI-generated / remote) tool schemas.
-      const servers = await db.getMcpServers(tenantId);
-      const enabledTools: string[] = [];
-      const requireApprovalTools: string[] = [];
-      const customSchemas: Record<string, CustomToolSchema> = {};
-
-      for (const server of servers) {
-        Object.assign(customSchemas, ((server as any).customToolSchemas || {}) as Record<string, CustomToolSchema>);
-        if (server.status === 'healthy') {
-          for (const tool of server.enabledTools) {
-            enabledTools.push(tool);
-            if (server.requireConfirmationTools?.includes(tool)) {
-              requireApprovalTools.push(tool);
-            }
-          }
-        }
-      }
-
-      let toolsToOffer = Array.from(new Set(enabledTools));
-      if (mode === 'private') {
-        const externalPrefixes = ['slack_', 'github_', 'web_', 'fetch_'];
-        toolsToOffer = toolsToOffer.filter((t) => !externalPrefixes.some((pref) => t.startsWith(pref)));
-      }
-
-      const systemInstruction = `أنت مساعد ذكي ومحرك وكلاء متمكن (Agentic RAG Engine) ضمن منصة OmniRAG للمؤسسات.
-أنت متصل مباشرة ببروتوكول سياق النموذج MCP (Model Context Protocol) لربط الأنظمة والخوادم الحية.
-النموذج النشط: ${modelToUse} | الوضع الحالي: ${mode}.
-الأدوات والخوادم المربوطة والمتاحة لك فوراً: ${toolsToOffer.length > 0 ? toolsToOffer.join(', ') : 'لا توجد أدوات خارجية مفعلة حالياً'}.
-
-ذاكرة المحادثة والسياق:
-1. تم تزويدك بسجل المحادثة السابقة بينك وبين المستخدم. استخدم هذا السياق لفهم السياق الكامل للمحادثة.
-2. إذا أشار المستخدم بكلمات مثل "هذا"، "ذلك"، "المذكور"، "الموضوع"، "مرة أخرى" وغيرها من الإشارات، فاستخدم سياق المحادثة السابقة لفهم المراد.
-3. لا تعيد ذكر معلومات سبق إخبار المستخدم بها إلا إذا طلب ذلك صراحة.
-4. رد بشكل طبيعي ومتصل كأنك تعرف تاريخ المحادثة.
-
-توجيهات واستخدام أدوات الـ MCP:
-1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، أو البحث في قاعدة المعرفة (search_knowledge_base) أو فهرسة محتوى جديد فيها (knowledge_ingest_document)، فيجب عليك فوراً استدعاء الأداة المناسبة عبر Function Call.
-2. اختر دائماً الأداة الأنسب لنية المستخدم، ومرّر المدخلات المطلوبة كاملة وصحيحة حسب مخطط كل أداة. إذا لم تكن أي أداة مناسبة، أجب من المستندات المتاحة مباشرة دون استدعاء.
-3. ملاحظة صدق البيانات: بعض النتائج تأتي موسومة بـ "simulated: true" وهي بيانات تجريبية توضيحية وليست تكاملاً حياً — وضّح للمستخدم بلطف أن هذه البيانات تجريبية. أما النتائج الموسومة بـ "simulated: false" فهي من تكامل حقيقي.
-4. إذا فشلت الأداة وأعادت خطأً، لا تختلق نتائج: اعتذر باختصار، اشرح سبب الفشل، واقترح خطوة بديلة.
-5. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمان طلب الموافقة البشرية قبل التنفيذ تلقائياً.
-
-قواعد الإسناد والاستشهاد المضمن:
-1. عند استخدام معلومة من المستندات المرفقة، ضع رقم الاستشهاد مباشرة في النص كرقم بين أقواس مربعة مثل [1] أو [2] المطابق لرقم المصدر.
-2. لا تبتكر مراجع وهمية غير موجودة في النص.
-3. لا تضع قائمة منفصلة للمصادر في نهاية الرد — فقط الأرقام المضمنة في النص.
-${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحالي مغلق وخاص بالكامل (Private Mode). تم إيقاف وتصفية جميع أدوات الـ MCP الخارجية لشبكة الويب أو الخدمات الخارجية للطرف الثالث حماية لسرية بيانات المستأجر.' : ''}`;
+      // Tenant tool surface + system instruction are shared with the
+      // streaming path (chat/stream) via collectTenantMcpTools /
+      // buildAgenticSystemInstruction so the two surfaces cannot drift.
+      const { toolsToOffer, requireApprovalTools, customSchemas } = await collectTenantMcpTools(tenantId, mode);
+      const systemInstruction = buildAgenticSystemInstruction(modelToUse, mode, toolsToOffer);
 
       // Native AI SDK tool loop: registry-derived zod schemas + custom JSON
       // Schema tools, executed through the unified MCP dispatcher.
@@ -608,7 +640,7 @@ ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحا�
         `[Agentic RAG] generateText via ${modelAlias} with ${aiTools ? Object.keys(aiTools).length : 0} MCP tools...`,
       );
       const response = await generateText({
-        model: google(modelAlias),
+        model: await resolveLanguageModel(modelAlias),
         system: systemInstruction,
         messages: [...messages, { role: 'user', content: userContent }],
         ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),

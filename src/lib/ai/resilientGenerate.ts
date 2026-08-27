@@ -1,14 +1,15 @@
 import { generateText, type ModelMessage } from 'ai';
 import { getAiModel, getFallbackModels } from '../config/aiModels';
-import { google } from '../rag/googleProvider';
+import { resolveLanguageModel } from './registry/resolve';
 
 /**
  * Central AI SDK v7 generation entry point with model-chain resilience.
  *
- * This is THE way server code should talk to Gemini in OmniRAG: it walks the
- * configured primary model plus the fallback chain (per-request model config
- * aware via aiModels), letting the AI SDK's built-in retry/backoff handle
- * transient errors per model before moving to the next fallback.
+ * This is THE way server code should talk to AI providers in OmniRAG: it walks
+ * the configured primary model plus the fallback chain (per-request model
+ * config aware via aiModels), resolving each ref to a concrete provider model
+ * through the provider registry, and lets the AI SDK's built-in retry/backoff
+ * handle transient errors per model before moving to the next fallback.
  *
  * Replaces the old hand-rolled @google/genai `generateContentWithResilience`.
  * The native SDK remains ONLY for the Gemini Files API (upload/poll/delete)
@@ -47,7 +48,7 @@ export async function generateTextResilient(options: ResilientTextOptions = {}):
   for (const modelId of modelsToTry) {
     try {
       const params: Record<string, unknown> = {
-        model: google(modelId),
+        model: await resolveLanguageModel(modelId),
         maxRetries: options.maxRetries ?? 2,
       };
       if (options.system) params.system = options.system;

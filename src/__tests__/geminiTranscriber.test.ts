@@ -16,6 +16,12 @@ async function loadService(mocks: { generateText: ReturnType<typeof vi.fn>; uplo
     google: (modelId: string) => ({ modelId }),
     getGoogleProvider: () => ({ id: 'google-provider' }),
   }));
+  // Multi-provider resolution — returns a {modelId} stub so assertions on
+  // call.model.modelId keep working, and reports the provider as configured.
+  vi.doMock('@/lib/ai/registry/resolve', () => ({
+    resolveLanguageModel: async (modelId: string) => ({ modelId }),
+    isModelRefConfigured: async () => true,
+  }));
   // Minimal config stubs so the model chain doesn't depend on defaults.
   vi.doMock('@/lib/config/aiModels', () => ({
     getAiModel: () => 'test-primary-model',
@@ -35,6 +41,7 @@ describe('transcribeWithGemini', () => {
 
   afterEach(() => {
     vi.doUnmock('@/lib/rag/googleProvider');
+    vi.doUnmock('@/lib/ai/registry/resolve');
     vi.doUnmock('@/lib/config/aiModels');
     vi.doUnmock('ai');
     vi.resetModules();
@@ -46,6 +53,10 @@ describe('transcribeWithGemini', () => {
       resolveGeminiApiKey: () => '',
       google: vi.fn(),
       getGoogleProvider: () => ({}),
+    }));
+    vi.doMock('@/lib/ai/registry/resolve', () => ({
+      resolveLanguageModel: async (modelId: string) => ({ modelId }),
+      isModelRefConfigured: async () => false,
     }));
     vi.doMock('@/lib/config/aiModels', () => ({
       getAiModel: () => 'm',
@@ -114,6 +125,7 @@ describe('transcribeWithGemini', () => {
 describe('transcribeYoutubeUrlWithGemini', () => {
   afterEach(() => {
     vi.doUnmock('@/lib/rag/googleProvider');
+    vi.doUnmock('@/lib/ai/registry/resolve');
     vi.doUnmock('@/lib/config/aiModels');
     vi.doUnmock('ai');
     vi.resetModules();
@@ -129,6 +141,10 @@ describe('transcribeYoutubeUrlWithGemini', () => {
     vi.doMock('@/lib/rag/googleProvider', () => ({
       resolveGeminiApiKey: () => 'k',
       google: (modelId: string) => ({ modelId }),
+    }));
+    vi.doMock('@/lib/ai/registry/resolve', () => ({
+      resolveLanguageModel: async (modelId: string) => ({ modelId }),
+      isModelRefConfigured: async () => true,
     }));
     vi.doMock('@/lib/config/aiModels', () => ({
       getAiModel: () => 'test-primary-model',

@@ -58,6 +58,39 @@ const CHAT_TESTABLE_KEYS = new Set<ScalarModelKey>([
   'chatStreamModel',
 ]);
 
+/** Client-safe shape of GET /api/v1/providers (see toProviderCatalog). */
+interface CatalogModel {
+  id: string;
+  name: string;
+  capabilities: string[];
+}
+interface CatalogProvider {
+  id: string;
+  nameAr: string;
+  nameEn: string;
+  capabilities: string[];
+  models: CatalogModel[];
+}
+interface CatalogStatus {
+  providerId: string;
+  configured: boolean;
+  enabled: boolean;
+}
+interface ProviderCatalogResponse {
+  success: boolean;
+  providers: CatalogProvider[];
+  status: CatalogStatus[];
+}
+
+/** Maps an operation's preset type filter to the registry capability it needs. */
+const TYPE_TO_CAPABILITY: Record<string, string> = {
+  general: 'chat',
+  reasoning: 'chat',
+  embedding: 'embedding',
+  audio: 'speech-to-text',
+  ocr: 'ocr',
+};
+
 export default function ModelSettingsView() {
   const [config, setConfig] = useState<AIModelConfig>(getAiModelConfig());
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -68,9 +101,47 @@ export default function ModelSettingsView() {
 
   // Test Playground State
   const [testOperation, setTestOperation] = useState<ScalarModelKey>('chatModel');
-  const [testPrompt, setTestPrompt] = useState('اكتب ملخصاً في سطرين عن أهمية عزل المستأجرين في منصات RAG');
+  const [testPrompt, setTestPrompt] = useState('اكتب ملخصاُ في سطرين عن أهمية عزل المستأجرين في منصات RAG');
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ text?: string; latencyMs?: number; error?: string } | null>(null);
+
+  // Multi-provider catalog (fetched from the registry) — lets every operation
+  // picker list models from ALL configured providers, not just Google presets.
+  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchWithAuth('/api/v1/providers')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: ProviderCatalogResponse | null) => {
+        if (!cancelled && data?.success) setProviderCatalog(data);
+      })
+      .catch(() => {
+        /* Catalog is an enhancement — the preset picker still works without it. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Qualified model refs (`provider/modelId`) offered for an operation type. */
+  const providerModelsFor = (typeFilter: string): Array<{ ref: string; name: string; providerName: string }> => {
+    if (!providerCatalog) return [];
+    const capability = TYPE_TO_CAPABILITY[typeFilter] || 'chat';
+    const configuredIds = new Set(
+      providerCatalog.status.filter((s) => s.configured && s.enabled !== false).map((s) => s.providerId),
+    );
+    const out: Array<{ ref: string; name: string; providerName: string }> = [];
+    for (const provider of providerCatalog.providers) {
+      if (!configuredIds.has(provider.id)) continue;
+      if (!provider.capabilities.includes(capability)) continue;
+      for (const model of provider.models) {
+        if (!model.capabilities.includes(capability)) continue;
+        out.push({ ref: `${provider.id}/${model.id}`, name: model.name, providerName: provider.nameAr });
+      }
+    }
+    return out;
+  };
 
   // Sync state with local storage + cross-component change events
   useEffect(() => {
@@ -357,8 +428,11 @@ export default function ModelSettingsView() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {operationsList.map((op) => {
           const IconComp = op.icon;
-          const isCustom = customInputMode[op.key] || !PRESET_MODELS.some((m) => m.id === config[op.key]);
           const currentVal = config[op.key];
+          const providerModels = providerModelsFor(op.typeFilter);
+          const isProviderModel = providerModels.some((pm) => pm.ref === currentVal);
+          const isCustom =
+            customInputMode[op.key] || (!PRESET_MODELS.some((m) => m.id === currentVal) && !isProviderModel);
 
           const filteredPresets = PRESET_MODELS.filter(
             (m) => m.type === op.typeFilter || (m.recommendedFor && m.recommendedFor.includes(op.key)),
@@ -437,6 +511,39 @@ export default function ModelSettingsView() {
                   </button>
                 </div>
 
+                {/* Models from configured providers (qualified refs provider/modelId) */}
+                {providerModels.length > 0 && (
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-bold text-slate-600 block">نماذج المزودين المفعّلين لديك:</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {providerModels.map((pm) => {
+                        const isSelected = currentVal === pm.ref;
+                        return (
+                          <button
+                            key={pm.ref}
+                            type="button"
+                            onClick={() => handleSelectModel(op.key, pm.ref)}
+                            aria-pressed={isSelected}
+                            title={pm.ref}
+                            className={`px-3 py-2 rounded-xl text-xs text-right transition border flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white border-emerald-600 font-semibold'
+                                : 'bg-emerald-50/50 border-emerald-200 text-slate-600 hover:border-emerald-400 hover:text-slate-900'
+                            }`}
+                          >
+                            <span className="font-mono truncate">{pm.name}</span>
+                            <span
+                              className={`text-[10px] mt-1 ${isSelected ? 'text-emerald-100' : 'text-emerald-600'}`}
+                            >
+                              {pm.providerName}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* Custom Input Field */}
                 {isCustom && (
                   <div className="mt-1 space-y-1">
@@ -444,11 +551,12 @@ export default function ModelSettingsView() {
                       type="text"
                       value={customModelNames[op.key] ?? currentVal}
                       onChange={(e) => handleCustomNameChange(op.key, e.target.value)}
-                      placeholder="أدخل اسم النموذج المخصص (مثلاً: gemini-3.7-flash)"
+                      placeholder="مثال: openai/gpt-4o أو anthropic/claude-sonnet-4-5 أو اسم غير مؤهل (يُعامل كـ Google)"
                       className="w-full bg-slate-50 border border-indigo-300 rounded-xl px-3.5 py-2 text-xs text-slate-800 font-mono focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                     />
                     <p className="text-[11px] text-slate-500">
-                      سيتم تمرير اسم النموذج المعرف هنا مباشرةً لمستدعي Gemini API.
+                      الصيغة الموحدة <code className="font-mono">provider/modelId</code> — الأسماء غير المؤهلة تُعامل
+                      كنماذج Google للتوافق الرجعي.
                     </p>
                   </div>
                 )}
