@@ -1,12 +1,22 @@
 import { db } from '@/lib/storage/db';
 import { generateEmbedding } from '@/lib/rag/embedding';
-import { searchQdrantSemantic } from '@/lib/storage/qdrant';
+import { getVectorStoreForTenant } from '@/lib/storage/vectors/registry';
 import { randomInt } from '@/lib/crypto/webRandom';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { htmlToText, safeFetchBinary, safeFetchText } from '../net';
 import { chunkDocumentWithPages, estimateTokenCount } from '@/lib/rag/chunker';
 import { dispatchFile, mistralOcr, normalizeMimeType } from '@/lib/services/unstructuredService';
 import { processYoutubeTranscript } from '@/lib/youtube/transcriptParser';
+import { SKILL_TOOLS } from './skillTools';
+import {
+  getSlackToken,
+  slackSendMessageLive,
+  slackReadChannelLive,
+  getGitHubToken,
+  githubSearchCodeLive,
+  githubCreateIssueLive,
+  githubReadRepoLive,
+} from './liveIntegrations';
 
 /**
  * Resolves a document reference into a Buffer for the shared parsing pipeline.
@@ -41,7 +51,7 @@ export interface MCPToolDefinition {
   name: string;
   serverName: string;
   description: string;
-  category: 'slack' | 'github' | 'search' | 'postgres' | 'knowledge' | 'actions';
+  category: 'slack' | 'github' | 'search' | 'postgres' | 'knowledge' | 'actions' | 'skills';
   hasSideEffect: boolean;
   requireConfirmation: boolean;
   /**
@@ -159,7 +169,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'slack',
     hasSideEffect: true,
     requireConfirmation: true,
-    simulated: true,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -171,14 +181,47 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     },
     execute: async (args, ctx) => {
       const { channel, message, urgency = 'normal' } = args;
+
+      // Live path: a real Slack bot token turns this into an actual post.
+      if (getSlackToken()) {
+        const live = await slackSendMessageLive(channel, urgency === 'high' ? `🔴 [عاجل] ${message}` : message);
+        if (!live.ok) {
+          return { success: false, simulated: false, channel, error: live.error };
+        }
+        await db.addAuditLog({
+          id: `audit-${Date.now()}`,
+          tenantId: ctx.tenantId,
+          actorId: ctx.userId || 'mcp_gateway',
+          action: 'MCP_TOOL_EXECUTE',
+          resourceType: 'slack_channel',
+          resourceId: channel,
+          status: 'success',
+          details: `تم إرسال رسالة Slack حقيقية إلى القناة (${channel}): "${message.slice(0, 50)}..."`,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          success: true,
+          simulated: false,
+          channel,
+          messageSent: message,
+          urgency,
+          timestamp: new Date().toISOString(),
+          deliveryStatus: 'delivered',
+          messageId: live.data?.ts || '',
+        };
+      }
+
+      // No token: clearly-marked sandbox simulation (declared per-result).
       const result = {
         success: true,
+        simulated: true,
         channel,
         messageSent: message,
         urgency,
         timestamp: new Date().toISOString(),
         deliveryStatus: 'delivered',
         messageId: `slack-msg-${Date.now()}`,
+        reason: 'SLACK_BOT_TOKEN غير مهيأ — هذه نتيجة تجريبية. أضف الرمز لتفعيل الإرسال الحقيقي.',
       };
 
       // Log audit
@@ -205,7 +248,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'slack',
     hasSideEffect: false,
     requireConfirmation: false,
-    simulated: true,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -216,8 +259,25 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     },
     execute: async (args) => {
       const { channel, limit = 10 } = args;
+
+      if (getSlackToken()) {
+        const live = await slackReadChannelLive(channel, Number(limit) || 10);
+        if (!live.ok) {
+          return { success: false, simulated: false, channel, error: live.error };
+        }
+        return {
+          success: true,
+          simulated: false,
+          channel,
+          messagesCount: live.data.messages.length,
+          messages: live.data.messages,
+        };
+      }
+
       return {
         success: true,
+        simulated: true,
+        reason: 'SLACK_BOT_TOKEN غير مهيأ — هذه بيانات تجريبية توضيحية.',
         channel,
         messagesCount: Math.min(limit, 5),
         messages: [
@@ -248,7 +308,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'slack',
     hasSideEffect: true,
     requireConfirmation: true,
-    simulated: true,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -258,11 +318,43 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['alertType', 'details'],
     },
     execute: async (args, ctx) => {
+      const alertChannel = getEnv('SLACK_ALERTS_CHANNEL') || '#security-alerts';
+
+      if (getSlackToken()) {
+        const text = `🚨 تنبيه ${args.alertType}: ${args.details}`;
+        const live = await slackSendMessageLive(alertChannel, text);
+        if (!live.ok) {
+          return { success: false, simulated: false, alertType: args.alertType, error: live.error };
+        }
+        await db.addAuditLog({
+          id: `audit-${Date.now()}-alert`,
+          tenantId: ctx.tenantId,
+          actorId: ctx.userId || 'mcp_gateway',
+          action: 'MCP_TOOL_EXECUTE',
+          resourceType: 'slack_channel',
+          resourceId: alertChannel,
+          status: 'success',
+          details: `تم بث تنبيه ${args.alertType} حقيقي إلى (${alertChannel})`,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          success: true,
+          simulated: false,
+          alertId: live.data?.ts || `alert-${Date.now()}`,
+          alertType: args.alertType,
+          recipientChannel: alertChannel,
+          status: 'broadcasted',
+          timestamp: new Date().toISOString(),
+        };
+      }
+
       return {
         success: true,
+        simulated: true,
+        reason: 'SLACK_BOT_TOKEN غير مهيأ — هذا تنبيه تجريبي لم يُبث فعليا.',
         alertId: `alert-${Date.now()}`,
         alertType: args.alertType,
-        recipientChannel: '#security-alerts',
+        recipientChannel: alertChannel,
         status: 'broadcasted',
         timestamp: new Date().toISOString(),
       };
@@ -277,7 +369,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'github',
     hasSideEffect: false,
     requireConfirmation: false,
-    simulated: true,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -288,23 +380,41 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['query'],
     },
     execute: async (args) => {
-      const { query, repo = 'omnirag/core' } = args;
+      const { query, repo, language } = args;
+
+      if (getGitHubToken()) {
+        const live = await githubSearchCodeLive(query, repo, language);
+        if (!live.ok) {
+          return { success: false, simulated: false, query, error: live.error };
+        }
+        return {
+          success: true,
+          simulated: false,
+          repo: repo || 'all',
+          totalMatches: live.data.totalMatches,
+          codeSnippets: live.data.codeSnippets,
+        };
+      }
+
+      const simRepo = repo || 'omnirag/core';
       return {
         success: true,
-        repo,
+        simulated: true,
+        reason: 'GITHUB_TOKEN غير مهيأ — هذه نتائج تجريبية توضيحية.',
+        repo: simRepo,
         totalMatches: 2,
         codeSnippets: [
           {
             path: 'src/lib/mcp/server-factory.ts',
             line: 42,
             match: `export function createMcpServer(tenantId: string) { /* ${query} */ }`,
-            url: `https://github.com/${repo}/blob/main/src/lib/mcp/server-factory.ts#L42`,
+            url: `https://github.com/${simRepo}/blob/main/src/lib/mcp/server-factory.ts#L42`,
           },
           {
             path: 'src/lib/security/rateLimiter.ts',
             line: 18,
             match: `const mcpRateLimit = checkTenantLimit(tenantId, 'mcp_calls');`,
-            url: `https://github.com/${repo}/blob/main/src/lib/security/rateLimiter.ts#L18`,
+            url: `https://github.com/${simRepo}/blob/main/src/lib/security/rateLimiter.ts#L18`,
           },
         ],
       };
@@ -318,7 +428,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'github',
     hasSideEffect: true,
     requireConfirmation: true,
-    simulated: true,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -330,15 +440,48 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['repo', 'title', 'body'],
     },
     execute: async (args, ctx) => {
-      // This tool is a built-in mock (no real GitHub API call) used for
-      // demos/integration debugging. It returns a simulated issue, but does
-      // NOT write a fake audit-log entry claiming a real GitHub issue was
-      // created — such an entry would be a forged audit trail. The result
-      // itself is clearly marked as simulated to avoid misleading callers.
+      const labels = String(args.labels || '')
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+
+      // Live path: real issue creation when a token is configured.
+      if (getGitHubToken()) {
+        const live = await githubCreateIssueLive(args.repo, args.title, args.body, labels);
+        if (!live.ok) {
+          return { success: false, simulated: false, repo: args.repo, error: live.error };
+        }
+        await db.addAuditLog({
+          id: `audit-${Date.now()}-issue`,
+          tenantId: ctx.tenantId,
+          actorId: ctx.userId || 'mcp_gateway',
+          action: 'MCP_TOOL_EXECUTE',
+          resourceType: 'github_issue',
+          resourceId: `${args.repo}#${live.data.issueNumber}`,
+          status: 'success',
+          details: `تم إنشاء تذكرة GitHub حقيقية (${args.repo}#${live.data.issueNumber}): "${String(args.title).slice(0, 60)}"`,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          success: true,
+          simulated: false,
+          issueNumber: live.data.issueNumber,
+          issueUrl: live.data.issueUrl,
+          title: args.title,
+          status: live.data.status,
+          createdAt: new Date().toISOString(),
+        };
+      }
+
+      // No token: built-in mock for demos/integration debugging. It returns a
+      // simulated issue, but does NOT write a fake audit-log entry claiming a
+      // real GitHub issue was created — such an entry would be a forged audit
+      // trail. The result is clearly marked as simulated.
       const issueNumber = randomInt(800) + 100; // [100, 899]
       const result = {
         success: true,
         simulated: true,
+        reason: 'GITHUB_TOKEN غير مهيأ — هذه تذكرة تجريبية لم تُنشأ فعليا.',
         issueNumber,
         issueUrl: `https://github.com/${args.repo}/issues/${issueNumber}`,
         title: args.title,
@@ -357,7 +500,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
     category: 'github',
     hasSideEffect: false,
     requireConfirmation: false,
-    simulated: true,
+    simulated: false,
     parameters: {
       type: 'object',
       properties: {
@@ -367,8 +510,18 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['repo'],
     },
     execute: async (args) => {
+      if (getGitHubToken()) {
+        const live = await githubReadRepoLive(args.repo, args.branch);
+        if (!live.ok) {
+          return { success: false, simulated: false, repo: args.repo, error: live.error };
+        }
+        return { success: true, simulated: false, ...live.data };
+      }
+
       return {
         success: true,
+        simulated: true,
+        reason: 'GITHUB_TOKEN غير مهيأ — هذه بيانات تجريبية توضيحية.',
         repo: args.repo,
         branch: args.branch || 'main',
         openIssuesCount: 4,
@@ -742,26 +895,29 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         .map((s) => s.trim())
         .filter(Boolean);
 
-      // Vector search from Qdrant or fallback to db chunks
+      // Vector search from the tenant's vector store, or fallback to db chunks
       let usedVectorBackend = false;
+      let vectorBackendId = '';
       try {
+        const vectorStore = await getVectorStoreForTenant(ctx.tenantId);
         const queryVector = await generateEmbedding(query);
-        const qdrantResults = await searchQdrantSemantic({
+        const vectorResults = await vectorStore.search({
           tenantId: ctx.tenantId,
           vector: queryVector,
           limit: topK,
           collectionIds: collectionIds.length > 0 ? collectionIds : undefined,
         });
 
-        if (qdrantResults && qdrantResults.length > 0) {
+        if (vectorResults && vectorResults.length > 0) {
           usedVectorBackend = true;
+          vectorBackendId = vectorStore.id;
           return {
             success: true,
             simulated: false,
-            backend: 'qdrant-vector',
+            backend: `${vectorStore.id}-vector`,
             query,
-            totalFound: qdrantResults.length,
-            chunks: qdrantResults.map((r) => ({
+            totalFound: vectorResults.length,
+            chunks: vectorResults.map((r) => ({
               id: r.id,
               documentTitle: r.documentTitle || 'وثيقة معرفية',
               content: r.content || '',
@@ -770,7 +926,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
           };
         }
       } catch (err) {
-        console.log('Qdrant search in MCP tool fallback to DB chunks');
+        console.log('Vector search in MCP tool fallback to DB chunks');
       }
 
       // Fallback
@@ -793,7 +949,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       return {
         success: true,
         simulated: false,
-        backend: usedVectorBackend ? 'qdrant-vector' : 'db-keyword-fallback',
+        backend: usedVectorBackend ? `${vectorBackendId}-vector` : 'db-keyword-fallback',
         query,
         totalFound: filtered.length,
         chunks: (filtered.length > 0 ? filtered : chunks.slice(0, topK)).map((c) => ({
@@ -1145,6 +1301,12 @@ function safeHost(rawUrl: string): string {
   } catch {
     return rawUrl.slice(0, 60);
   }
+}
+
+// Phase 4 production skills — merged into the same central registry so the
+// agentic chat loop, protocol gateway and approval gate treat them uniformly.
+for (const [name, def] of Object.entries(SKILL_TOOLS)) {
+  MCP_TOOLS_REGISTRY[name] = def;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { createMCPClient, type CallToolResult, type MCPClient } from '@ai-sdk/mcp';
 import { assertPublicHttpUrl } from './net';
 import { mcpOAuthManager } from './auth/oauth-manager';
+import { decryptToken } from './auth/encryption';
 
 /**
  * Unified remote-MCP client layer on top of the official AI SDK MCP package
@@ -12,8 +13,10 @@ import { mcpOAuthManager } from './auth/oauth-manager';
  * support Streamable HTTP / SSE transports, attach tenant OAuth bearer tokens,
  * and are always closed again (even on failure).
  *
- * The SSRF guard still runs BEFORE any connection attempt: only public
- * http(s) endpoints are reachable.
+ * The SSRF guard still runs BEFORE any http(s) connection attempt: only public
+ * http(s) endpoints are reachable. Local stdio servers (self-hosted only)
+ * spawn a child process instead and therefore bypass the URL guard by design —
+ * they are gated behind the self-hosted flag and operator-provided commands.
  */
 
 export interface RemoteMcpServerRef {
@@ -21,14 +24,59 @@ export interface RemoteMcpServerRef {
   name: string;
   endpointUrl: string;
   headers?: Record<string, string>;
+  transportType?: 'http' | 'sse' | 'stdio' | 'websocket';
+  config?: Record<string, any>;
 }
 
 /** Default budgets for the whole session lifecycle (handshake + call). */
 const SESSION_TIMEOUT_MS = 30_000;
 
+/**
+ * stdio servers spawn local child processes, which only exists on
+ * self-hosted deployments — Vercel's serverless runtime has no durable
+ * process spawning. This is the single gate both the API layer (add/edit)
+ * and the transport layer (session creation) enforce.
+ */
+export function isStdioTransportAllowed(): boolean {
+  return !process.env.VERCEL;
+}
+
 export interface RemoteSessionOptions {
   /** Hard budget for a tool call inside the session (ms). */
   timeoutMs?: number;
+}
+
+/**
+ * Builds the stdio transport for a local MCP server from its stored config.
+ * Env values are stored encrypted (AES-256-GCM via encryptToken) and are only
+ * decrypted here, at the edge of the child process spawn.
+ */
+async function createStdioTransport(server: RemoteMcpServerRef) {
+  if (!isStdioTransportAllowed()) {
+    throw new Error('نقل stdio متاح فقط في النشر الذاتي (self-hosted) وليس على بيئات الخوادم المدارة.');
+  }
+  const command = String(server.config?.command || '').trim();
+  if (!command) {
+    throw new Error(`خادم الـ MCP المحلي (${server.name}) لا يحدد أمر تشغيل (command) في إعداده.`);
+  }
+  const rawArgs = server.config?.args;
+  const args = Array.isArray(rawArgs) ? rawArgs.map((a) => String(a)) : undefined;
+  const rawEnv = server.config?.env;
+  let env: Record<string, string> | undefined;
+  if (rawEnv && typeof rawEnv === 'object') {
+    env = {};
+    for (const [key, value] of Object.entries(rawEnv as Record<string, unknown>)) {
+      const strValue = String(value ?? '');
+      try {
+        env[key] = decryptToken(strValue);
+      } catch {
+        env[key] = strValue; // stored unencrypted — pass through as-is
+      }
+    }
+  }
+  // Lazy import: pulls node:child_process, must never enter client bundles.
+  const { Experimental_StdioMCPTransport } = await import('@ai-sdk/mcp/mcp-stdio');
+  return new Experimental_StdioMCPTransport({ command, args, env });
 }
 
 /**
@@ -42,17 +90,30 @@ export async function withRemoteMcpSession<T>(
   fn: (client: MCPClient) => Promise<T>,
   options: RemoteSessionOptions = {},
 ): Promise<T> {
-  const url = assertPublicHttpUrl(server.endpointUrl);
-
-  // Attach the tenant's decrypted OAuth bearer token when one is provisioned
-  // for this server (fixes the old gap where tokens were stored but never sent).
-  const oauthToken = await mcpOAuthManager.getDecryptedToken(server.id, tenantId).catch(() => null);
-  const headers: Record<string, string> = { ...(server.headers || {}) };
-  if (oauthToken) headers.Authorization = `Bearer ${oauthToken}`;
-
   const callBudget = options.timeoutMs ?? SESSION_TIMEOUT_MS;
   let client: MCPClient | null = null;
   try {
+    if (server.transportType === 'stdio') {
+      // Local process transport — no URL, no SSRF surface, no OAuth headers.
+      const transport = await createStdioTransport(server);
+      client = await createMCPClient({
+        transport,
+        initializationOptions: { timeout: callBudget },
+        maxRetries: 1,
+        onUncaughtError: (err: any) =>
+          console.warn(`[Remote MCP] Uncaught stdio transport error (${server.name}):`, err?.message || err),
+      });
+      return await fn(client);
+    }
+
+    const url = assertPublicHttpUrl(server.endpointUrl);
+
+    // Attach the tenant's decrypted OAuth bearer token when one is provisioned
+    // for this server (fixes the old gap where tokens were stored but never sent).
+    const oauthToken = await mcpOAuthManager.getDecryptedToken(server.id, tenantId).catch(() => null);
+    const headers: Record<string, string> = { ...(server.headers || {}) };
+    if (oauthToken) headers.Authorization = `Bearer ${oauthToken}`;
+
     client = await createMCPClient({
       transport: { type: 'http', url: url.href, headers },
       initializationOptions: { timeout: callBudget },

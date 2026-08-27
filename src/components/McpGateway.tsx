@@ -41,8 +41,10 @@ import {
   Radio,
   Search,
   Filter,
+  ShieldCheck,
 } from 'lucide-react';
 import { MCPServerConfig } from '@/lib/types/omnirag';
+import { t } from '@/lib/i18n';
 
 interface HeaderPair {
   key: string;
@@ -73,6 +75,16 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   const [newDescription, setNewDescription] = useState('');
   const [addHeaders, setAddHeaders] = useState<HeaderPair[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Transport selection for new servers: stdio (local process servers) is only
+  // offered on self-hosted deployments — the servers route reports the flag.
+  const [stdioEnabled, setStdioEnabled] = useState(false);
+  const [newTransportType, setNewTransportType] = useState<'http' | 'stdio'>('http');
+  const [newStdioCommand, setNewStdioCommand] = useState('');
+  const [newStdioArgs, setNewStdioArgs] = useState('');
+  const [newStdioEnv, setNewStdioEnv] = useState<HeaderPair[]>([]);
+  // OAuth popup flow state (server currently awaiting provider authorization).
+  const [oauthConnectingServerId, setOauthConnectingServerId] = useState<string | null>(null);
 
   // Edit MCP Server Modal State
   const [editingServer, setEditingServer] = useState<MCPServerConfig | null>(null);
@@ -111,6 +123,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           setBuilderTargetServerId(data.servers[0].id);
         }
       }
+      if (typeof data.stdioEnabled === 'boolean') {
+        setStdioEnabled(data.stdioEnabled);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -119,6 +134,66 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
   useEffect(() => {
     fetchServers();
   }, [tenantId]);
+
+  /**
+   * OAuth 2.0 (Authorization Code + PKCE) connect flow: the backend creates
+   * the authorization URL, we open it in a popup, and the callback route
+   * finishes the token exchange server-side then posts a message back so we
+   * can refresh the server list (token presence flips the server's auth state).
+   */
+  const handleOAuthConnect = async (server: MCPServerConfig) => {
+    if (oauthConnectingServerId) return;
+    setOauthConnectingServerId(server.id);
+    try {
+      const res = await fetchWithAuth('/api/v1/mcp/oauth/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverId: server.id, tenantId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success || !data.authorizationUrl) {
+        setPingNotice(data?.error || t(lang, 'mcp.oauthStartFailed'));
+        setTimeout(() => setPingNotice(null), 4000);
+        setOauthConnectingServerId(null);
+        return;
+      }
+
+      const popup = window.open(data.authorizationUrl, 'omnirag_mcp_oauth', 'width=520,height=680');
+
+      let settled = false;
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        window.clearInterval(pollTimer);
+        window.removeEventListener('message', onMessage);
+        setOauthConnectingServerId(null);
+        fetchServers();
+      };
+
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) return;
+        const payload = event.data as { source?: string; success?: boolean } | null;
+        if (payload?.source === 'omnirag-mcp-oauth') {
+          setPingNotice(
+            t(lang, payload.success ? 'mcp.oauthConnected' : 'mcp.oauthNotCompleted', { name: server.name }),
+          );
+          setTimeout(() => setPingNotice(null), 4000);
+          cleanup();
+        }
+      };
+
+      // Fallback: the user closed the popup without finishing the flow.
+      const pollTimer = window.setInterval(() => {
+        if (popup && popup.closed) cleanup();
+      }, 1000);
+
+      window.addEventListener('message', onMessage);
+      if (!popup) cleanup();
+    } catch (err) {
+      console.error(err);
+      setOauthConnectingServerId(null);
+    }
+  };
 
   // Server catalog (famous MCP presets) state
   interface McpServerPresetView {
@@ -162,16 +237,12 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        setPingNotice(
-          lang === 'ar'
-            ? `تم تثبيت الخادم من الكتالوج بنجاح وأصبحت أدواته متاحة للدردشة والمعرفة.`
-            : `Server installed from catalog — its tools are now available to chat & knowledge.`,
-        );
+        setPingNotice(t(lang, 'mcp.presetInstalled'));
         setTimeout(() => setPingNotice(null), 3500);
         fetchServers();
         fetchPresets();
       } else {
-        setPingNotice(data?.error || (lang === 'ar' ? 'فشل تثبيت القالب.' : 'Failed to install preset.'));
+        setPingNotice(data?.error || t(lang, 'mcp.presetInstallFailed'));
         setTimeout(() => setPingNotice(null), 4000);
       }
     } catch (err) {
@@ -200,9 +271,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
       });
       if (res.ok) {
         setPingNotice(
-          lang === 'ar'
-            ? `تم ${newStatus === 'healthy' ? 'تفعيل' : 'تعطيل'} موصل MCP (${server.name}) بنجاح.`
-            : `MCP connector ${server.name} set to ${newStatus === 'healthy' ? 'Active' : 'Inactive'}.`,
+          t(lang, newStatus === 'healthy' ? 'mcp.connectorActivated' : 'mcp.connectorDeactivated', {
+            name: server.name,
+          }),
         );
         fetchServers();
         setTimeout(() => setPingNotice(null), 3500);
@@ -247,12 +318,12 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
       const data = await res.json();
       if (!res.ok || data.error) {
-        throw new Error(data.error || 'فشل توليد مخطط الأداة بالذكاء الاصطناعي');
+        throw new Error(data.error || t(lang, 'mcp.builderGenerateFailed'));
       }
 
       setGeneratedToolSchema(data.toolSchema);
     } catch (err: any) {
-      setBuilderError(err.message || 'حدث خطأ أثناء الاتصال بالمساعد الاصطناعي لبناء الأداة');
+      setBuilderError(err.message || t(lang, 'mcp.builderContactError'));
     } finally {
       setIsGeneratingTool(false);
     }
@@ -277,21 +348,17 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
       const data = await res.json();
       if (!res.ok || data.error) {
-        throw new Error(data.error || 'فشل حفظ وحفظ الأداة في الخادم');
+        throw new Error(data.error || t(lang, 'mcp.builderSaveFailed'));
       }
 
-      setPingNotice(
-        lang === 'ar'
-          ? `تم اعتماد وتخزين الأداة الذكية (${generatedToolSchema.toolName}) على الخادم بنجاح!`
-          : `Tool ${generatedToolSchema.toolName} created & saved successfully!`,
-      );
+      setPingNotice(t(lang, 'mcp.toolSaved', { name: generatedToolSchema.toolName }));
       setShowToolBuilderModal(false);
       setBuilderPrompt('');
       setGeneratedToolSchema(null);
       fetchServers();
       setTimeout(() => setPingNotice(null), 4000);
     } catch (err: any) {
-      setBuilderError(err.message || 'حدث خطأ أثناء حفظ الأداة');
+      setBuilderError(err.message || t(lang, 'mcp.builderSaveError'));
     } finally {
       setIsSavingTool(false);
     }
@@ -344,11 +411,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
       if (res.ok) {
         setEditingServer(null);
         fetchServers();
-        setPingNotice(
-          lang === 'ar'
-            ? `تم تعديل وتحديث بيانات خادم MCP (${editServerName}) وترويسات الأمان بنجاح!`
-            : `MCP Server ${editServerName} & security headers updated successfully!`,
-        );
+        setPingNotice(t(lang, 'mcp.serverUpdated', { name: editServerName }));
         setTimeout(() => setPingNotice(null), 4000);
       }
     } catch (err) {
@@ -360,11 +423,17 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
   const handleAddServerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newServerName.trim() || !newEndpointUrl.trim()) return;
+    if (!newServerName.trim()) return;
+    if (newTransportType === 'http' && !newEndpointUrl.trim()) return;
+    if (newTransportType === 'stdio' && !newStdioCommand.trim()) return;
 
     setIsSubmitting(true);
     try {
       const formattedHeaders = formatHeadersObject(addHeaders);
+      const stdioEnv: Record<string, string> = {};
+      for (const pair of newStdioEnv) {
+        if (pair.key.trim() && pair.value.trim()) stdioEnv[pair.key.trim()] = pair.value;
+      }
       const res = await fetchWithAuth('/api/v1/mcp/servers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -373,24 +442,40 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           tenantId,
           server: {
             name: newServerName,
-            endpointUrl: newEndpointUrl,
+            endpointUrl: newTransportType === 'stdio' ? 'stdio://local' : newEndpointUrl,
             sandboxTier: newSandboxTier,
-            description: newDescription || 'خادم MCP مخصص للمؤسسة',
+            description: newDescription || t(lang, 'mcp.defaultDescription'),
             headers: formattedHeaders,
+            transportType: newTransportType,
+            ...(newTransportType === 'stdio'
+              ? {
+                  config: {
+                    command: newStdioCommand.trim(),
+                    args: newStdioArgs.trim() ? newStdioArgs.trim().split(/\s+/) : [],
+                    env: stdioEnv,
+                  },
+                }
+              : {}),
           },
         }),
       });
 
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setNewServerName('');
         setNewEndpointUrl('');
         setNewDescription('');
         setAddHeaders([]);
+        setNewTransportType('http');
+        setNewStdioCommand('');
+        setNewStdioArgs('');
+        setNewStdioEnv([]);
         setShowAddServerModal(false);
         fetchServers();
-        setPingNotice(
-          lang === 'ar' ? 'تم تسجيل خادم MCP الجديد وفحصه بنجاح!' : 'New MCP Server registered successfully!',
-        );
+        setPingNotice(t(lang, 'mcp.serverRegistered'));
+        setTimeout(() => setPingNotice(null), 4000);
+      } else {
+        setPingNotice(data?.error || t(lang, 'mcp.serverRegisterFailed'));
         setTimeout(() => setPingNotice(null), 4000);
       }
     } catch (err) {
@@ -425,9 +510,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
     setCustomToolInputs((prev) => ({ ...prev, [serverId]: '' }));
     fetchServers();
-    setPingNotice(
-      lang === 'ar' ? `تم تسجيل وتفعيل الأداة المخصصة (${toolName})` : `Custom tool ${toolName} registered!`,
-    );
+    setPingNotice(t(lang, 'mcp.customToolRegistered', { name: toolName }));
     setTimeout(() => setPingNotice(null), 3000);
   };
 
@@ -441,24 +524,16 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
       });
       const data = await res.json();
       if (data.success) {
-        setPingNotice(
-          lang === 'ar'
-            ? `تم فحص الاتصال الخادم بنجاح! زمن الاستجابة: ${data.latencyMs}ms، الحالة: ${
-                data.status === 'healthy' ? 'نشط وآمن (Healthy)' : 'مستجيب مع قيود'
-              }`
-            : `Ping succeeded! Latency: ${data.latencyMs}ms, Status: ${data.status}`,
-        );
+        const statusLabel =
+          data.status === 'healthy' ? t(lang, 'mcp.pingStatusHealthy') : t(lang, 'mcp.pingStatusDegraded');
+        setPingNotice(t(lang, 'mcp.pingSuccess', { latency: data.latencyMs, status: statusLabel }));
         fetchServers();
       } else {
-        setPingNotice(
-          lang === 'ar'
-            ? `فشل فحص الاتصال بالخادم: ${data.error || 'غير مستجيب'}`
-            : `Ping failed: ${data.error || 'Server unreachable'}`,
-        );
+        setPingNotice(t(lang, 'mcp.pingFailed', { error: data.error || t(lang, 'mcp.pingUnreachable') }));
       }
     } catch (e) {
       console.error(e);
-      setPingNotice(lang === 'ar' ? 'خطأ في الشبكة أثناء الاتصال بالخادم' : 'Network error during ping check');
+      setPingNotice(t(lang, 'mcp.pingNetworkError'));
     } finally {
       setIsTesting(null);
       setTimeout(() => setPingNotice(null), 5000);
@@ -478,7 +553,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
         body: JSON.stringify({ action: 'delete', serverId, tenantId }),
       });
       if (res.ok) {
-        setPingNotice(lang === 'ar' ? 'تم حذف الخادم وإلغاء تسجيله بنجاح.' : 'Server deleted successfully.');
+        setPingNotice(t(lang, 'mcp.serverDeleted'));
         fetchServers();
         setTimeout(() => setPingNotice(null), 4000);
       }
@@ -550,15 +625,9 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
         <div>
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Plug className="w-5 h-5 text-indigo-600" />
-            <span>
-              {lang === 'ar' ? 'بوابة خوادم بروتوكول سياق النموذج (MCP Gateway)' : 'MCP Server & Tool Gateway'}
-            </span>
+            <span>{t(lang, 'mcp.title')}</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            {lang === 'ar'
-              ? 'مواصفة 2026-07-28 عديمة الحالة | تحكّم دقيق بتصاريح الأدوات ومستويات Sandbox'
-              : 'Stateless MCP 2026-07-28 specification | Granular tool Sandbox policies'}
-          </p>
+          <p className="text-xs text-slate-500 mt-1">{t(lang, 'mcp.subtitle')}</p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -573,7 +642,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-indigo-600 to-indigo-700 hover:from-amber-600 hover:to-indigo-800 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-indigo-600/20"
           >
             <Wand2 className="w-4 h-4 text-amber-200 animate-pulse" />
-            <span>{lang === 'ar' ? 'منشئ الأدوات بالذكاء الاصطناعي' : 'AI Tool Builder'}</span>
+            <span>{t(lang, 'mcp.toolBuilder')}</span>
           </button>
 
           <button
@@ -582,7 +651,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
           >
             <Plus className="w-4 h-4" />
-            <span>{lang === 'ar' ? 'تسجيل خادم جديد' : 'Register Server'}</span>
+            <span>{t(lang, 'mcp.registerServer')}</span>
           </button>
 
           <span className="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono text-xs font-bold">
@@ -592,7 +661,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             type="button"
             onClick={fetchServers}
             className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-600 transition cursor-pointer"
-            title="تحديث البيانات"
+            title={t(lang, 'mcp.refreshTitle')}
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -620,7 +689,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <span>{lang === 'ar' ? 'جميع الموصلات' : 'All Connectors'}</span>
+            <span>{t(lang, 'mcp.allConnectors')}</span>
             <span className="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px] font-mono font-bold">
               {servers.length}
             </span>
@@ -636,7 +705,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>{lang === 'ar' ? 'النشطة' : 'Active'}</span>
+            <span>{t(lang, 'mcp.activeFilter')}</span>
             <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold">
               {activeServersCount}
             </span>
@@ -652,7 +721,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-slate-400" />
-            <span>{lang === 'ar' ? 'غير النشطة' : 'Inactive'}</span>
+            <span>{t(lang, 'mcp.inactiveFilter')}</span>
             <span className="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px] font-mono font-bold">
               {inactiveServersCount}
             </span>
@@ -666,11 +735,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={
-              lang === 'ar'
-                ? 'ابحث باسم الموصل، رابط Endpoint أو الوصف...'
-                : 'Search connectors by name, URL or description...'
-            }
+            placeholder={t(lang, 'mcp.searchPlaceholder')}
             className="w-full pl-9 pr-4 rtl:pl-4 rtl:pr-9 py-2 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-indigo-500 bg-slate-50/50 focus:bg-white transition"
           />
           {searchQuery && (
@@ -697,19 +762,13 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
               <Layers className="w-4.5 h-4.5 text-indigo-300" />
             </div>
             <div className="text-right">
-              <h3 className="text-sm font-bold text-white tracking-tight">
-                {lang === 'ar' ? 'كتالوج الخوادم الجاهزة' : 'Server Catalog'}
-              </h3>
-              <p className="text-[11px] text-slate-400">
-                {lang === 'ar'
-                  ? 'أشهر خوادم MCP المفيدة — أضفها بضغطة واحدة لتصبح أدواتها متاحة للدردشة والمعرفة فوراً.'
-                  : 'Famous, useful MCP servers — one click to make their tools available to chat & knowledge.'}
-              </p>
+              <h3 className="text-sm font-bold text-white tracking-tight">{t(lang, 'mcp.catalogTitle')}</h3>
+              <p className="text-[11px] text-slate-400">{t(lang, 'mcp.catalogSubtitle')}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-bold">
-              {presets.length} {lang === 'ar' ? 'خادماً' : 'servers'}
+              {t(lang, 'mcp.serversCount', { count: presets.length })}
             </span>
             <RefreshCw
               className={`w-3.5 h-3.5 text-slate-500 transition-transform ${showCatalog ? 'rotate-180' : ''}`}
@@ -746,11 +805,11 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                       {preset.installed ? (
                         <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" />
-                          {lang === 'ar' ? 'مُثبّت' : 'Installed'}
+                          {t(lang, 'mcp.installed')}
                         </span>
                       ) : preset.ready ? (
                         <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold">
-                          {lang === 'ar' ? 'جاهز' : 'Ready'}
+                          {t(lang, 'mcp.ready')}
                         </span>
                       ) : (
                         <span
@@ -758,7 +817,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                           title={preset.missingEnv.join(' / ')}
                         >
                           <KeyRound className="w-3 h-3" />
-                          {lang === 'ar' ? 'يتطلب مفتاحاً' : 'Needs Key'}
+                          {t(lang, 'mcp.needsKey')}
                         </span>
                       )}
                     </div>
@@ -793,17 +852,17 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     {installingPresetId === preset.id ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        {lang === 'ar' ? 'جارٍ التثبيت...' : 'Installing...'}
+                        {t(lang, 'mcp.installing')}
                       </>
                     ) : preset.installed ? (
                       <>
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        {lang === 'ar' ? 'مثبّت للمستأجر' : 'Already Installed'}
+                        {t(lang, 'mcp.alreadyInstalled')}
                       </>
                     ) : (
                       <>
                         <Plus className="w-3.5 h-3.5" />
-                        {lang === 'ar' ? 'إضافة الخادم' : 'Add Server'}
+                        {t(lang, 'mcp.addServer')}
                       </>
                     )}
                   </button>
@@ -842,22 +901,10 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           {/* Title and Description */}
           <div className="max-w-md space-y-2 relative z-10">
             <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
-              {servers.length === 0
-                ? lang === 'ar'
-                  ? 'لم يتم اكتشاف أي موصلات MCP مسجلة'
-                  : 'No MCP Connectors Detected'
-                : lang === 'ar'
-                  ? 'لا توجد نتائج مطابقة لتصفية البحث'
-                  : 'No Connectors Match Your Filter'}
+              {t(lang, servers.length === 0 ? 'mcp.emptyTitleNone' : 'mcp.emptyTitleFiltered')}
             </h3>
             <p className="text-xs text-slate-500 leading-relaxed">
-              {servers.length === 0
-                ? lang === 'ar'
-                  ? 'قم بربط وتفعيل خوادم بروتوكول MCP لتمكين نموذج الذكاء الاصطناعي من تنفيذ الأدوات، استعلام قواعد البيانات، واسترجاع البيانات المباشرة.'
-                  : 'Connect and register MCP protocol servers to empower AI models with live tools, database queries, and custom external integrations.'
-                : lang === 'ar'
-                  ? 'جرب ضبط عبارة البحث أو إعادة ضبط تصفية الحالة ("نشط" / "غير نشط") لعرض الموصلات المطلوبة.'
-                  : 'Try adjusting your search terms or clearing status filters to view the registered connectors.'}
+              {t(lang, servers.length === 0 ? 'mcp.emptyBodyNone' : 'mcp.emptyBodyFiltered')}
             </p>
           </div>
 
@@ -871,7 +918,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-md shadow-indigo-600/20 hover:scale-[1.02]"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>{lang === 'ar' ? 'تسجيل أول خادم MCP' : 'Register First MCP Server'}</span>
+                  <span>{t(lang, 'mcp.registerFirst')}</span>
                 </button>
 
                 <button
@@ -885,7 +932,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-2 transition cursor-pointer"
                 >
                   <Wand2 className="w-4 h-4 text-indigo-600" />
-                  <span>{lang === 'ar' ? 'منشئ الأدوات بالذكاء الاصطناعي' : 'AI Tool Builder'}</span>
+                  <span>{t(lang, 'mcp.toolBuilder')}</span>
                 </button>
               </>
             ) : (
@@ -898,7 +945,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>{lang === 'ar' ? 'إعادة ضبط التصفية' : 'Reset Filters'}</span>
+                <span>{t(lang, 'mcp.resetFilters')}</span>
               </button>
             )}
           </div>
@@ -953,8 +1000,18 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                       <div>
                         <h3 className="text-xs font-bold text-slate-900 flex items-center gap-2">
                           <span>{server.name}</span>
+                          {server.transportType === 'stdio' && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-300 text-[9px] font-mono font-bold flex items-center gap-1">
+                              <Terminal className="w-2.5 h-2.5" />
+                              stdio
+                            </span>
+                          )}
                         </h3>
-                        <span className="font-mono text-[11px] text-slate-400 block mt-0.5">{server.endpointUrl}</span>
+                        <span className="font-mono text-[11px] text-slate-400 block mt-0.5">
+                          {server.transportType === 'stdio'
+                            ? `${server.config?.command || ''} ${(server.config?.args || []).join(' ')}`.trim()
+                            : server.endpointUrl}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -977,17 +1034,10 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                           }`}
                         />
                         <span>
-                          {isActive
-                            ? lang === 'ar'
-                              ? 'نشط (Active)'
-                              : 'Active'
-                            : isDegraded
-                              ? lang === 'ar'
-                                ? 'مستجيب مع قيود'
-                                : 'Degraded'
-                              : lang === 'ar'
-                                ? 'غير نشط (Inactive)'
-                                : 'Inactive'}
+                          {t(
+                            lang,
+                            isActive ? 'mcp.statusActive' : isDegraded ? 'mcp.statusDegraded' : 'mcp.statusInactive',
+                          )}
                         </span>
                       </span>
 
@@ -1000,20 +1050,10 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                             ? 'bg-emerald-50 hover:bg-rose-50 text-emerald-700 hover:text-rose-700 border-emerald-200 hover:border-rose-200'
                             : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border-slate-200 hover:border-emerald-200'
                         }`}
-                        title={
-                          isActive
-                            ? lang === 'ar'
-                              ? 'انقر لتعطيل الموصل'
-                              : 'Click to deactivate connector'
-                            : lang === 'ar'
-                              ? 'انقر لتفعيل الموصل'
-                              : 'Click to activate connector'
-                        }
+                        title={t(lang, isActive ? 'mcp.deactivateTooltip' : 'mcp.activateTooltip')}
                       >
                         <Power className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
-                        <span>
-                          {isActive ? (lang === 'ar' ? 'تعطيل' : 'Deactivate') : lang === 'ar' ? 'تفعيل' : 'Activate'}
-                        </span>
+                        <span>{t(lang, isActive ? 'mcp.deactivate' : 'mcp.activate')}</span>
                       </button>
                     </div>
 
@@ -1025,11 +1065,27 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                       >
                         {server.sandboxTier}
                       </span>
+                      {server.authType === 'oauth2' && (
+                        <button
+                          type="button"
+                          onClick={() => handleOAuthConnect(server)}
+                          disabled={oauthConnectingServerId !== null}
+                          className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 transition cursor-pointer disabled:opacity-60"
+                          title={t(lang, 'mcp.oauthConnectTooltip')}
+                        >
+                          {oauthConnectingServerId === server.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                          )}
+                          <span>{t(lang, 'mcp.oauthConnect')}</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleOpenEditModal(server)}
                         className="p-1.5 text-slate-500 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 border border-slate-200/80 hover:border-indigo-200 transition cursor-pointer"
-                        title={lang === 'ar' ? 'تعديل بيانات الخادم وترويسات الأمان' : 'Edit Server & Headers'}
+                        title={t(lang, 'mcp.editTooltip')}
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
@@ -1037,7 +1093,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                         type="button"
                         onClick={() => handleDeleteServer(server.id)}
                         className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
-                        title={lang === 'ar' ? 'حذف الخادم' : 'Delete Server'}
+                        title={t(lang, 'mcp.deleteTooltip')}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1053,7 +1109,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     <div className="flex items-center gap-2 p-2.5 bg-slate-900 text-amber-300 rounded-xl font-mono text-[11px] border border-slate-800">
                       <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                       <span className="font-sans font-bold text-[10px] text-slate-300">
-                        {lang === 'ar' ? 'ترويسات الأمان مفعّلة:' : 'Active Headers:'}
+                        {t(lang, 'mcp.activeHeaders')}
                       </span>
                       <span className="truncate text-slate-200">
                         {Object.entries(server.headers)
@@ -1065,27 +1121,21 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     <div className="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-200/60 text-[11px] text-slate-400">
                       <span className="flex items-center gap-1.5">
                         <KeyRound className="w-3.5 h-3.5 text-slate-400" />
-                        <span>
-                          {lang === 'ar'
-                            ? 'لا توجد ترويسات أمان أو مفاتيح API_KEY مخصصة'
-                            : 'No custom security headers attached'}
-                        </span>
+                        <span>{t(lang, 'mcp.noHeaders')}</span>
                       </span>
                       <button
                         type="button"
                         onClick={() => handleOpenEditModal(server)}
                         className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
                       >
-                        {lang === 'ar' ? '+ أضف ترويسة' : '+ Add Header'}
+                        {t(lang, 'mcp.addHeaderLink')}
                       </button>
                     </div>
                   )}
 
                   {/* Tools Permission List */}
                   <div>
-                    <span className="text-xs font-bold text-slate-700 block mb-2">
-                      {lang === 'ar' ? 'الأدوات المتاحة وإدارتها:' : 'Registered Tools:'}
-                    </span>
+                    <span className="text-xs font-bold text-slate-700 block mb-2">{t(lang, 'mcp.toolsTitle')}</span>
                     <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
                       {availableTools.map((tool) => {
                         const isEnabled = server.enabledTools?.includes(tool);
@@ -1101,7 +1151,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                               <span>{tool}</span>
                               {isSideEffect && (
                                 <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-bold">
-                                  {lang === 'ar' ? 'موافقة بشرية' : 'Needs Approval'}
+                                  {t(lang, 'mcp.needsApproval')}
                                 </span>
                               )}
                             </div>
@@ -1114,7 +1164,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                                   : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                               }`}
                             >
-                              {isEnabled ? (lang === 'ar' ? 'مفعّل' : 'Enabled') : lang === 'ar' ? 'معطل' : 'Disabled'}
+                              {t(lang, isEnabled ? 'mcp.enabled' : 'mcp.disabled')}
                             </button>
                           </div>
                         );
@@ -1127,7 +1177,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        placeholder={lang === 'ar' ? 'أضف أداة مخصصة (مثال: clear_cache)' : 'Add custom tool...'}
+                        placeholder={t(lang, 'mcp.customToolPlaceholder')}
                         value={customToolInputs[server.id] || ''}
                         onChange={(e) => handleCustomToolInputChange(server.id, e.target.value)}
                         className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs focus:outline-none focus:border-indigo-500"
@@ -1137,7 +1187,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                         className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>{lang === 'ar' ? 'إضافة' : 'Add'}</span>
+                        <span>{t(lang, 'mcp.add')}</span>
                       </button>
                     </div>
                   </div>
@@ -1147,16 +1197,18 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 text-slate-500 font-mono text-[11px]">
                     <Activity className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Latency: {server.latencyMs}ms</span>
+                    <span>
+                      {t(lang, 'mcp.latencyLabel')} {server.latencyMs}ms
+                    </span>
                     <span className="text-slate-300">|</span>
                     <span>
-                      Checked:{' '}
+                      {t(lang, 'mcp.checkedLabel')}{' '}
                       {server.lastChecked
                         ? new Date(server.lastChecked).toLocaleTimeString(lang === 'ar' ? 'ar-SA' : 'en-US', {
                             hour: '2-digit',
                             minute: '2-digit',
                           })
-                        : 'Never'}
+                        : t(lang, 'mcp.neverChecked')}
                     </span>
                   </div>
 
@@ -1166,15 +1218,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
                   >
                     <Play className="w-3 h-3 text-indigo-600" />
-                    <span>
-                      {isTesting === server.id
-                        ? lang === 'ar'
-                          ? 'جاري الفحص...'
-                          : 'Checking...'
-                        : lang === 'ar'
-                          ? 'فحص الاتصال والنشاط'
-                          : 'Ping Server'}
-                    </span>
+                    <span>{t(lang, isTesting === server.id ? 'mcp.checking' : 'mcp.pingServer')}</span>
                   </button>
                 </div>
               </div>
@@ -1189,63 +1233,139 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
           <div className="bg-white rounded-2xl p-6 max-w-lg w-full border border-slate-200 shadow-xl space-y-4 animate-in fade-in-50 zoom-in-95 duration-150">
             <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Plug className="w-5 h-5 text-indigo-600" />
-              <span>{lang === 'ar' ? 'تسجيل خادم MCP جديد' : 'Register New MCP Server'}</span>
+              <span>{t(lang, 'mcp.addModalTitle')}</span>
             </h3>
 
             <form onSubmit={handleAddServerSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'اسم الخادم:' : 'Server Name:'}
-                </label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.serverNameLabel')}</label>
                 <input
                   type="text"
                   required
                   value={newServerName}
                   onChange={(e) => setNewServerName(e.target.value)}
-                  placeholder="مثال: Internal Jira MCP Connector"
+                  placeholder={t(lang, 'mcp.serverNamePlaceholder')}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'رابط Endpoint:' : 'Endpoint URL:'}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newEndpointUrl}
-                  onChange={(e) => setNewEndpointUrl(e.target.value)}
-                  placeholder="https://mcp.internal.company.com/v1"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                />
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.transportLabel')}</label>
+                <select
+                  value={newTransportType}
+                  onChange={(e) => setNewTransportType(e.target.value === 'stdio' ? 'stdio' : 'http')}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="http">{t(lang, 'mcp.transportHttp')}</option>
+                  {stdioEnabled && <option value="stdio">{t(lang, 'mcp.transportStdio')}</option>}
+                </select>
               </div>
 
+              {newTransportType === 'http' ? (
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.endpointLabel')}</label>
+                  <input
+                    type="text"
+                    required
+                    value={newEndpointUrl}
+                    onChange={(e) => setNewEndpointUrl(e.target.value)}
+                    placeholder="https://mcp.internal.company.com/v1"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              ) : (
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2.5">
+                  <p className="text-[11px] text-slate-500 leading-tight">{t(lang, 'mcp.stdioNote')}</p>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.commandLabel')}</label>
+                    <input
+                      type="text"
+                      required
+                      value={newStdioCommand}
+                      onChange={(e) => setNewStdioCommand(e.target.value)}
+                      placeholder="npx"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.argsLabel')}</label>
+                    <input
+                      type="text"
+                      value={newStdioArgs}
+                      onChange={(e) => setNewStdioArgs(e.target.value)}
+                      placeholder="-y @modelcontextprotocol/server-filesystem /data"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-700">{t(lang, 'mcp.envVarsLabel')}</label>
+                      <button
+                        type="button"
+                        onClick={() => setNewStdioEnv([...newStdioEnv, { key: '', value: '' }])}
+                        className="text-[10px] bg-indigo-100 hover:bg-indigo-200 text-indigo-800 font-bold px-2 py-0.5 rounded transition cursor-pointer"
+                      >
+                        {t(lang, 'mcp.addPair')}
+                      </button>
+                    </div>
+                    {newStdioEnv.map((pair, idx) => (
+                      <div key={idx} className="flex gap-2 items-center mb-1.5">
+                        <input
+                          type="text"
+                          placeholder="API_KEY"
+                          value={pair.key}
+                          onChange={(e) => {
+                            const updated = [...newStdioEnv];
+                            updated[idx].key = e.target.value;
+                            setNewStdioEnv(updated);
+                          }}
+                          className="w-1/2 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500 bg-white"
+                        />
+                        <input
+                          type="password"
+                          placeholder="value"
+                          value={pair.value}
+                          onChange={(e) => {
+                            const updated = [...newStdioEnv];
+                            updated[idx].value = e.target.value;
+                            setNewStdioEnv(updated);
+                          }}
+                          className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-300 text-xs font-mono focus:outline-none focus:border-indigo-500 bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setNewStdioEnv(newStdioEnv.filter((_, i) => i !== idx))}
+                          className="p-1 text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'مستوى الحماية (Sandbox Tier):' : 'Sandbox Tier:'}
-                </label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.sandboxTierLabel')}</label>
                 <select
                   value={newSandboxTier}
                   onChange={(e) => setNewSandboxTier(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="T0_READ_ONLY">T0_READ_ONLY (قراءة فقط - آمن جداً)</option>
-                  <option value="T1_LIMITED">T1_LIMITED (محدود الصلاحيات)</option>
-                  <option value="T2_ELEVATED">T2_ELEVATED (مستوى عالٍ - يتطلب تأكيد)</option>
-                  <option value="T3_FULL_EXECUTION">T3_FULL_EXECUTION (تنفيذ كامل - للأنظمة الحرجة)</option>
+                  <option value="T0_READ_ONLY">{t(lang, 'mcp.tierT0')}</option>
+                  <option value="T1_LIMITED">{t(lang, 'mcp.tierT1')}</option>
+                  <option value="T2_ELEVATED">{t(lang, 'mcp.tierT2')}</option>
+                  <option value="T3_FULL_EXECUTION">{t(lang, 'mcp.tierT3')}</option>
                 </select>
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'الوصف وغرض الخادم:' : 'Description:'}
-                </label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.descriptionLabel')}</label>
                 <textarea
                   rows={2}
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder="شرح موجز لأدوات هذا الخادم ودواعيه..."
+                  placeholder={t(lang, 'mcp.descriptionPlaceholder')}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
                 />
               </div>
@@ -1255,11 +1375,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <KeyRound className="w-4 h-4 text-amber-600" />
-                    <span>
-                      {lang === 'ar'
-                        ? 'ترويسات الأمان ومفاتيح الـ API (Headers / Auth Tokens):'
-                        : 'Security Headers & API Keys:'}
-                    </span>
+                    <span>{t(lang, 'mcp.headersLabel')}</span>
                   </label>
                   <div className="flex gap-1">
                     <button
@@ -1279,11 +1395,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   </div>
                 </div>
 
-                <p className="text-[11px] text-slate-500 leading-tight">
-                  {lang === 'ar'
-                    ? 'أضف ترويسات أمان لتمرير مفاتيح API_KEY أو Bearer tokens تلقائياً عند الاتصال بخدمة الـ MCP.'
-                    : 'Include custom auth headers or API keys forwarded with each MCP request.'}
-                </p>
+                <p className="text-[11px] text-slate-500 leading-tight">{t(lang, 'mcp.headersHintAdd')}</p>
 
                 {addHeaders.map((header, idx) => (
                   <div key={idx} className="flex gap-2 items-center">
@@ -1325,7 +1437,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 mt-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>{lang === 'ar' ? 'إضافة ترويسة أمان مخصصة' : 'Add Custom Header'}</span>
+                  <span>{t(lang, 'mcp.addCustomHeader')}</span>
                 </button>
               </div>
 
@@ -1335,14 +1447,14 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   disabled={isSubmitting}
                   className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition cursor-pointer"
                 >
-                  {isSubmitting ? 'جاري التسجيل...' : 'تسجيل واختبار'}
+                  {isSubmitting ? t(lang, 'mcp.registering') : t(lang, 'mcp.registerAndTest')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowAddServerModal(false)}
                   className="py-2.5 px-4 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer"
                 >
-                  إلغاء
+                  {t(lang, 'common.cancel')}
                 </button>
               </div>
             </form>
@@ -1357,7 +1469,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Pencil className="w-5 h-5 text-indigo-600" />
-                <span>{lang === 'ar' ? 'تعديل خادم MCP وترويسات الأمان' : 'Edit MCP Server & Headers'}</span>
+                <span>{t(lang, 'mcp.editModalTitle')}</span>
               </h3>
               <button
                 type="button"
@@ -1370,9 +1482,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
             <form onSubmit={handleEditServerSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'اسم الخادم:' : 'Server Name:'}
-                </label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.serverNameLabel')}</label>
                 <input
                   type="text"
                   required
@@ -1383,9 +1493,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'رابط Endpoint:' : 'Endpoint URL:'}
-                </label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.endpointLabel')}</label>
                 <input
                   type="text"
                   required
@@ -1396,25 +1504,21 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'مستوى الحماية (Sandbox Tier):' : 'Sandbox Tier:'}
-                </label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.sandboxTierLabel')}</label>
                 <select
                   value={editSandboxTier}
                   onChange={(e) => setEditSandboxTier(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="T0_READ_ONLY">T0_READ_ONLY (قراءة فقط - آمن جداً)</option>
-                  <option value="T1_LIMITED">T1_LIMITED (محدود الصلاحيات)</option>
-                  <option value="T2_ELEVATED">T2_ELEVATED (مستوى عالٍ - يتطلب تأكيد)</option>
-                  <option value="T3_FULL_EXECUTION">T3_FULL_EXECUTION (تنفيذ كامل - للأنظمة الحرجة)</option>
+                  <option value="T0_READ_ONLY">{t(lang, 'mcp.tierT0')}</option>
+                  <option value="T1_LIMITED">{t(lang, 'mcp.tierT1')}</option>
+                  <option value="T2_ELEVATED">{t(lang, 'mcp.tierT2')}</option>
+                  <option value="T3_FULL_EXECUTION">{t(lang, 'mcp.tierT3')}</option>
                 </select>
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'الوصف والغرض:' : 'Description:'}
-                </label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">{t(lang, 'mcp.descriptionLabel')}</label>
                 <textarea
                   rows={2}
                   value={editDescription}
@@ -1428,11 +1532,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <KeyRound className="w-4 h-4 text-amber-600" />
-                    <span>
-                      {lang === 'ar'
-                        ? 'ترويسات الأمان ومفاتيح الـ API (Headers / Auth Tokens):'
-                        : 'Security Headers & API Keys:'}
-                    </span>
+                    <span>{t(lang, 'mcp.headersLabel')}</span>
                   </label>
                   <div className="flex gap-1">
                     <button
@@ -1452,11 +1552,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   </div>
                 </div>
 
-                <p className="text-[11px] text-slate-500 leading-tight">
-                  {lang === 'ar'
-                    ? 'تعديل أو إزالة ترويسات الأمان المسجلة لخادم الـ MCP هذا.'
-                    : 'Modify or remove security headers attached to this MCP server.'}
-                </p>
+                <p className="text-[11px] text-slate-500 leading-tight">{t(lang, 'mcp.headersHintEdit')}</p>
 
                 {editHeaders.map((header, idx) => (
                   <div key={idx} className="flex gap-2 items-center">
@@ -1498,7 +1594,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 mt-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>{lang === 'ar' ? 'إضافة ترويسة أمان مخصصة' : 'Add Custom Header'}</span>
+                  <span>{t(lang, 'mcp.addCustomHeader')}</span>
                 </button>
               </div>
 
@@ -1511,10 +1607,10 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   {isSavingEdit ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin text-white" />
-                      <span>جاري الحفظ والتحديث...</span>
+                      <span>{t(lang, 'mcp.savingEdit')}</span>
                     </>
                   ) : (
-                    <span>{lang === 'ar' ? 'حفظ التعديلات' : 'Save Changes'}</span>
+                    <span>{t(lang, 'mcp.saveChanges')}</span>
                   )}
                 </button>
                 <button
@@ -1522,7 +1618,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   onClick={() => setEditingServer(null)}
                   className="py-2.5 px-4 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-200 transition cursor-pointer"
                 >
-                  {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                  {t(lang, 'common.cancel')}
                 </button>
               </div>
             </form>
@@ -1542,18 +1638,12 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span>
-                      {lang === 'ar' ? 'منشئ الأدوات بالذكاء الاصطناعي (AI Tool Builder)' : 'AI Tool Schema Builder'}
-                    </span>
+                    <span>{t(lang, 'mcp.builderTitle')}</span>
                     <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
                       MCP 2026-07-28
                     </span>
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {lang === 'ar'
-                      ? 'اكتب وصفاً نصياً لما تريده من الأداة، وسيقوم الذكاء الاصطناعي بتحويله تلقائياً إلى مخطط رسم المعاملات JSON Schema وتخزينه في خادم MCP.'
-                      : 'Describe the tool in natural language, and Gemini will generate a valid JSON Schema & register it to the MCP configuration.'}
-                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">{t(lang, 'mcp.builderSubtitle')}</p>
                 </div>
               </div>
               <button
@@ -1577,7 +1667,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
-                  {lang === 'ar' ? 'اختر خادم الـ MCP المستهدف لحفظ الأداة فيه:' : 'Target MCP Server:'}
+                  {t(lang, 'mcp.targetServerLabel')}
                 </label>
                 <select
                   value={builderTargetServerId}
@@ -1594,11 +1684,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    {lang === 'ar'
-                      ? 'الوصف النصي المطلوب للأداة (باللغة العربية أو الإنجليزية):'
-                      : 'Tool Natural Language Requirement:'}
-                  </label>
+                  <label className="text-xs font-bold text-slate-700 block">{t(lang, 'mcp.promptLabel')}</label>
                   <span className="text-[10px] text-indigo-600 font-semibold flex items-center gap-1">
                     <Sparkles className="w-3 h-3 text-amber-500" />
                     <span>Gemini 3.6 Flash</span>
@@ -1608,34 +1694,26 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   rows={3}
                   value={builderPrompt}
                   onChange={(e) => setBuilderPrompt(e.target.value)}
-                  placeholder={
-                    lang === 'ar'
-                      ? 'مثال: أريد أداة تفحص حالة شحنة العميل باستخدام رقم التتبع ورقم الجوال وتسترجع الموقع الحالي وزمن الوصول المتوقع.'
-                      : 'Example: Tool to check customer order tracking status given tracking_number and phone_number.'
-                  }
+                  placeholder={t(lang, 'mcp.promptPlaceholder')}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500 leading-relaxed"
                 />
 
                 {/* Quick Prompts Suggestions */}
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  <span className="text-[10px] font-bold text-slate-400 self-center">
-                    {lang === 'ar' ? 'أفكار سريعة:' : 'Quick Ideas:'}
-                  </span>
-                  {[
-                    'أداة الاستعلام عن المخزون بالمنتج والفرع',
-                    'أداة فحص حالة الدفع المالي بالفاتورة',
-                    'أداة إرسال إشعار SMS للعميل',
-                    'أداة تحويل العملات واسترجاع سعر الصرف',
-                  ].map((presetPrompt) => (
-                    <button
-                      key={presetPrompt}
-                      type="button"
-                      onClick={() => setBuilderPrompt(presetPrompt)}
-                      className="px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 border border-indigo-100 text-indigo-700 text-[10px] font-medium transition cursor-pointer"
-                    >
-                      + {presetPrompt}
-                    </button>
-                  ))}
+                  <span className="text-[10px] font-bold text-slate-400 self-center">{t(lang, 'mcp.quickIdeas')}</span>
+                  {['ideaInventory', 'ideaPayment', 'ideaSms', 'ideaCurrency'].map((ideaKey) => {
+                    const presetPrompt = t(lang, `mcp.${ideaKey}`);
+                    return (
+                      <button
+                        key={presetPrompt}
+                        type="button"
+                        onClick={() => setBuilderPrompt(presetPrompt)}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 border border-indigo-100 text-indigo-700 text-[10px] font-medium transition cursor-pointer"
+                      >
+                        + {presetPrompt}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1649,12 +1727,12 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                   {isGeneratingTool ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin text-amber-200" />
-                      <span>{lang === 'ar' ? 'جاري التوليد بالذكاء الاصطناعي...' : 'Generating Tool Schema...'}</span>
+                      <span>{t(lang, 'mcp.generating')}</span>
                     </>
                   ) : (
                     <>
                       <Wand2 className="w-4 h-4 text-amber-200" />
-                      <span>{lang === 'ar' ? 'توليد كود ومخطط الأداة' : 'Generate Schema'}</span>
+                      <span>{t(lang, 'mcp.generateSchema')}</span>
                     </>
                   )}
                 </button>
@@ -1667,7 +1745,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div className="flex items-center gap-2 text-emerald-400 font-mono text-xs font-bold">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>{lang === 'ar' ? 'تم توليد مخطط الأداة بنجاح' : 'Schema Generated Successfully'}</span>
+                    <span>{t(lang, 'mcp.schemaGenerated')}</span>
                   </div>
                   <span className="text-[10px] bg-slate-800 text-slate-300 font-mono px-2 py-0.5 rounded border border-slate-700">
                     JSON Schema Validated
@@ -1677,7 +1755,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      {lang === 'ar' ? 'اسم الأداة البرمجي (Tool Name):' : 'Tool Identifier:'}
+                      {t(lang, 'mcp.toolNameLabel')}
                     </label>
                     <input
                       type="text"
@@ -1689,7 +1767,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      {lang === 'ar' ? 'الوصف الوظيفي للأداة:' : 'Description:'}
+                      {t(lang, 'mcp.toolDescLabel')}
                     </label>
                     <input
                       type="text"
@@ -1703,7 +1781,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 {/* Parameters List */}
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
-                    {lang === 'ar' ? 'المعاملات والمدخلات (Parameters Schema):' : 'Parameters:'}
+                    {t(lang, 'mcp.paramsLabel')}
                   </label>
                   <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                     {Object.entries(generatedToolSchema.properties || {}).map(([paramKey, paramVal]) => {
@@ -1720,7 +1798,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                             </span>
                             {isRequired && (
                               <span className="px-1.5 py-0.5 rounded bg-rose-900/60 text-rose-300 text-[9px] font-bold">
-                                {lang === 'ar' ? 'إجباري' : 'Required'}
+                                {t(lang, 'mcp.required')}
                               </span>
                             )}
                           </div>
@@ -1737,7 +1815,7 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                 {generatedToolSchema.sampleResponse && (
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      {lang === 'ar' ? 'نموذج النتيجة المتوقعة (Sample JSON Output):' : 'Sample Output:'}
+                      {t(lang, 'mcp.sampleOutputLabel')}
                     </label>
                     <pre className="p-2.5 rounded-lg bg-slate-950 text-emerald-400 font-mono text-[11px] overflow-x-auto border border-slate-800">
                       {JSON.stringify(generatedToolSchema.sampleResponse, null, 2)}
@@ -1756,12 +1834,12 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
                     {isSavingTool ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>{lang === 'ar' ? 'جاري حفظ الأداة...' : 'Persisting Tool...'}</span>
+                        <span>{t(lang, 'mcp.persistingTool')}</span>
                       </>
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4 text-emerald-100" />
-                        <span>{lang === 'ar' ? 'اعتماد وحفظ الأداة في الـ MCP' : 'Persist Tool to MCP'}</span>
+                        <span>{t(lang, 'mcp.persistTool')}</span>
                       </>
                     )}
                   </button>
@@ -1774,14 +1852,10 @@ export default function McpGateway({ tenantId, lang }: McpGatewayProps) {
 
       <ConfirmDialog
         open={pendingDeleteServerId !== null}
-        title={lang === 'ar' ? 'حذف خادم MCP' : 'Delete MCP server'}
-        message={
-          lang === 'ar'
-            ? 'هل أنت متأكد من رغبتك في إلغاء تسجيل وحذف خادم الـ MCP هذا؟ ستفقد القدرة على تشغيل أدواته.'
-            : 'Are you sure you want to delete this MCP server?'
-        }
-        confirmLabel={lang === 'ar' ? 'حذف' : 'Delete'}
-        cancelLabel={lang === 'ar' ? 'إلغاء' : 'Cancel'}
+        title={t(lang, 'mcp.deleteDialogTitle')}
+        message={t(lang, 'mcp.deleteDialogMessage')}
+        confirmLabel={t(lang, 'common.delete')}
+        cancelLabel={t(lang, 'common.cancel')}
         variant="danger"
         loading={isDeletingServer}
         onConfirm={() => pendingDeleteServerId && confirmDeleteServer(pendingDeleteServerId)}

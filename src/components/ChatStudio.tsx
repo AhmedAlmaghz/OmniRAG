@@ -5,6 +5,8 @@ import { getAiModelConfig } from '@/lib/config/aiModels';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport, type UIMessage } from 'ai';
 import {
   BookOpen,
   Lock,
@@ -27,11 +29,18 @@ import {
   Conversation,
   Collection,
 } from '@/lib/types/omnirag';
-import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { fetchWithAuth, buildAuthHeaders } from '@/lib/auth/fetchWithAuth';
 import { printChatTranscript, exportChatAsPdf, buildTranscriptText } from '@/lib/chat/chatExport';
+import {
+  mapUiMessagesToLegacy,
+  mapUiMessageToLegacy,
+  legacyMessagesToUi,
+  extractLastUserText,
+} from '@/lib/chat/uiMessageMapper';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { ChatMain } from '@/components/chat/ChatMain';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { t } from '@/lib/i18n';
 
 interface ChatStudioProps {
   tenantId: string;
@@ -132,46 +141,23 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
   const [showSourcesModal, setShowSourcesModal] = useState<boolean>(false);
   const [isLoadingCollections, setIsLoadingCollections] = useState<boolean>(false);
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
+  // Welcome bubble shown while the active conversation has no messages yet.
+  // Kept out of the useChat state so it is never sent to the model or persisted.
+  const welcomeMessage = useMemo<Message>(
+    () => ({
       id: 'msg-welcome',
       tenantId,
       conversationId: 'conv-init',
       role: 'assistant',
-      content:
-        lang === 'ar'
-          ? `مرحباً بك في **استوديو المحادثة المعززة من منصة OmniRAG (الإصدار v${APP_VERSION})**.
-
-يدعم النظام الآن **ذاكرة المحادثة قصيرة وطويلة الأمد** — سأتذكر سياق محادثاتنا السابقة وأرد بشكل طبيعي.
-
-الميزات المدعومة:
-- 🧮 **الرموز والمعادلات الرياضية (KaTeX):** مثل $E = mc^2$ مع زر تحويل فوري للرموز العربية.
-- 💻 **الشفرات البرمجية:** إبراز لغوي احترافي (Shiki) مع أرقام الأسطر والطي والنسخ.
-- 📊 **جداول تفاعلية قابلة للفرز** وتنبيهات ملونة (ملاحظة/تلميح/تحذير) ومخططات Mermaid.
-- 📚 **الاستشهادات المضمنة:** أرقام المصادر [1] روابط مباشرة للمصدر الأصلي.
-- 🖥️ **مساحة عمل ديناميكية:** أشرطة قابلة للطي والتمديد بالسحب، ووضع تركيز بملء الشاشة (Ctrl+B للشريط الجانبي، Ctrl+Shift+F لملء الشاشة).
-- 🔊 **القراءة الناطقة (TTS) وتصدير الإجابات بصيغة Markdown.**`
-          : `Welcome to **OmniRAG Agentic Chat Studio (v${APP_VERSION})**.
-
-The system now supports **short-term and long-term conversation memory** — I'll remember our prior context and respond naturally.
-
-Supported features:
-- 🧮 **Math Equations (KaTeX):** Formulas like $E = mc^2$ with Arabic notation toggle.
-- 💻 **Syntax-Highlighted Code Blocks:** Shiki highlighting with line numbers, folding, and copy.
-- 🎬 **Embedded Media:** Direct playback for images, video, and audio.
-- 📚 **Inline Citations:** Source numbers [1] link directly to the original source.
-- 🖥️ **Dynamic Workspace:** Drag-resizable collapsible panels and fullscreen mode (Ctrl+B toggles the sidebar).
-- 🔊 **Text-To-Speech (TTS) and Markdown Exports.**`,
+      content: t(lang, 'chat.welcome', { version: APP_VERSION }),
       createdAt: new Date().toISOString(),
       modelUsed: getAiModelConfig().chatStreamModel,
-    },
-  ]);
+    }),
+    [tenantId, lang],
+  );
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [selectedMode, setSelectedMode] = useState<ChatMode>('hybrid');
-  const [isLoading, setIsLoading] = useState(false);
-  // Lets the user cancel an in-flight generation (Stop button).
-  const abortControllerRef = useRef<AbortController | null>(null);
   const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
   const [pendingToolApproval, setPendingToolApproval] = useState<MCPToolCall | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
@@ -186,6 +172,141 @@ Supported features:
   const [sessionToolCalls, setSessionToolCalls] = useState<MCPToolCall[]>([]);
   const [expandedToolCallId, setExpandedToolCallId] = useState<string | null>(null);
   const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Streaming chat core (Phase 4): useChat (@ai-sdk/react) owns the live
+  // UIMessage conversation against /api/v1/chat/stream; the legacy Message[]
+  // contract used by rendering/export/persistence is derived from it below.
+  // ---------------------------------------------------------------------------
+
+  // UIMessage carries no timestamps and persistence must not double-save:
+  // these refs keep stable createdAt values and track already-saved ids.
+  const messageTimestampsRef = useRef<Map<string, string>>(new Map());
+  const persistedIdsRef = useRef<Set<string>>(new Set());
+  // Set when a data-suggestions part arrives so onFinish knows whether the
+  // model produced follow-up suggestions or we need the deterministic fallback.
+  const suggestionsReceivedRef = useRef<boolean>(false);
+
+  // Per-request dynamic values read by the transport at send time (refs keep
+  // the transport instance stable across renders).
+  const modeRef = useRef(selectedMode);
+  modeRef.current = selectedMode;
+  const collectionIdsRef = useRef(selectedCollectionIds);
+  collectionIdsRef.current = selectedCollectionIds;
+  const conversationIdRef = useRef(activeConversationId);
+  conversationIdRef.current = activeConversationId;
+
+  const chatTransport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: '/api/v1/chat/stream',
+        credentials: 'same-origin',
+        // Identical auth/context headers as fetchWithAuth (CSRF + x-env-* + model config).
+        headers: buildAuthHeaders,
+        body: () => ({
+          tenantId,
+          mode: modeRef.current,
+          collectionIds: collectionIdsRef.current,
+          conversationId: conversationIdRef.current,
+        }),
+        // The stream route expects a flat `prompt` plus the UIMessage history.
+        prepareSendMessagesRequest: ({ body, messages: outgoing }) => ({
+          body: { ...body, prompt: extractLastUserText(outgoing), messages: outgoing },
+        }),
+      }),
+    [tenantId],
+  );
+
+  const {
+    messages: uiMessages,
+    sendMessage,
+    regenerate,
+    stop,
+    status,
+    clearError,
+    setMessages: setUiMessages,
+  } = useChat({
+    id: 'omnirag-chat-studio',
+    transport: chatTransport,
+    onError: () => {
+      setSecurityNotice(t(lang, 'chat.connectionError'));
+    },
+    onData: (part) => {
+      const data = part.data as unknown;
+      switch (part.type) {
+        case 'data-citations':
+          if (Array.isArray(data) && data.length > 0) setActiveCitation(data[0] as Citation);
+          break;
+        case 'data-blocked':
+          setSecurityNotice((data as { reason?: string })?.reason || t(lang, 'chat.requestBlocked'));
+          break;
+        case 'data-pending-tool': {
+          const toolCall = data as MCPToolCall;
+          setPendingToolApproval(toolCall);
+          setActiveRightTab('logs');
+          setSessionToolCalls((prev) => (prev.some((tc) => tc.id === toolCall.id) ? prev : [...prev, toolCall]));
+          break;
+        }
+        case 'data-tool-calls': {
+          const calls = Array.isArray(data) ? (data as MCPToolCall[]) : [];
+          if (calls.length > 0) {
+            setSessionToolCalls((prev) => {
+              const existingIds = new Set(prev.map((t) => t.id));
+              return [...prev, ...calls.filter((tc) => !existingIds.has(tc.id))];
+            });
+            setActiveRightTab('logs');
+          }
+          break;
+        }
+        case 'data-suggestions':
+          if (Array.isArray(data) && data.length > 0) {
+            suggestionsReceivedRef.current = true;
+            setAiSuggestions(data as string[]);
+          }
+          break;
+        default:
+          break;
+      }
+    },
+    onFinish: ({ messages: finalUiMessages, isError }) => {
+      // Persist every message that has not been saved yet (user + assistant,
+      // including hook-blocked replies which stream as normal messages).
+      const ctx = {
+        tenantId,
+        conversationId: conversationIdRef.current,
+        timestamps: messageTimestampsRef.current,
+      };
+      let savedAny = false;
+      for (const ui of finalUiMessages) {
+        if (persistedIdsRef.current.has(ui.id)) continue;
+        const legacy = mapUiMessageToLegacy(ui, ctx);
+        if (!legacy || !legacy.content.trim()) continue;
+        persistedIdsRef.current.add(ui.id);
+        savedAny = true;
+        fetchWithAuth('/api/v1/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'save_message', tenantId, message: legacy }),
+        }).catch((err) => console.error('PostgreSQL message save error:', err));
+      }
+      if (savedAny) fetchConversations(false);
+      if (!isError && !suggestionsReceivedRef.current) {
+        setAiSuggestions(getFallbackSuggestions(mapUiMessagesToLegacy(finalUiMessages, ctx)));
+      }
+    },
+  });
+
+  const isLoading = status === 'submitted' || status === 'streaming';
+
+  // Legacy Message[] view consumed by ChatMain, exports and persistence helpers.
+  const messages = useMemo(() => {
+    const mapped = mapUiMessagesToLegacy(uiMessages, {
+      tenantId,
+      conversationId: activeConversationId,
+      timestamps: messageTimestampsRef.current,
+    });
+    return mapped.length > 0 ? mapped : [welcomeMessage];
+  }, [uiMessages, tenantId, activeConversationId, welcomeMessage]);
 
   // Auto-save message draft
   useEffect(() => {
@@ -260,7 +381,12 @@ Supported features:
       if (res.ok) {
         const data = await res.json();
         if (data.messages) {
-          setMessages(data.messages);
+          const stored = data.messages as Message[];
+          for (const m of stored) {
+            if (m.createdAt) messageTimestampsRef.current.set(m.id, m.createdAt);
+            persistedIdsRef.current.add(m.id);
+          }
+          setUiMessages(legacyMessagesToUi(stored));
         }
         if (data.conversation) {
           setSelectedMode(data.conversation.mode || 'hybrid');
@@ -328,12 +454,9 @@ Supported features:
         body: JSON.stringify({
           action: 'create',
           tenantId,
-          title: lang === 'ar' ? 'محادثة جديدة' : 'New Conversation',
+          title: t(lang, 'chat.newConversationTitle'),
           mode: selectedMode,
-          welcomeText:
-            lang === 'ar'
-              ? 'مرحباً بك في الجلسة الجديدة. كيف يمكنني مساعدتك اليوم؟'
-              : 'Welcome to the new session. How can I help you today?',
+          welcomeText: t(lang, 'chat.newSessionWelcome'),
         }),
       });
       if (res.ok) {
@@ -412,22 +535,10 @@ Supported features:
   };
 
   const modeDescriptions = {
-    private:
-      lang === 'ar'
-        ? 'وضع خاص: حظر البحث المباشر في الويب وقصر النطاق على المستندات المحلية فقط مع عزل أدوات MCP الخارجية'
-        : 'Private: Strict local documents only with external MCP tool containment',
-    hybrid:
-      lang === 'ar'
-        ? 'وضع هجين: دمج الاسترجاع المتجهي مع المعجمي وRRF مع تفعيل أدوات MCP'
-        : 'Hybrid: Vector + Lexical RRF Fusion with authorized MCP tools',
-    general:
-      lang === 'ar'
-        ? 'وضع عام: المعرفة العامة المباشرة دون العودة للمستندات المحلية'
-        : 'General: Direct Model Knowledge without local document context',
-    analysis:
-      lang === 'ar'
-        ? 'وضع التحليل المعمق: استخدام نماذج الاستدلال المتقدم للتحليل الشامل للملفات والأدوات'
-        : 'Analysis: Deep Reasoning Model utilizing all documents and active tools',
+    private: t(lang, 'chat.modePrivateDesc'),
+    hybrid: t(lang, 'chat.modeHybridDesc'),
+    general: t(lang, 'chat.modeGeneralDesc'),
+    analysis: t(lang, 'chat.modeAnalysisDesc'),
   };
 
   const fetchMcpServers = async () => {
@@ -521,16 +632,16 @@ Supported features:
       const currentConv = conversations.find((c) => c.id === activeConversationId);
       const title =
         currentConv?.title ||
-        (lang === 'ar'
-          ? `محادثة OmniRAG — ${new Date().toLocaleDateString('ar')}`
-          : `OmniRAG Chat — ${new Date().toLocaleDateString()}`);
+        t(lang, 'chat.savedChatTitle', {
+          date: new Date().toLocaleDateString(lang === 'ar' ? 'ar' : undefined),
+        });
       const content = buildTranscriptText(messages, title);
 
       const res = await fetchWithAuth('/api/v1/documents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: lang === 'ar' ? `مرجع محادثة: ${title}` : `Chat Reference: ${title}`,
+          title: t(lang, 'chat.chatReferenceTitle', { title }),
           content,
           sourceType: 'custom_mcp',
           language: lang,
@@ -540,23 +651,17 @@ Supported features:
       });
 
       if (res.ok) {
-        setMcpApprovalSuccess(
-          lang === 'ar'
-            ? 'تم حفظ المحادثة في المصادر المعرفية كمرجع قابل للبحث.'
-            : 'Conversation saved to knowledge sources as a searchable reference.',
-        );
+        setMcpApprovalSuccess(t(lang, 'chat.savedToSourcesSuccess'));
       } else {
         const data = await res.json().catch(() => ({}));
-        setSecurityNotice(
-          data.error || (lang === 'ar' ? 'تعذر حفظ المحادثة في المصادر.' : 'Could not save the chat to sources.'),
-        );
+        setSecurityNotice(data.error || t(lang, 'chat.savedToSourcesFailed'));
       }
       setTimeout(() => {
         setMcpApprovalSuccess(null);
         setSecurityNotice(null);
       }, 4000);
     } catch {
-      setSecurityNotice(lang === 'ar' ? 'حدث خطأ أثناء الحفظ في المصادر.' : 'Error while saving to sources.');
+      setSecurityNotice(t(lang, 'chat.saveToSourcesError'));
       setTimeout(() => setSecurityNotice(null), 4000);
     } finally {
       setIsSavingToSources(false);
@@ -566,232 +671,57 @@ Supported features:
   // Deterministic fallback suggestions for when AI suggestions are unavailable
   const getFallbackSuggestions = (msgList: Message[]): string[] => {
     if (!msgList || msgList.length <= 1) {
-      return [
-        lang === 'ar' ? 'ما هي شروط اتفاقية عدم الإفصاح NDA؟' : 'What are the NDA terms?',
-        lang === 'ar'
-          ? 'ابحث في الويب عن أحدث معايير الأمن السيبراني 2026'
-          : 'Search the web for latest cybersecurity standards 2026',
-        lang === 'ar' ? 'لخص أهم المستندات المتاحة' : 'Summarize the key available documents',
-      ];
+      return [t(lang, 'chat.suggestNda'), t(lang, 'chat.suggestCyber'), t(lang, 'chat.suggestSummarizeDocs')];
     }
     const lastAssistant = [...msgList].reverse().find((m) => m.role === 'assistant');
     const ctx = (lastAssistant?.content || '').toLowerCase();
     if (ctx.includes('nda') || ctx.includes('سرية') || ctx.includes('عقد')) {
-      return [
-        lang === 'ar'
-          ? 'ما الغرامات المنصوص عليها عند الإخلال بالسرية؟'
-          : 'What penalties apply for breach of confidentiality?',
-        lang === 'ar'
-          ? 'كم مدة سريان الالتزامات بعد انتهاء العقد؟'
-          : 'How long do obligations last after contract end?',
-        lang === 'ar' ? 'لخص أهم 3 نقاط جوهرية' : 'Summarize the 3 key terms',
-      ];
+      return [t(lang, 'chat.suggestPenalties'), t(lang, 'chat.suggestObligations'), t(lang, 'chat.suggestSummarize3')];
     }
-    return [
-      lang === 'ar' ? 'لخص الإجابة السابقة في 3 نقاط' : 'Summarize the previous answer in 3 points',
-      lang === 'ar' ? 'اشرح المزيد من التفاصيل التقنية' : 'Explain more technical details',
-      lang === 'ar' ? 'أعطني أمثلة عملية لتوضيح الفكرة' : 'Give me practical examples',
-    ];
+    return [t(lang, 'chat.suggestSummarizePrev'), t(lang, 'chat.suggestMoreDetails'), t(lang, 'chat.suggestExamples')];
   };
 
-  const handleSendMessage = async (
-    promptToSend?: string,
-    approvedToolCall?: MCPToolCall,
-    regenerate = false,
-    historyBase?: Message[],
-  ) => {
-    const textPrompt = promptToSend || inputPrompt;
-    if (!textPrompt.trim() || isLoading) return;
+  const handleSendMessage = async (promptToSend?: string, approvedToolCall?: MCPToolCall) => {
+    const textPrompt = (promptToSend || inputPrompt).trim();
+    if (!textPrompt || isLoading) return;
 
     setSecurityNotice(null);
-
-    // Abort any in-flight generation before starting a new one.
-    abortControllerRef.current?.abort();
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    const userMsg: Message = {
-      id: `msg-${Date.now()}`,
-      tenantId,
-      conversationId: activeConversationId,
-      role: 'user',
-      content: approvedToolCall
-        ? `${lang === 'ar' ? '✓ موافقة وتفويض تشغيل أداة الـ MCP:' : '✓ Approved MCP Tool:'} ${approvedToolCall.scopedToolName}`
-        : textPrompt,
-      createdAt: new Date().toISOString(),
-    };
-
-    // Regeneration re-asks the last prompt without duplicating the user bubble.
-    if (!regenerate) {
-      setMessages((prev) => [...prev, userMsg]);
-      if (!promptToSend) setInputPrompt('');
-      // Persist user message
-      fetchWithAuth('/api/v1/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save_message', tenantId, message: userMsg }),
-      }).catch((err) => console.error('PostgreSQL user message save error:', err));
-    }
-    setIsLoading(true);
+    clearError();
+    suggestionsReceivedRef.current = false;
     setAiSuggestions([]);
+    if (!promptToSend) setInputPrompt('');
 
-    // Build conversation history (last 10 messages) for memory. On regeneration
-    // the base already ends with the user prompt, so we don't append it again.
-    const baseMessages = historyBase ?? messages;
-    const conversationHistory = (regenerate ? baseMessages : [...baseMessages, userMsg])
-      .slice(-10)
-      .map((m) => ({ role: m.role, content: m.content }));
+    // Approval round-trips surface as a regular user bubble (parity with the
+    // legacy completions flow) and carry the approved call in the request body.
+    const userText = approvedToolCall
+      ? `${t(lang, 'chat.approvedToolPrefix')} ${approvedToolCall.scopedToolName}`
+      : textPrompt;
 
     try {
-      const res = await fetchWithAuth('/api/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
-        signal: controller.signal,
-        body: JSON.stringify({
-          tenantId,
-          prompt: textPrompt,
-          mode: selectedMode,
-          collectionIds: selectedCollectionIds,
-          approvedToolCall,
-          conversationId: activeConversationId,
-          conversationHistory,
-          generateSuggestions: true,
-        }),
-      });
-
-      const data = await res.json();
-
-      // User pressed Stop — fetchWithAuth converts the AbortError into a 503
-      // fallback response, so detect the abort via the controller signal.
-      if (controller.signal.aborted) {
-        const stoppedMsg: Message = {
-          id: `msg-stopped-${Date.now()}`,
-          tenantId,
-          conversationId: activeConversationId,
-          role: 'assistant',
-          content: lang === 'ar' ? '⏹️ تم إيقاف التوليد بناءً على طلبك.' : '⏹️ Generation stopped.',
-          createdAt: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, stoppedMsg]);
-        setIsLoading(false);
-        return;
-      }
-
-      if (!res.ok) {
-        const blockedReason =
-          data.error || (lang === 'ar' ? 'تم حظر الطلب بواسطة محرك الأمان.' : 'Request blocked by security engine.');
-        setSecurityNotice(blockedReason);
-        const blockedMsg: Message = {
-          id: `msg-blocked-${Date.now()}`,
-          tenantId,
-          conversationId: activeConversationId,
-          role: 'assistant',
-          content: `🛑 [درع أمن OmniRAG]: ${blockedReason}`,
-          createdAt: new Date().toISOString(),
-          modelUsed: 'HookHarness Defense Engine',
-        };
-        setMessages((prev) => [...prev, blockedMsg]);
-        fetchWithAuth('/api/v1/conversations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'save_message', tenantId, message: blockedMsg }),
-        }).catch(() => {});
-        setIsLoading(false);
-        return;
-      }
-
-      if (data.pendingToolCall) {
-        setPendingToolApproval(data.pendingToolCall);
-        setActiveRightTab('logs');
-        setSessionToolCalls((prev) => {
-          const exists = prev.some((tc) => tc.id === data.pendingToolCall.id);
-          return exists ? prev : [...prev, data.pendingToolCall];
-        });
-      }
-
-      if (data.toolCalls && data.toolCalls.length > 0) {
-        setSessionToolCalls((prev) => {
-          const existingIds = new Set(prev.map((t) => t.id));
-          const newCalls = data.toolCalls.filter((tc: any) => !existingIds.has(tc.id));
-          return [...prev, ...newCalls];
-        });
-        setActiveRightTab('logs');
-      }
-
-      const assistantMsg: Message = {
-        id: `msg-${Date.now() + 1}`,
-        tenantId,
-        conversationId: activeConversationId,
-        role: 'assistant',
-        content: data.text,
-        citations: data.citations,
-        modelUsed: data.modelUsed,
-        tokensUsed: data.tokensUsed,
-        createdAt: new Date().toISOString(),
-      };
-
-      setMessages((prev) => [...prev, assistantMsg]);
-
-      // Persist assistant message
-      fetchWithAuth('/api/v1/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save_message', tenantId, message: assistantMsg }),
-      })
-        .then(() => fetchConversations(false))
-        .catch((err) => console.error('PostgreSQL assistant message save error:', err));
-
-      // Update AI suggestions (fallback to deterministic if empty)
-      const newSuggestions =
-        data.suggestions && data.suggestions.length > 0
-          ? data.suggestions
-          : getFallbackSuggestions([...messages, userMsg, assistantMsg]);
-      setAiSuggestions(newSuggestions);
-
-      if (data.citations && data.citations.length > 0) {
-        setActiveCitation(data.citations[0]);
-      }
+      await sendMessage({ text: userText }, approvedToolCall ? { body: { approvedToolCall } } : undefined);
     } catch {
-      if (controller.signal.aborted) {
-        // Aborted mid-flight — the Stop handler already surfaced feedback.
-      } else {
-        setSecurityNotice(lang === 'ar' ? 'حدث خطأ في الاتصال بالخادم.' : 'Connection error.');
-      }
-    } finally {
-      setIsLoading(false);
+      // Transport-level failures also surface through useChat's onError.
     }
   };
 
-  // Stop the in-flight generation.
+  // Stop the in-flight generation (aborts the active stream).
   const handleStopGeneration = useCallback(() => {
-    abortControllerRef.current?.abort();
-  }, []);
+    stop();
+  }, [stop]);
 
-  // Regenerate the last assistant answer by re-sending the last user prompt.
+  // Regenerate the last assistant answer by re-asking the last user prompt.
   const handleRegenerate = useCallback(() => {
     if (isLoading) return;
-    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-    if (!lastUser) return;
-    // Drop the trailing assistant reply so the fresh answer replaces it, and use
-    // the trimmed list as the memory base (it already ends with the user prompt).
-    const base =
-      messages.length > 0 && messages[messages.length - 1].role === 'assistant' ? messages.slice(0, -1) : messages;
-    setMessages(base);
-    handleSendMessage(lastUser.content, undefined, true, base);
-  }, [messages, isLoading]);
+    regenerate();
+  }, [isLoading, regenerate]);
 
   const handleApproveTool = (toolCall: MCPToolCall) => {
     const approvedCall = { ...toolCall, status: 'approved' as const };
-    setMcpApprovalSuccess(
-      lang === 'ar' ? 'تمت الموافقة على الأداة وتحديث سجلات التدقيق!' : 'Tool approved and authorized!',
-    );
+    setMcpApprovalSuccess(t(lang, 'chat.toolApproved'));
     setPendingToolApproval(null);
     setTimeout(() => setMcpApprovalSuccess(null), 4000);
     setSessionToolCalls((prev) => prev.map((t) => (t.id === toolCall.id ? { ...t, status: 'approved' } : t)));
-    handleSendMessage(
-      inputPrompt || (lang === 'ar' ? 'تأكيد موافقة أداة الـ MCP' : 'Confirm MCP tool approval'),
-      approvedCall,
-    );
+    handleSendMessage(inputPrompt || t(lang, 'chat.confirmToolApproval'), approvedCall);
   };
 
   const handleRejectTool = () => {
@@ -855,14 +785,10 @@ Supported features:
             <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div className="flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-amber-500" />
-                <h4 className="text-sm font-bold text-slate-800">
-                  {lang === 'ar' ? 'مصادر المعرفة النشطة' : 'Active Knowledge Sources'}
-                </h4>
+                <h4 className="text-sm font-bold text-slate-800">{t(lang, 'chat.activeSourcesTitle')}</h4>
                 <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-mono">
                   {selectedCollectionIds.length === 0
-                    ? lang === 'ar'
-                      ? 'شامل'
-                      : 'All'
+                    ? t(lang, 'chat.allSourcesBadge')
                     : `${selectedCollectionIds.length}`}
                 </span>
               </div>
@@ -872,14 +798,14 @@ Supported features:
                   onClick={handleSelectAllCollections}
                   className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition cursor-pointer"
                 >
-                  {lang === 'ar' ? 'تحديد الكل' : 'Select All'}
+                  {t(lang, 'chat.selectAll')}
                 </button>
                 <button
                   type="button"
                   onClick={handleClearAllCollections}
                   className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition cursor-pointer"
                 >
-                  {lang === 'ar' ? 'مسح' : 'Clear'}
+                  {t(lang, 'chat.clear')}
                 </button>
               </div>
             </div>
@@ -889,9 +815,7 @@ Supported features:
                   <RefreshCw className="w-5 h-5 animate-spin text-indigo-500 mx-auto" />
                 </div>
               ) : availableCollections.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">
-                  {lang === 'ar' ? 'لا توجد مجموعات معرفية.' : 'No collections configured.'}
-                </p>
+                <p className="text-xs text-slate-400 text-center py-8">{t(lang, 'chat.noCollections')}</p>
               ) : (
                 availableCollections.map((col) => {
                   const isChecked = selectedCollectionIds.includes(col.id);
@@ -915,12 +839,11 @@ Supported features:
                         <div className="flex items-center justify-between gap-1 mb-0.5">
                           <span className="font-bold truncate text-slate-800">{col.name}</span>
                           <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono shrink-0">
-                            {col.documentCount || 0} {lang === 'ar' ? 'مستند' : 'docs'}
+                            {t(lang, 'chat.docsCount', { count: col.documentCount || 0 })}
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-500 line-clamp-2 leading-tight">
-                          {col.description ||
-                            (lang === 'ar' ? 'مجموعة معرفية مستوردة' : 'Imported knowledge collection')}
+                          {col.description || t(lang, 'chat.importedCollection')}
                         </p>
                       </div>
                     </div>
@@ -1019,7 +942,7 @@ Supported features:
                       }`}
                     >
                       <Plug className="w-3.5 h-3.5" />
-                      <span>{lang === 'ar' ? 'البوابات' : 'MCP'}</span>
+                      <span>{t(lang, 'chat.tabMcp')}</span>
                     </button>
                     <button
                       onClick={() => {
@@ -1033,7 +956,7 @@ Supported features:
                       }`}
                     >
                       <BookOpen className="w-3.5 h-3.5" />
-                      <span>{lang === 'ar' ? 'المراجع' : 'Citations'}</span>
+                      <span>{t(lang, 'chat.tabCitations')}</span>
                     </button>
                     <button
                       onClick={() => {
@@ -1047,7 +970,7 @@ Supported features:
                       }`}
                     >
                       <Activity className="w-3.5 h-3.5" />
-                      <span>{lang === 'ar' ? 'السجل' : 'Log'}</span>
+                      <span>{t(lang, 'chat.tabLog')}</span>
                       {sessionToolCalls.length > 0 && (
                         <span className="w-4 h-4 bg-amber-500 text-white rounded-full text-[9px] flex items-center justify-center font-bold">
                           {sessionToolCalls.length}
@@ -1062,13 +985,13 @@ Supported features:
                       <div className="space-y-4 animate-fadeIn">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                            {lang === 'ar' ? 'خوادم MCP' : 'MCP Servers'}
+                            {t(lang, 'chat.mcpServersTitle')}
                           </span>
                           <button
                             onClick={fetchMcpServers}
                             disabled={isRefreshingServers}
                             className="p-1 rounded-md text-slate-500 hover:bg-slate-200 transition"
-                            title={lang === 'ar' ? 'تحديث' : 'Refresh'}
+                            title={t(lang, 'chat.refreshTitle')}
                           >
                             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingServers ? 'animate-spin' : ''}`} />
                           </button>
@@ -1076,7 +999,7 @@ Supported features:
 
                         {mcpServers.length === 0 ? (
                           <p className="text-xs text-slate-400 bg-white p-4 rounded-xl border border-slate-200/60 text-center">
-                            {lang === 'ar' ? 'لا توجد خوادم MCP مسجلة.' : 'No MCP servers registered.'}
+                            {t(lang, 'chat.noMcpServers')}
                           </p>
                         ) : (
                           <div className="space-y-3">
@@ -1104,7 +1027,7 @@ Supported features:
                                         onClick={() => handlePingServer(server.id)}
                                         disabled={pingingServerId === server.id}
                                         className="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-indigo-600 transition"
-                                        title={lang === 'ar' ? 'فحص' : 'Ping'}
+                                        title={t(lang, 'chat.pingTitle')}
                                       >
                                         <RefreshCw
                                           className={`w-3 h-3 ${pingingServerId === server.id ? 'animate-spin' : ''}`}
@@ -1128,11 +1051,11 @@ Supported features:
                                       <p className="text-[11px] text-slate-500">{server.description}</p>
                                       <div className="pt-2 border-t border-slate-100">
                                         <span className="text-[10px] font-bold text-slate-400 block mb-1.5 uppercase">
-                                          {lang === 'ar' ? 'الأدوات' : 'Tools'}
+                                          {t(lang, 'chat.toolsLabel')}
                                         </span>
                                         {server.enabledTools.length === 0 ? (
                                           <p className="text-[10px] text-slate-400 italic">
-                                            {lang === 'ar' ? 'لا أدوات مفعلة.' : 'No tools enabled.'}
+                                            {t(lang, 'chat.noToolsEnabled')}
                                           </p>
                                         ) : (
                                           <div className="space-y-1.5">
@@ -1154,14 +1077,14 @@ Supported features:
                                                   {isBlocked ? (
                                                     <span className="px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-600 text-[9px] font-bold border border-rose-100 flex items-center gap-0.5">
                                                       <Lock className="w-2.5 h-2.5" />
-                                                      {lang === 'ar' ? 'محتوى' : 'Contained'}
+                                                      {t(lang, 'chat.containedBadge')}
                                                     </span>
                                                   ) : (
                                                     <button
                                                       onClick={() => handleToggleTool(server.id, tool)}
                                                       className="px-2 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] transition border border-indigo-100 cursor-pointer"
                                                     >
-                                                      {lang === 'ar' ? 'تعطيل' : 'Disable'}
+                                                      {t(lang, 'chat.disableTool')}
                                                     </button>
                                                   )}
                                                 </div>
@@ -1184,18 +1107,16 @@ Supported features:
                     {activeRightTab === 'citations' && (
                       <div className="space-y-4 animate-fadeIn">
                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                          {lang === 'ar' ? 'السياق والمصادر' : 'Source Verification'}
+                          {t(lang, 'chat.sourceVerificationTitle')}
                         </span>
                         {activeCitation ? (
                           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-3xs space-y-3">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-bold text-indigo-600">
-                                {lang === 'ar'
-                                  ? `المصدر [${activeCitation.index}]`
-                                  : `Source [${activeCitation.index}]`}
+                                {t(lang, 'chat.citationIndex', { index: activeCitation.index })}
                               </span>
                               <span className="text-[10px] font-mono bg-indigo-50 px-2 py-0.5 rounded-md text-indigo-700 font-bold border border-indigo-100">
-                                Match: {(activeCitation.score * 100).toFixed(0)}%
+                                {t(lang, 'chat.citationMatch', { pct: (activeCitation.score * 100).toFixed(0) })}
                               </span>
                             </div>
                             <div className="flex items-center gap-1.5 text-slate-800 font-semibold text-xs">
@@ -1203,9 +1124,7 @@ Supported features:
                               <h4>{activeCitation.documentTitle}</h4>
                             </div>
                             <div className="text-[11px] font-mono text-slate-400 block">
-                              {lang === 'ar'
-                                ? `صفحة ${activeCitation.pageNumber || 1}`
-                                : `Page ${activeCitation.pageNumber || 1}`}
+                              {t(lang, 'chat.citationPage', { page: activeCitation.pageNumber || 1 })}
                             </div>
                             <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100 font-mono whitespace-pre-wrap">
                               &ldquo;{activeCitation.snippet}&rdquo;
@@ -1218,7 +1137,7 @@ Supported features:
                                 className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
                               >
                                 <ExternalLink className="w-3.5 h-3.5" />
-                                <span>{lang === 'ar' ? 'فتح المصدر الأصلي' : 'Open Original Source'}</span>
+                                <span>{t(lang, 'chat.openOriginalSource')}</span>
                               </a>
                             )}
                             {onNavigateTab && (
@@ -1228,15 +1147,13 @@ Supported features:
                                 className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer border border-indigo-200/80"
                               >
                                 <ExternalLink className="w-3.5 h-3.5" />
-                                <span>{lang === 'ar' ? 'عرض في مستودع المعرفة' : 'View in Knowledge Base'}</span>
+                                <span>{t(lang, 'chat.viewInKnowledge')}</span>
                               </button>
                             )}
                           </div>
                         ) : (
                           <p className="text-xs text-slate-400 leading-relaxed bg-white p-4 rounded-xl border border-slate-200/60 text-center">
-                            {lang === 'ar'
-                              ? 'اضغط على رقم المصدر [1] في الإجابة لمعاينة التفاصيل.'
-                              : 'Click any [1] citation in the answer to view details.'}
+                            {t(lang, 'chat.citationHint')}
                           </p>
                         )}
                       </div>
@@ -1246,11 +1163,11 @@ Supported features:
                     {activeRightTab === 'logs' && (
                       <div className="space-y-4 animate-fadeIn">
                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                          {lang === 'ar' ? 'سجل أدوات MCP' : 'MCP Execution Logs'}
+                          {t(lang, 'chat.mcpLogsTitle')}
                         </span>
                         {sessionToolCalls.length === 0 ? (
                           <p className="text-xs text-slate-400 bg-white p-4 rounded-xl border border-slate-200/60 text-center">
-                            {lang === 'ar' ? 'لم يتم تشغيل أي أدوات بعد.' : 'No MCP tools executed yet.'}
+                            {t(lang, 'chat.noToolsExecuted')}
                           </p>
                         ) : (
                           <div className="space-y-3">
@@ -1294,7 +1211,7 @@ Supported features:
                                     <div className="p-3 border-t border-slate-100 bg-slate-50/50 space-y-2.5 animate-fadeIn">
                                       <div>
                                         <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">
-                                          {lang === 'ar' ? 'المدخلات:' : 'Inputs:'}
+                                          {t(lang, 'chat.inputsLabel')}
                                         </span>
                                         <pre className="bg-slate-800 text-slate-200 p-2 rounded-lg text-[10px] font-mono overflow-x-auto whitespace-pre-wrap max-h-40">
                                           {JSON.stringify(tc.inputParams, null, 2)}
@@ -1303,7 +1220,7 @@ Supported features:
                                       {tc.outputResult && (
                                         <div>
                                           <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">
-                                            {lang === 'ar' ? 'النتيجة:' : 'Result:'}
+                                            {t(lang, 'chat.resultLabel')}
                                           </span>
                                           <pre className="bg-slate-900 text-indigo-200 p-2 rounded-lg text-[10px] font-mono overflow-x-auto whitespace-pre-wrap max-h-40 border border-slate-800">
                                             {JSON.stringify(tc.outputResult, null, 2)}
@@ -1319,7 +1236,7 @@ Supported features:
                                         onClick={() => handleApproveTool(tc)}
                                         className="flex-1 py-1 bg-emerald-600 text-white rounded-md text-[11px] font-bold hover:bg-emerald-700 transition cursor-pointer"
                                       >
-                                        {lang === 'ar' ? 'موافقة' : 'Approve'}
+                                        {t(lang, 'chat.approve')}
                                       </button>
                                       <button
                                         type="button"
@@ -1331,7 +1248,7 @@ Supported features:
                                         }}
                                         className="flex-1 py-1 bg-slate-200 text-slate-700 rounded-md text-[11px] font-bold hover:bg-slate-300 transition cursor-pointer"
                                       >
-                                        {lang === 'ar' ? 'رفض' : 'Deny'}
+                                        {t(lang, 'chat.deny')}
                                       </button>
                                     </div>
                                   )}
@@ -1348,7 +1265,7 @@ Supported features:
                   <div className="pt-4 border-t border-slate-200 text-xs text-slate-500 shrink-0">
                     <p className="font-bold text-slate-700 mb-1.5 flex items-center gap-1">
                       <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>{lang === 'ar' ? 'الوضع الفعلي' : 'Active Mode'}</span>
+                      <span>{t(lang, 'chat.activeMode')}</span>
                     </p>
                     <p className="text-[11px] text-slate-600 leading-relaxed mb-2">{modeDescriptions[selectedMode]}</p>
                   </div>
@@ -1361,14 +1278,10 @@ Supported features:
 
       <ConfirmDialog
         open={pendingDeleteConversationId !== null}
-        title={lang === 'ar' ? 'حذف المحادثة' : 'Delete conversation'}
-        message={
-          lang === 'ar'
-            ? 'هل أنت متأكد من حذف هذه المحادثة بالكامل من قاعدة البيانات؟'
-            : 'Are you sure you want to delete this chat session?'
-        }
-        confirmLabel={lang === 'ar' ? 'حذف' : 'Delete'}
-        cancelLabel={lang === 'ar' ? 'إلغاء' : 'Cancel'}
+        title={t(lang, 'chat.deleteDialogTitle')}
+        message={t(lang, 'chat.deleteDialogMessage')}
+        confirmLabel={t(lang, 'common.delete')}
+        cancelLabel={t(lang, 'common.cancel')}
         variant="danger"
         loading={isDeletingConversation}
         onConfirm={() => pendingDeleteConversationId && confirmDeleteConversation(pendingDeleteConversationId)}

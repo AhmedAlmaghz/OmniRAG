@@ -69,6 +69,46 @@ function wrapResponseWithSafeJson(res: Response): Response {
 }
 
 /**
+ * Builds the OmniRAG auth/context headers as a plain record: the CSRF guard
+ * header plus client-saved runtime env keys and the AI model configuration.
+ * Exported so non-fetchWithAuth transports (e.g. the AI SDK useChat transport)
+ * can authenticate identically against /api/v1 routes.
+ */
+export function buildAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
+
+  if (typeof window === 'undefined') return headers;
+
+  // Attach client-saved environment variables for runtime backend execution
+  const envKeys = [
+    'DATABASE_URL',
+    'QDRANT_URL',
+    'QDRANT_API_KEY',
+    'MISTRAL_API_KEY',
+    'UNSTRUCTURED_API_KEY',
+    'GEMINI_API_KEY',
+  ];
+  envKeys.forEach((k) => {
+    try {
+      const val = localStorage.getItem(`omnirag_env_${k}`);
+      if (val && val.trim() !== '' && !val.includes('•')) {
+        headers[`x-env-${k.toLowerCase().replace(/_/g, '-')}`] = encodeURIComponent(val.trim());
+      }
+    } catch (e) {}
+  });
+
+  // Attach the client-saved AI model configuration so server routes can read
+  // which models the user configured (chat/analysis/embedding/whisper/ocr...)
+  // instead of falling back to DEFAULT_AI_MODELS. Mirrors the x-env-* pattern.
+  try {
+    const modelCfg = localStorage.getItem('omnirag_ai_model_config_v1');
+    if (modelCfg) headers['x-ai-model-config'] = modelCfg;
+  } catch (e) {}
+
+  return headers;
+}
+
+/**
  * Authenticated client fetch. Auth is cookie-based: the opaque session token
  * lives in an httpOnly cookie set by the server, so the browser attaches it
  * automatically (via `credentials: 'same-origin'`). `X-Requested-With` is set
@@ -77,34 +117,8 @@ function wrapResponseWithSafeJson(res: Response): Response {
 export async function fetchWithAuth(url: string | URL | Request, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
 
-  headers.set('X-Requested-With', 'XMLHttpRequest');
-
-  // Attach client-saved environment variables for runtime backend execution
-  if (typeof window !== 'undefined') {
-    const envKeys = [
-      'DATABASE_URL',
-      'QDRANT_URL',
-      'QDRANT_API_KEY',
-      'MISTRAL_API_KEY',
-      'UNSTRUCTURED_API_KEY',
-      'GEMINI_API_KEY',
-    ];
-    envKeys.forEach((k) => {
-      try {
-        const val = localStorage.getItem(`omnirag_env_${k}`);
-        if (val && val.trim() !== '' && !val.includes('•')) {
-          headers.set(`x-env-${k.toLowerCase().replace(/_/g, '-')}`, encodeURIComponent(val.trim()));
-        }
-      } catch (e) {}
-    });
-
-    // Attach the client-saved AI model configuration so server routes can read
-    // which models the user configured (chat/analysis/embedding/whisper/ocr...)
-    // instead of falling back to DEFAULT_AI_MODELS. Mirrors the x-env-* pattern.
-    try {
-      const modelCfg = localStorage.getItem('omnirag_ai_model_config_v1');
-      if (modelCfg) headers.set('x-ai-model-config', modelCfg);
-    } catch (e) {}
+  for (const [key, value] of Object.entries(buildAuthHeaders())) {
+    headers.set(key, value);
   }
 
   if (options.body && !headers.has('Content-Type') && typeof options.body === 'string') {

@@ -5,17 +5,63 @@ import { MCPServerConfig } from '@/lib/types/omnirag';
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { probeEndpoint } from '@/lib/mcp/net';
 import { mcpClientPool } from '@/lib/mcp/client-pool';
+import { isStdioTransportAllowed, listRemoteTools } from '@/lib/mcp/remoteClient';
+import { encryptToken } from '@/lib/mcp/auth/encryption';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
+  const denied = await guardPermission(authCtx, 'mcp:manage');
+  if (denied) return denied;
+
   const tenantId = authCtx.tenantId;
   const servers = await db.getMcpServers(tenantId);
-  return NextResponse.json({ servers });
+  return NextResponse.json({ servers, stdioEnabled: isStdioTransportAllowed() });
 });
+
+/**
+ * Normalizes the operator-provided server config for stdio transports:
+ * requires a command, and encrypts env values at rest (AES-256-GCM). Masked
+ * placeholder values (••••) mean "keep existing" and fall back to the
+ * previously stored encrypted value on edit.
+ */
+function buildStdioConfig(
+  rawConfig: Record<string, any> | undefined,
+  existingConfig?: Record<string, any>,
+): { ok: true; config: Record<string, any> } | { ok: false; error: string } {
+  const command = String(rawConfig?.command || '').trim();
+  if (!command) {
+    return { ok: false, error: 'أمر التشغيل (command) مطلوب لخوادم stdio المحلية.' };
+  }
+  const rawArgs = rawConfig?.args;
+  const args = Array.isArray(rawArgs)
+    ? rawArgs.map((a) => String(a)).filter((a) => a.trim() !== '')
+    : typeof rawArgs === 'string' && rawArgs.trim() !== ''
+      ? rawArgs.split(/\s+/).map((a) => a.trim())
+      : [];
+  const env: Record<string, string> = {};
+  if (rawConfig?.env && typeof rawConfig.env === 'object') {
+    for (const [key, value] of Object.entries(rawConfig.env as Record<string, unknown>)) {
+      const strValue = String(value ?? '');
+      if (!key.trim()) continue;
+      if (strValue.includes('•')) {
+        const kept = existingConfig?.env?.[key];
+        if (kept) env[key] = String(kept); // keep existing encrypted value
+        continue;
+      }
+      if (strValue.trim() === '') continue;
+      env[key] = encryptToken(strValue);
+    }
+  }
+  return { ok: true, config: { command, args, env } };
+}
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   try {
+    const denied = await guardPermission(authCtx, 'mcp:manage');
+    if (denied) return denied;
+
     const body = await req.json();
     const tenantId = authCtx.tenantId;
 
@@ -53,17 +99,49 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         defaultEnabled = ['custom_action_execute', 'read_server_resource'];
       }
 
+      const requestedTransport: MCPServerConfig['transportType'] =
+        serverData.transportType === 'stdio' ||
+        serverData.transportType === 'sse' ||
+        serverData.transportType === 'websocket'
+          ? serverData.transportType
+          : 'http';
+
+      if (requestedTransport === 'stdio' && !isStdioTransportAllowed()) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'نقل stdio (الخوادم المحلية) متاح فقط في النشر الذاتي (self-hosted) ولا تدعمه بيئات Vercel المدارة.',
+          },
+          { status: 400 },
+        );
+      }
+
+      let stdioConfig: Record<string, any> | undefined;
+      if (requestedTransport === 'stdio') {
+        const built = buildStdioConfig(serverData.config);
+        if (!built.ok) {
+          return NextResponse.json({ success: false, error: built.error }, { status: 400 });
+        }
+        stdioConfig = built.config;
+      }
+
       const newServer: MCPServerConfig = {
         id: serverData.id || `mcp-${Date.now()}`,
         tenantId,
         name: serverData.name,
-        endpointUrl: serverData.endpointUrl,
+        endpointUrl: requestedTransport === 'stdio' ? 'stdio://local' : serverData.endpointUrl,
         description: serverData.description || 'خادم MCP مخصص للمؤسسة',
         sandboxTier: serverData.sandboxTier || 'T1_LIMITED',
         protocolVersion: serverData.protocolVersion || '2026-07-28',
         enabledTools: serverData.enabledTools || defaultEnabled,
         requireConfirmationTools: serverData.requireConfirmationTools || defaultRequired,
         headers: serverData.headers || {},
+        authType:
+          serverData.authType === 'basic' || serverData.authType === 'bearer' || serverData.authType === 'oauth2'
+            ? serverData.authType
+            : 'none',
+        transportType: requestedTransport,
+        config: stdioConfig || serverData.config || {},
         status: 'healthy',
         latencyMs: 0,
         lastChecked: new Date().toISOString(),
@@ -104,16 +182,53 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         return NextResponse.json({ error: 'خادم MCP غير موجود للتعديل' }, { status: 404 });
       }
 
+      const requestedTransport: MCPServerConfig['transportType'] =
+        serverData.transportType === 'stdio' ||
+        serverData.transportType === 'sse' ||
+        serverData.transportType === 'websocket'
+          ? serverData.transportType
+          : serverData.transportType === 'http'
+            ? 'http'
+            : existing.transportType || 'http';
+
+      if (requestedTransport === 'stdio' && !isStdioTransportAllowed()) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'نقل stdio (الخوادم المحلية) متاح فقط في النشر الذاتي (self-hosted) ولا تدعمه بيئات Vercel المدارة.',
+          },
+          { status: 400 },
+        );
+      }
+
+      let nextConfig: Record<string, any> = serverData.config ?? existing.config ?? {};
+      if (requestedTransport === 'stdio') {
+        const built = buildStdioConfig(serverData.config ?? existing.config, existing.config);
+        if (!built.ok) {
+          return NextResponse.json({ success: false, error: built.error }, { status: 400 });
+        }
+        nextConfig = built.config;
+      }
+
       const updatedServer: MCPServerConfig = {
         ...existing,
         name: serverData.name ?? existing.name,
-        endpointUrl: serverData.endpointUrl ?? existing.endpointUrl,
+        endpointUrl:
+          requestedTransport === 'stdio' ? 'stdio://local' : (serverData.endpointUrl ?? existing.endpointUrl),
         description: serverData.description ?? existing.description,
         sandboxTier: serverData.sandboxTier ?? existing.sandboxTier,
         protocolVersion: serverData.protocolVersion ?? existing.protocolVersion,
         enabledTools: serverData.enabledTools ?? existing.enabledTools,
         requireConfirmationTools: serverData.requireConfirmationTools ?? existing.requireConfirmationTools,
         headers: serverData.headers ?? existing.headers ?? {},
+        authType:
+          serverData.authType === 'basic' || serverData.authType === 'bearer' || serverData.authType === 'oauth2'
+            ? serverData.authType
+            : serverData.authType === 'none'
+              ? 'none'
+              : existing.authType,
+        transportType: requestedTransport,
+        config: nextConfig,
         lastChecked: new Date().toISOString(),
       };
 
@@ -150,10 +265,30 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
       // Shared probe with the MCP client pool (lib/mcp/net.probeEndpoint):
       // real network round-trip with timeout, SSRF guard, and honest
-      // measured-latency reporting for dummy/seeded endpoints.
-      const probe = await probeEndpoint(server.endpointUrl, server.headers || {});
-      const { status, latencyMs } = probe;
-      const errorMsg = probe.error || '';
+      // measured-latency reporting for dummy/seeded endpoints. stdio servers
+      // have no URL — they are probed through a REAL protocol handshake
+      // (spawn + initialize + tools/list) instead.
+      let status: 'healthy' | 'degraded' | 'down';
+      let latencyMs: number;
+      let errorMsg = '';
+
+      if (server.transportType === 'stdio') {
+        const started = Date.now();
+        try {
+          await listRemoteTools(tenantId, server);
+          status = 'healthy';
+          latencyMs = Date.now() - started;
+        } catch (err: any) {
+          status = 'down';
+          latencyMs = Date.now() - started;
+          errorMsg = err?.message || 'فشل تشغيل خادم stdio المحلي';
+        }
+      } else {
+        const probe = await probeEndpoint(server.endpointUrl, server.headers || {});
+        status = probe.status;
+        latencyMs = probe.latencyMs;
+        errorMsg = probe.error || '';
+      }
 
       const updatedServer = {
         ...server,

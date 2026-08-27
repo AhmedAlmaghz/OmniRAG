@@ -3,7 +3,7 @@ import { MCPToolCall } from '@/lib/types/omnirag';
 import { randomUUID } from 'crypto';
 import { getToolDefinition } from './registry/tools';
 import { assertPublicHttpUrl } from './net';
-import { callRemoteTool } from './remoteClient';
+import { callRemoteTool, isStdioTransportAllowed } from './remoteClient';
 
 /**
  * Unified MCP tool dispatcher — the SINGLE execution path for every tool call
@@ -100,13 +100,24 @@ function applySimulationStamp(result: any, defaultSimulated = true): any {
  */
 async function dispatchToRemoteServer(
   tenantId: string,
-  server: { id: string; name: string; endpointUrl: string; headers?: Record<string, string> },
+  server: {
+    id: string;
+    name: string;
+    endpointUrl: string;
+    headers?: Record<string, string>;
+    transportType?: 'http' | 'sse' | 'stdio' | 'websocket';
+    config?: Record<string, any>;
+  },
   toolName: string,
   args: Record<string, any>,
   timeoutMs: number,
 ): Promise<any> {
   // Keep the guard explicit here so SSRF tests targeting this path fail fast.
-  assertPublicHttpUrl(server.endpointUrl);
+  // stdio servers spawn a local process (self-hosted only, gated again inside
+  // the transport layer) and have no URL to guard.
+  if (server.transportType !== 'stdio') {
+    assertPublicHttpUrl(server.endpointUrl);
+  }
   return callRemoteTool(tenantId, server, toolName, args, timeoutMs);
 }
 
@@ -115,10 +126,12 @@ async function findOwningRemoteServer(tenantId: string, toolName: string) {
   return servers.find(
     (s) =>
       s.enabledTools.includes(toolName) &&
-      s.endpointUrl &&
-      !s.endpointUrl.includes('.internal') &&
-      !s.endpointUrl.includes('example.com') &&
-      /^https?:\/\//i.test(s.endpointUrl),
+      (s.transportType === 'stdio'
+        ? isStdioTransportAllowed()
+        : s.endpointUrl &&
+          !s.endpointUrl.includes('.internal') &&
+          !s.endpointUrl.includes('example.com') &&
+          /^https?:\/\//i.test(s.endpointUrl)),
   );
 }
 

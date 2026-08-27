@@ -1,82 +1,197 @@
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
-import { google } from '@/lib/rag/googleProvider';
-import { streamText, createTextStreamResponse } from 'ai';
+import {
+  streamText,
+  stepCountIs,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  convertToModelMessages,
+  type UIMessage,
+  type UIMessageChunk,
+  type ToolSet,
+  type ModelMessage,
+  type JSONValue,
+} from 'ai';
+import { resolveLanguageModel, isModelRefConfigured } from '@/lib/ai/registry/resolve';
 import { HookHarness } from '@/lib/harness/hook-harness';
-import { performHybridSearch } from '@/lib/rag/engine';
+import {
+  performHybridSearch,
+  runToolSafely,
+  buildCitations,
+  collectTenantMcpTools,
+  buildAgenticSystemInstruction,
+} from '@/lib/rag/engine';
 import { getEnv } from '@/lib/env/runtimeEnv';
-import { serverErrorResponse } from '@/lib/api/safeError';
 import { createPIIStreamRedactor } from '@/lib/security/piiStreamRedactor';
 import { parseModelConfigFromRequest, getAiModel } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
+import { buildTenantMcpTools } from '@/lib/mcp/aiSdkTools';
+import { generateTextResilient } from '@/lib/ai/resilientGenerate';
+import { guardPermission } from '@/lib/auth/permissions';
+import type { MCPToolCall } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-export const POST = withAuthAndRateLimit(async (req, authCtx) => {
-  // Load client-supplied dynamic environment keys from headers into process.env / global store
-  getEnv('GEMINI_API_KEY', req);
-  getEnv('UNSTRUCTURED_API_KEY', req);
-  getEnv('MISTRAL_API_KEY', req);
-  getEnv('DATABASE_URL', req);
-  getEnv('POSTGRES_URL', req);
-  getEnv('QDRANT_URL', req);
-  getEnv('QDRANT_API_KEY', req);
+/**
+ * Agentic RAG streaming endpoint (Phase 4).
+ *
+ * Speaks the AI SDK UI-message-stream protocol (SSE) so ChatStudio can attach
+ * through useChat (@ai-sdk/react): real token-by-token streaming, tool parts,
+ * and structured data parts carrying citations / pending approvals / executed
+ * tool calls / suggestions / model metadata.
+ *
+ * Security parity with chat/completions is preserved:
+ *  - HookHarness pre_auth / pre_inference / pre_generation gates
+ *  - PII redaction applied to every streamed text delta (buffered redactor)
+ *  - post_inference audit hook over the full text after the stream ends
+ *  - side-effect tools never execute without the human-approval round trip
+ */
 
-  // Bind the client's configured models to this request so getAiModel('chatStreamModel')
-  // and getAiModel('embeddingModel') inside the search/stream paths resolve the
-  // user's choices instead of DEFAULT_AI_MODELS.
+/** Emits a hook-blocked reply INSIDE the stream protocol so the client renders it like any message. */
+function blockedStreamResponse(reason: string): Response {
+  const stream = createUIMessageStream({
+    execute: ({ writer }) => {
+      writer.write({ type: 'data-blocked', data: { reason } });
+      writer.write({ type: 'text-start', id: 'blocked-text' });
+      writer.write({ type: 'text-delta', id: 'blocked-text', delta: `🛑 [درع أمن OmniRAG]: ${reason}` });
+      writer.write({ type: 'text-end', id: 'blocked-text' });
+    },
+  });
+  return createUIMessageStreamResponse({ stream });
+}
+
+/**
+ * Pipes UI message chunks through the buffered PII redactor: text-delta
+ * chunks are deferred-redacted exactly like the legacy plain-text stream, all
+ * other chunk kinds pass through untouched. `done` resolves when the source
+ * stream ends so callers can append trailing data parts afterwards.
+ */
+function redactPiiChunks(source: ReadableStream<UIMessageChunk>): {
+  transformed: ReadableStream<UIMessageChunk>;
+  done: Promise<void>;
+} {
+  const redactor = createPIIStreamRedactor();
+  let resolveDone: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+
+  const reader = source.getReader();
+  const transformed = new ReadableStream<UIMessageChunk>({
+    async pull(controller) {
+      try {
+        const { value, done: ended } = await reader.read();
+        if (ended) {
+          const tail = redactor.end();
+          if (tail) {
+            controller.enqueue({ type: 'text-delta', id: 'pii-tail', delta: tail } as UIMessageChunk);
+          }
+          controller.close();
+          resolveDone();
+          return;
+        }
+        if (value && (value as any).type === 'text-delta') {
+          const safe = redactor.push(String((value as any).delta || ''));
+          if (safe) controller.enqueue({ ...(value as any), delta: safe } as UIMessageChunk);
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        controller.error(err);
+        resolveDone();
+      }
+    },
+    cancel() {
+      reader.cancel().catch(() => {});
+      resolveDone();
+    },
+  });
+
+  return { transformed, done };
+}
+
+export const POST = withAuthAndRateLimit(async (req, authCtx) => {
+  // Load client-supplied dynamic environment keys (parity with completions +
+  // the Phase-4 skill/integration credentials).
+  for (const key of [
+    'GEMINI_API_KEY',
+    'UNSTRUCTURED_API_KEY',
+    'MISTRAL_API_KEY',
+    'TAVILY_API_KEY',
+    'SERPER_API_KEY',
+    'BRAVE_API_KEY',
+    'SLACK_BOT_TOKEN',
+    'GITHUB_TOKEN',
+    'GH_TOKEN',
+    'RESEND_API_KEY',
+    'SMTP_HOST',
+    'SMTP_PORT',
+    'SMTP_USER',
+    'SMTP_PASS',
+    'SMTP_FROM',
+    'RESEND_FROM',
+    'EMAIL_FROM',
+    'DATABASE_URL',
+    'POSTGRES_URL',
+    'QDRANT_URL',
+    'QDRANT_API_KEY',
+  ]) {
+    getEnv(key, req);
+  }
+
   const modelConfig = parseModelConfigFromRequest(req);
 
   try {
+    const chatDenied = await guardPermission(authCtx, 'chat:use');
+    if (chatDenied) return chatDenied;
+
     const body = await req.json();
     const tenantId = authCtx.tenantId;
-    const { prompt, mode = 'hybrid', collectionIds, model: requestedModel } = body;
+    const {
+      prompt,
+      mode = 'hybrid',
+      collectionIds,
+      model: requestedModel,
+      approvedToolCall,
+      conversationId,
+      messages: clientMessages,
+    } = body;
 
-    // Resolve model name from request, custom header (parsed above), or settings.
-    // The header precedence is preserved: an explicit per-call `model` body field
-    // still wins; otherwise the configured chatStreamModel is used.
+    if (!prompt || typeof prompt !== 'string') {
+      return NextResponse.json(
+        { error: 'نص السؤال مطلوب (Prompt is required)', code: '400_MISSING_PROMPT' },
+        { status: 400 },
+      );
+    }
+
+    // Resolve model: explicit body field > x-ai-model-config header > settings.
     let targetModel = requestedModel;
     if (!targetModel) {
       const customConfigHeader = req.headers.get('x-ai-model-config');
       if (customConfigHeader) {
         try {
-          const parsed = JSON.parse(customConfigHeader);
-          targetModel = parsed.chatStreamModel;
+          targetModel = JSON.parse(customConfigHeader).chatStreamModel;
         } catch {}
       }
     }
-    if (!targetModel) {
-      targetModel = getAiModel('chatStreamModel');
-    }
+    if (!targetModel) targetModel = getAiModel('chatStreamModel');
 
     // Stage 1: Auth check
-    const authCheck = await HookHarness.run('pre_auth', { tenantId });
+    const authCheck = await HookHarness.run('pre_auth', { tenantId, userId: authCtx.userId });
     if (!authCheck.allow) {
-      return NextResponse.json({ error: authCheck.reason, code: authCheck.code }, { status: 403 });
+      return blockedStreamResponse(authCheck.reason || 'غير مصرح');
     }
 
     // Stage 2: Inference Check (Prompt injection defense)
     const inferenceCheck = await HookHarness.run('pre_inference', { tenantId, mode, prompt });
     if (!inferenceCheck.allow) {
-      return NextResponse.json({ error: inferenceCheck.reason, code: inferenceCheck.code }, { status: 400 });
+      return blockedStreamResponse(inferenceCheck.reason || 'تم حظر الطلب');
     }
 
-    // Run retrieval + streaming generation inside the model-config request
-    // scope so the RAG engine (embedding/HyDE/reranker) resolves the same
-    // models the client configured.
     return await runWithModelConfig(modelConfig, async () => {
-      // Hybrid Search Retrieval — topK is left to the engine (semantic-filter
-      // based, no fixed cap); see lib/rag/engine.ts.
-      const searchResult = await performHybridSearch({
-        query: prompt,
-        tenantId,
-        collectionIds,
-      });
+      const searchResult = await performHybridSearch({ query: prompt, tenantId, collectionIds });
 
-      // Hook Stage 2b: Pre-Generation — scan retrieved chunks for indirect prompt
-      // injection before they are injected into the model context. Mirrors the
-      // chat/completions route so a hostile document in a tenant's corpus cannot
-      // override the model's instructions once it reaches the streamed response.
+      // Stage 2b: Pre-Generation — indirect prompt injection scan over chunks.
       const preGenCheck = await HookHarness.run('pre_generation', {
         tenantId,
         userId: authCtx.userId,
@@ -86,58 +201,197 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
         })),
       });
       if (!preGenCheck.allow) {
-        return NextResponse.json({ error: preGenCheck.reason, code: preGenCheck.code }, { status: 400 });
+        return blockedStreamResponse(preGenCheck.reason || 'تم حظر المحتوى');
       }
 
+      const citations = buildCitations(searchResult.chunks);
       const contextText = searchResult.chunks
-        .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle}]: ${c.content}`)
+        .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle} (صفحة ${c.pageNumber || 1})]:\n${c.content}`)
         .join('\n\n');
 
-      // PII redaction on the streamed output. The chat/completions route runs the
-      // post-inference H9 PIIRedactor over the full response as one string; this
-      // route emits text deltas and would bypass H9, leaking emails/phones to
-      // the client. We pipe each delta through a buffered redactor that defers
-      // redaction of partial PII patterns until they terminate, so patterns that
-      // are split across deltas are still intercepted without leaking trailing
-      // characters.
-      const redactor = createPIIStreamRedactor();
+      const modelAlias = targetModel || getAiModel('chatStreamModel');
+      const providerConfigured = await isModelRefConfigured(modelAlias);
 
-      const result = streamText({
-        model: google(targetModel),
-        system: `أنت مساعد ذكي لمنصة OmniRAG. استعن بالمستندات المرفقة أدناه للإجابة على استفسار المستخدم بوضوح ودقة عالية:\n\nالمستندات:\n${contextText}`,
-        prompt,
-        onEnd: async (event) => {
-          // Re-run post-inference on the full LLM text so audit-log entries have
-          // parity with /chat/completions. Redaction is already applied inline to
-          // the streamed output above; this hook is for the audit trail only.
+      const stream = createUIMessageStream<UIMessage>({
+        originalMessages: Array.isArray(clientMessages) ? clientMessages : undefined,
+        onError: () => 'حدث خطأ أثناء البث. حاول مرة أخرى.',
+        execute: async ({ writer }) => {
+          // Citations first so the UI can attach them as soon as text starts.
+          writer.write({ type: 'data-citations', data: citations as unknown as JSONValue });
+
+          if (!providerConfigured) {
+            // Honest degradation — same contract as the completions fallback.
+            const notice = `بناءً على المستندات المسترجعة من النظام (${searchResult.chunks.length} قطعة):\n\n${
+              searchResult.chunks[0]?.content || 'تم استرجاع السجلات المطلوبة بنجاح.'
+            }\n\n[إشعار المحرك: لا يوجد مزود نماذج مهيأ لهذا المستأجر — أضف مفتاح مزود من الإعدادات لتفعيل التوليد الحي.]`;
+            writer.write({ type: 'text-start', id: 'fallback-text' });
+            writer.write({ type: 'text-delta', id: 'fallback-text', delta: notice });
+            writer.write({ type: 'text-end', id: 'fallback-text' });
+            writer.write({
+              type: 'data-meta',
+              data: { modelUsed: modelAlias, tokensUsed: { input: 0, output: 0 }, configured: false },
+            });
+            return;
+          }
+
+          // Conversation memory from the client's UIMessage history (last 10),
+          // converted to model messages; falls back to an empty transcript.
+          let historyMessages: ModelMessage[] = [];
+          if (Array.isArray(clientMessages) && clientMessages.length > 1) {
+            try {
+              historyMessages = await convertToModelMessages(clientMessages.slice(0, -1).slice(-10));
+            } catch {
+              historyMessages = [];
+            }
+          }
+
+          const docsBlock = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}`;
+          let userContent = `${docsBlock}\n\nسؤال المستخدم: ${prompt}`;
+
+          const alreadyExecutedToolCalls: MCPToolCall[] = [];
+
+          // Human-approved side-effect call — executed through the unified MCP
+          // dispatcher (audit/timeouts/simulation stamping identical everywhere).
+          if (approvedToolCall) {
+            const outcome = await runToolSafely(
+              tenantId,
+              approvedToolCall.scopedToolName,
+              approvedToolCall.inputParams,
+              approvedToolCall.conversationId || conversationId,
+            );
+            alreadyExecutedToolCalls.push({
+              ...approvedToolCall,
+              status: outcome.isError ? 'failed' : 'completed',
+              outputResult: outcome.result,
+              latencyMs: outcome.latencyMs,
+              timestamp: new Date().toISOString(),
+            });
+            userContent += `\n\n[تأكيد تنفيذ أداة الـ MCP]: تمت الموافقة البشرية بنجاح وتم إرجاع نتيجة الأداة (${approvedToolCall.scopedToolName}):\n${JSON.stringify(outcome.result, null, 2)}\n\nيرجى دمج هذه البيانات وصياغة الرد النهائي للمستخدم.${
+              outcome.isError ? '\nملاحظة: فشل تنفيذ الأداة — وضّح ذلك للمستخدم بلطف واقترح بديلا.' : ''
+            }`;
+          }
+
+          // Tenant tool surface (shared with the completions path).
+          const { toolsToOffer, requireApprovalTools, customSchemas } = await collectTenantMcpTools(tenantId, mode);
+
+          let aiTools: ToolSet | undefined;
+          const pendingApprovalRef: { value: MCPToolCall | null } = { value: null };
+          if (!approvedToolCall && toolsToOffer.length > 0) {
+            aiTools = buildTenantMcpTools(toolsToOffer, customSchemas, {
+              tenantId,
+              requireApprovalTools,
+              runSafely: (toolName, args) => runToolSafely(tenantId, toolName, args),
+              onAutoExecuted: (info) => {
+                alreadyExecutedToolCalls.push({
+                  id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                  tenantId,
+                  scopedToolName: info.toolName,
+                  inputParams: info.args,
+                  outputResult: info.outputResult,
+                  latencyMs: info.latencyMs,
+                  status: info.isError ? 'failed' : 'completed',
+                  hasSideEffect: info.hasSideEffect,
+                  timestamp: new Date().toISOString(),
+                });
+              },
+              onPendingApproval: (toolName, args) => {
+                pendingApprovalRef.value = {
+                  id: `tc-${Date.now()}`,
+                  tenantId,
+                  scopedToolName: toolName,
+                  inputParams: args,
+                  latencyMs: 0,
+                  status: 'pending',
+                  hasSideEffect: true,
+                  timestamp: new Date().toISOString(),
+                };
+              },
+            });
+          }
+
+          const result = streamText({
+            model: await resolveLanguageModel(modelAlias),
+            system: buildAgenticSystemInstruction(modelAlias, mode, toolsToOffer),
+            messages: [...historyMessages, { role: 'user', content: userContent }],
+            ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),
+            stopWhen: stepCountIs(5),
+            temperature: 0.2,
+          });
+
+          // Stream model output through the PII redactor, then merge.
+          const { transformed, done } = redactPiiChunks(result.toUIMessageStream() as ReadableStream<UIMessageChunk>);
+          writer.merge(transformed);
+          await done;
+
+          // Trailing structured parts (consumed by ChatStudio's mapper).
+          if (pendingApprovalRef.value) {
+            writer.write({
+              type: 'data-pending-tool',
+              data: pendingApprovalRef.value as unknown as JSONValue,
+            });
+          }
+          if (alreadyExecutedToolCalls.length > 0) {
+            writer.write({
+              type: 'data-tool-calls',
+              data: alreadyExecutedToolCalls as unknown as JSONValue,
+            });
+          }
+
+          let fullText = '';
+          let tokensUsed = { input: 0, output: 0 };
+          try {
+            fullText = await result.text;
+            const usage = await result.usage;
+            tokensUsed = { input: usage?.inputTokens ?? 0, output: usage?.outputTokens ?? 0 };
+          } catch {
+            // Stream aborted/consumed — metadata stays zeroed.
+          }
+
+          writer.write({
+            type: 'data-meta',
+            data: { modelUsed: modelAlias, tokensUsed, configured: true },
+          });
+
+          // Audit parity with /chat/completions (H9 post-inference over full text).
           await HookHarness.run('post_inference', {
             tenantId,
             userId: authCtx.userId,
-            output: event.text,
+            output: fullText,
           });
-        },
-      });
 
-      const redactedTextStream = new ReadableStream<string>({
-        async start(controller) {
-          try {
-            for await (const delta of result.textStream) {
-              const safe = redactor.push(delta);
-              if (safe) controller.enqueue(safe);
+          // Best-effort AI follow-up suggestions after the answer completes.
+          if (fullText) {
+            try {
+              const suggestionsResult = await generateTextResilient({
+                model: modelAlias,
+                system:
+                  'أنت مساعد يولد أسئلة متابعة سياقية ذكية. أجب بـ 3 أسئلة فقط، كل سؤال في سطر منفصل، بدون أي نص إضافي أو ترقيم أو رموز.',
+                prompt: `بناءً على الإجابة التالية والمحادثة، اقترح 3 أسئلة متابعة سياقية قصيرة ومفيدة يمكن للمستخدم أن يسألها. أعد الأسئلة فقط، كل سؤال في سطر منفصل، بدون ترقيم أو نقاط:\n\nالإجابة: ${fullText.substring(0, 500)}\n\nسؤال المستخدم: ${prompt}`,
+                temperature: 0.7,
+                maxRetries: 1,
+              });
+              const suggestions = (suggestionsResult?.text || '')
+                .split('\n')
+                .map((s) => s.replace(/^[\d.\-*\s]+/, '').trim())
+                .filter((s) => s.length > 10 && s.length < 150)
+                .slice(0, 4);
+              if (suggestions.length > 0) {
+                writer.write({ type: 'data-suggestions', data: suggestions });
+              }
+            } catch {
+              // Suggestions are an optional enhancement — never break the stream.
             }
-            const tail = redactor.end();
-            if (tail) controller.enqueue(tail);
-          } catch (err) {
-            controller.error(err);
-            return;
           }
-          controller.close();
         },
       });
 
-      return createTextStreamResponse({ stream: redactedTextStream });
+      return createUIMessageStreamResponse({ stream });
     });
   } catch (err: unknown) {
-    return serverErrorResponse('chat/stream', err);
+    console.error('API Error in /api/v1/chat/stream:', err);
+    return NextResponse.json(
+      { error: 'حدث خطأ داخلي في المعالجة (Internal Processing Error)', code: '500_INTERNAL_ERROR' },
+      { status: 500 },
+    );
   }
 });
