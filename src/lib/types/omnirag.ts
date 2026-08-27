@@ -1,9 +1,18 @@
 export type TenantId = string;
 
+/**
+ * Subscription plan ids (Phase 7). `individual | team | business |
+ * enterprise` are the active catalog; `starter | pro` are legacy values kept
+ * for existing rows — planService.normalizePlanId maps them forward
+ * (starter → individual, pro → business) without a data migration.
+ */
+export type PlanId = 'individual' | 'team' | 'business' | 'enterprise';
+export type LegacyPlanId = 'starter' | 'pro';
+
 export interface Tenant {
   id: TenantId;
   name: string;
-  plan: 'enterprise' | 'pro' | 'starter';
+  plan: PlanId | LegacyPlanId;
   createdAt: string;
   settings: TenantSettings;
 }
@@ -47,6 +56,54 @@ export interface SessionRecord {
   tenantId: string;
   expiresAt: string; // ISO timestamp
   createdAt: string;
+}
+
+/**
+ * A tenant API key for headless/external access (REST + outbound MCP).
+ *
+ * Only the SHA-256 hash of the full key is persisted — the plaintext key is
+ * shown exactly once at creation time and can never be retrieved again.
+ * `prefix` holds a short non-secret prefix (`omnirag_live_ab3f…`) so the UI
+ * can list keys without holding any recoverable secret. Lookup on inbound
+ * requests hashes the presented key and matches `keyHash`.
+ */
+export interface ApiKeyRecord {
+  id: string;
+  tenantId: string;
+  userId: string;
+  name: string;
+  prefix: string;
+  keyHash: string;
+  /** Permission scopes granted to this key; empty/omitted = full tenant access. */
+  scopes: string[];
+  /** Per-key request ceiling (requests/minute). null = tenant default applies. */
+  rateLimitPerMinute: number | null;
+  /**
+   * Outbound MCP tool whitelist. null = every tenant-enabled tool is exposed;
+   * a non-empty array restricts tools/list + tools/call to the listed names.
+   */
+  mcpTools: string[] | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Per-tenant AI provider credentials (encrypted at rest). `credentials` holds
+ * AES-256-GCM ciphertext values produced by encryptToken(); decrypt only on the
+ * trusted server path, never serialize to API responses.
+ */
+export interface ProviderCredentialRecord {
+  id: string;
+  tenantId: string;
+  providerId: string;
+  /** Encrypted credential map (apiKey, organizationId, …). */
+  credentials: Record<string, string>;
+  baseUrl: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DocumentVersion {
@@ -333,4 +390,32 @@ export interface SearchResult {
     lexicalMatches: number;
     fusionCount: number;
   };
+}
+
+/**
+ * Outbound webhook event names (Phase 6). Endpoints subscribe to a subset;
+ * an empty subscription means "all events".
+ */
+export const WEBHOOK_EVENTS = ['document.indexed', 'document.deleted', 'sync.completed'] as const;
+export type WebhookEventName = (typeof WEBHOOK_EVENTS)[number];
+
+/**
+ * A tenant's outbound webhook endpoint. `secretEncrypted` holds AES-256-GCM
+ * ciphertext (encryptToken format) of the HMAC-SHA256 signing secret — the
+ * plaintext is returned exactly once at creation/regeneration and is only
+ * ever decrypted on the dispatch path to compute signatures.
+ */
+export interface WebhookEndpoint {
+  id: string;
+  tenantId: string;
+  name: string;
+  url: string;
+  secretEncrypted: string;
+  /** Subscribed events; empty array = all events. */
+  events: WebhookEventName[];
+  enabled: boolean;
+  lastDeliveryAt: string | null;
+  lastDeliveryStatus: 'success' | 'failed' | null;
+  createdAt: string;
+  updatedAt: string;
 }

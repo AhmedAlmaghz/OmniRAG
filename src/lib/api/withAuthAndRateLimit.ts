@@ -3,6 +3,7 @@ import { verifyApiAuth, AuthenticatedContext } from '../auth/apiAuth';
 import { checkRateLimit } from '../security/rateLimiter';
 import { getEnv } from '../env/runtimeEnv';
 import { db } from '../storage/db';
+import { runWithRequestContext } from '../config/requestContext';
 
 type ApiHandler = (req: NextRequest, authCtx: AuthenticatedContext, props?: any) => Promise<Response | NextResponse>;
 
@@ -48,8 +49,13 @@ export function withAuthAndRateLimit(handler: ApiHandler, options?: { limit?: nu
         return unauthorizedRes;
       }
 
-      // 4. Execution
-      return await handler(req, authCtx, props);
+      // 4. Execution — bind the authenticated identity so downstream server
+      //    code (provider credentials, tenant config, audit) can resolve the
+      //    tenant without threading it through every signature.
+      return await runWithRequestContext(
+        { tenantId: authCtx.tenantId, userId: authCtx.userId, apiKeyId: authCtx.apiKeyId },
+        () => handler(req, authCtx, props),
+      );
     } catch (err) {
       console.error('[withAuthAndRateLimit] Unexpected error:', err);
       // Never leak internal error details to clients

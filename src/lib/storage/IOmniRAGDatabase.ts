@@ -14,6 +14,9 @@ import {
   Tenant,
   User,
   SessionRecord,
+  ApiKeyRecord,
+  ProviderCredentialRecord,
+  WebhookEndpoint,
   Document,
   DocumentVersion,
   DocumentChunk,
@@ -35,6 +38,7 @@ export interface IOmniRAGDatabase {
 
   // Sources
   getSources(tenantId: string): Promise<SourceConnector[]>;
+  getScheduledSources(): Promise<Array<{ id: string; tenantId: string; syncSchedule: string }>>;
   getSourceById(id: string, tenantId: string): Promise<SourceConnector | undefined>;
   addSource(source: SourceConnector): Promise<void>;
   updateSource(id: string, updates: Partial<SourceConnector>, tenantId: string): Promise<SourceConnector | undefined>;
@@ -119,10 +123,48 @@ export interface IOmniRAGDatabase {
   createUser(user: User): Promise<void>;
   createTenant(tenant: Tenant): Promise<void>;
   getTenant(tenantId: string): Promise<Tenant | undefined>;
+  findTenantIdBySsoEmailDomain(domain: string): Promise<string | undefined>;
   createSession(session: SessionRecord): Promise<void>;
   getSession(token: string): Promise<SessionRecord | undefined>;
   deleteSession(token: string): Promise<void>;
+  deleteTenantSessionsForUser(tenantId: string, userId: string): Promise<void>;
   deleteExpiredSessions(): Promise<void>;
+
+  // API keys (headless/external access — Bearer auth)
+  createApiKey(key: ApiKeyRecord): Promise<void>;
+  listApiKeys(tenantId: string): Promise<ApiKeyRecord[]>;
+  getApiKeyByHash(keyHash: string): Promise<ApiKeyRecord | undefined>;
+  revokeApiKey(id: string, tenantId: string): Promise<void>;
+  /** Best-effort last-used stamp; MUST NOT throw into the auth hot path. */
+  touchApiKeyLastUsed(id: string, timestamp: string): Promise<void>;
+
+  // AI provider credentials (per-tenant, encrypted at rest)
+  upsertProviderCredentials(record: ProviderCredentialRecord): Promise<void>;
+  getProviderCredentials(tenantId: string, providerId: string): Promise<ProviderCredentialRecord | undefined>;
+  listProviderCredentials(tenantId: string): Promise<ProviderCredentialRecord[]>;
+  deleteProviderCredentials(tenantId: string, providerId: string): Promise<void>;
+
+  // Webhook endpoints (Phase 6 — outbound event notifications)
+  createWebhookEndpoint(endpoint: WebhookEndpoint): Promise<void>;
+  listWebhookEndpoints(tenantId: string): Promise<WebhookEndpoint[]>;
+  getWebhookEndpointById(id: string, tenantId: string): Promise<WebhookEndpoint | undefined>;
+  updateWebhookEndpoint(
+    id: string,
+    tenantId: string,
+    patch: Partial<
+      Pick<
+        WebhookEndpoint,
+        'name' | 'url' | 'secretEncrypted' | 'events' | 'enabled' | 'lastDeliveryAt' | 'lastDeliveryStatus'
+      >
+    >,
+  ): Promise<void>;
+  deleteWebhookEndpoint(id: string, tenantId: string): Promise<void>;
+
+  // Tenant settings (server-side config of record; see tenantConfigService)
+  updateTenantSettings(tenantId: string, settings: Partial<Tenant['settings']>): Promise<Tenant | undefined>;
+
+  // Subscription plan (Phase 7 — quota catalog in planService)
+  updateTenantPlan(tenantId: string, plan: Tenant['plan']): Promise<Tenant | undefined>;
 }
 
 export type { Tenant, User, SessionRecord };

@@ -192,3 +192,128 @@ export const sessions = pgTable('sessions', {
   expiresAt: varchar('expires_at', { length: 100 }).notNull(),
   createdAt: varchar('created_at', { length: 100 }).notNull(),
 });
+
+// 14. API Keys Table (headless/external access — REST + outbound MCP)
+// Only the SHA-256 hash of the full key is stored; the plaintext is shown
+// once at creation. Lookup hashes the presented Bearer key and matches keyHash.
+export const apiKeys = pgTable('api_keys', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  userId: varchar('user_id', { length: 100 }).notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  prefix: varchar('prefix', { length: 30 }).notNull(),
+  keyHash: varchar('key_hash', { length: 100 }).notNull(),
+  scopes: jsonb('scopes').default([]),
+  rateLimitPerMinute: integer('rate_limit_per_minute'),
+  mcpTools: jsonb('mcp_tools'),
+  expiresAt: varchar('expires_at', { length: 100 }),
+  lastUsedAt: varchar('last_used_at', { length: 100 }),
+  revokedAt: varchar('revoked_at', { length: 100 }),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 15. Provider Credentials Table (per-tenant AI provider keys, encrypted)
+// `credentials` values are AES-256-GCM ciphertext (encryptToken format).
+export const providerCredentials = pgTable('provider_credentials', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  providerId: varchar('provider_id', { length: 100 }).notNull(),
+  credentials: jsonb('credentials').default({}),
+  baseUrl: text('base_url'),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+  updatedAt: varchar('updated_at', { length: 100 }).notNull(),
+});
+
+// 16. Memberships Table (Phase 5 — user ↔ tenant + role)
+// A user may belong to many tenants; the session's tenantId picks the active
+// one. role ∈ owner|admin|editor|viewer (see lib/auth/permissions.ts).
+export const memberships = pgTable('memberships', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  userId: varchar('user_id', { length: 100 }).notNull(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  role: varchar('role', { length: 20 }).notNull().default('viewer'),
+  status: varchar('status', { length: 20 }).notNull().default('active'),
+  invitedBy: varchar('invited_by', { length: 100 }),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 17. Invitations Table (Phase 5 — email + token + expiry)
+// status ∈ pending|accepted|revoked|expired. token is CSPRNG-random and
+// single-use; accepting it converts the invitation into a membership.
+export const invitations = pgTable('invitations', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  email: varchar('email', { length: 255 }).notNull(),
+  role: varchar('role', { length: 20 }).notNull().default('viewer'),
+  token: varchar('token', { length: 100 }).notNull(),
+  invitedBy: varchar('invited_by', { length: 100 }).notNull(),
+  expiresAt: varchar('expires_at', { length: 100 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 18. Teams Table (Phase 5)
+export const teams = pgTable('teams', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  description: text('description'),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 19. Team Members Table (Phase 5)
+export const teamMembers = pgTable('team_members', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  teamId: varchar('team_id', { length: 100 }).notNull(),
+  userId: varchar('user_id', { length: 100 }).notNull(),
+  addedBy: varchar('added_by', { length: 100 }),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 20. Resource Shares Table (Phase 5)
+// Grants a user or team read/edit on a specific resource (collection,
+// conversation, document) independent of their tenant-wide role. linkToken,
+// when set, enables an unauthenticated read-only share link (/api/v1/share).
+export const resourceShares = pgTable('resource_shares', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  resourceType: varchar('resource_type', { length: 50 }).notNull(),
+  resourceId: varchar('resource_id', { length: 100 }).notNull(),
+  granteeType: varchar('grantee_type', { length: 20 }).notNull(),
+  granteeId: varchar('grantee_id', { length: 100 }).notNull(),
+  permission: varchar('permission', { length: 20 }).notNull().default('read'),
+  linkToken: varchar('link_token', { length: 100 }),
+  sharedBy: varchar('shared_by', { length: 100 }).notNull(),
+  expiresAt: varchar('expires_at', { length: 100 }),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 21. SSO OIDC Flows Table (Phase 5 — short-lived authorization state)
+// One row per in-flight OIDC authorization code + PKCE flow; consumed on
+// callback and garbage-collected by expiry.
+export const ssoFlows = pgTable('sso_flows', {
+  state: varchar('state', { length: 100 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  codeVerifier: varchar('code_verifier', { length: 200 }).notNull(),
+  redirectUri: text('redirect_uri').notNull(),
+  expiresAt: varchar('expires_at', { length: 100 }).notNull(),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+});
+
+// 22. Webhook Endpoints Table (Phase 6 — outbound event notifications)
+// `secret` holds AES-256-GCM ciphertext (encryptToken format) of the HMAC
+// signing secret; decrypt only on the dispatch path, never serialize out.
+export const webhookEndpoints = pgTable('webhook_endpoints', {
+  id: varchar('id', { length: 100 }).primaryKey(),
+  tenantId: varchar('tenant_id', { length: 100 }).notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  url: text('url').notNull(),
+  secret: text('secret').notNull(),
+  events: jsonb('events').default([]),
+  enabled: boolean('enabled').notNull().default(true),
+  lastDeliveryAt: varchar('last_delivery_at', { length: 100 }),
+  lastDeliveryStatus: varchar('last_delivery_status', { length: 20 }),
+  createdAt: varchar('created_at', { length: 100 }).notNull(),
+  updatedAt: varchar('updated_at', { length: 100 }).notNull(),
+});

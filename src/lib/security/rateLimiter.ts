@@ -67,3 +67,36 @@ export function checkRateLimit(
   record.count += 1;
   return { success: true };
 }
+
+/**
+ * Request-independent sliding-window check keyed by an arbitrary bucket
+ * identifier (e.g. `apikey:${keyId}` for per-API-key ceilings). Shares the
+ * same in-memory store and per-process caveats as checkRateLimit, but needs
+ * no NextRequest — use it in auth layers and background services where the
+ * caller already knows the credential/account identity.
+ */
+export function checkKeyedRateLimit(
+  bucketKey: string,
+  limit: number,
+  windowMs: number = 60000,
+): { success: boolean; retryAfterMs?: number } {
+  const now = Date.now();
+  const record = store[bucketKey];
+
+  if (!record || now > record.resetAt) {
+    store[bucketKey] = { count: 1, resetAt: now + windowMs };
+    return { success: true };
+  }
+
+  if (record.count >= limit) {
+    return { success: false, retryAfterMs: record.resetAt - now };
+  }
+
+  record.count += 1;
+  return { success: true };
+}
+
+/** Test/maintenance hook — clears all in-memory rate limit buckets. */
+export function resetRateLimitStore(): void {
+  for (const key of Object.keys(store)) delete store[key];
+}

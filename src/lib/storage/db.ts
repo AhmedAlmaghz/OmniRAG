@@ -2,6 +2,9 @@ import {
   Tenant,
   User,
   SessionRecord,
+  ApiKeyRecord,
+  ProviderCredentialRecord,
+  WebhookEndpoint,
   Document,
   DocumentVersion,
   DocumentChunk,
@@ -30,6 +33,7 @@ import {
   deletePostgresChunksByDocument,
   getPostgresSources,
   getPostgresSourceById,
+  getPostgresScheduledSources,
   insertPostgresSource,
   deletePostgresSource,
   getPostgresSyncLogs,
@@ -55,12 +59,30 @@ import {
   insertPostgresUser,
   getPostgresTenant,
   insertPostgresTenant,
+  findPostgresTenantIdBySsoDomain,
   getPostgresSession,
   insertPostgresSession,
   deletePostgresSession,
+  deletePostgresSessionsForTenantUser,
   deleteExpiredPostgresSessions,
+  insertPostgresApiKey,
+  getPostgresApiKeys,
+  getPostgresApiKeyByHash,
+  revokePostgresApiKey,
+  touchPostgresApiKeyLastUsed,
+  upsertPostgresProviderCredentials,
+  getPostgresProviderCredentials,
+  getPostgresProviderCredentialsList,
+  deletePostgresProviderCredentials,
+  updatePostgresTenantPlan,
+  insertPostgresWebhookEndpoint,
+  getPostgresWebhookEndpoints,
+  getPostgresWebhookEndpointById,
+  updatePostgresWebhookEndpoint,
+  deletePostgresWebhookEndpoint,
+  updatePostgresTenantSettings,
 } from './postgres';
-import { upsertQdrantChunk, upsertQdrantChunks, deleteQdrantDocument, updateQdrantDocumentPayload } from './qdrant';
+import { getVectorStoreForTenant } from './vectors/registry';
 import { generateEmbedding, embedBatch } from '../rag/embedding';
 import { processYoutubeTranscript } from '../youtube/transcriptParser';
 import { processPdfWithBatchedPipeline } from '../pdf/pdfChunker';
@@ -78,6 +100,7 @@ import {
   INITIAL_SYNC_LOGS,
 } from './constants';
 import type { IOmniRAGDatabase } from './IOmniRAGDatabase';
+import { buildSkillsServer } from '../mcp/registry/skillTools';
 
 // Lazy-seeding state
 let isSeeded = false;
@@ -109,6 +132,11 @@ export class MemoryDatabase implements IOmniRAGDatabase {
   // Auth state (Postgres-only auth — replaces Firebase Auth)
   users: User[] = [];
   sessions: SessionRecord[] = [];
+  // Platform state (API keys + provider credentials)
+  apiKeys: ApiKeyRecord[] = [];
+  providerCredentials: ProviderCredentialRecord[] = [];
+  // Outbound webhooks (Phase 6)
+  webhookEndpoints: WebhookEndpoint[] = [];
 
   constructor() {
     this.mcpServers = [...INITIAL_MCP_SERVERS];
@@ -129,12 +157,21 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     this.messages = [];
     this.users = [];
     this.sessions = [];
+    this.apiKeys = [];
+    this.providerCredentials = [];
+    this.webhookEndpoints = [];
   }
 
   async getSources(tenantId: string): Promise<SourceConnector[]> {
     return this.sources
       .filter((s) => s.tenantId === tenantId)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getScheduledSources(): Promise<Array<{ id: string; tenantId: string; syncSchedule: string }>> {
+    return this.sources
+      .filter((s) => s.syncSchedule && s.syncSchedule !== 'manual')
+      .map((s) => ({ id: s.id, tenantId: s.tenantId, syncSchedule: s.syncSchedule }));
   }
 
   async getSourceById(id: string, tenantId: string): Promise<SourceConnector | undefined> {
@@ -536,6 +573,15 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     return this.tenants.find((t) => t.id === tenantId);
   }
 
+  async findTenantIdBySsoEmailDomain(domain: string): Promise<string | undefined> {
+    const normalized = domain.trim().toLowerCase();
+    const match = this.tenants.find((t) => {
+      const sso = (t.settings as any)?.ssoOidc;
+      return sso?.enabled === true && String(sso?.emailDomain || '').toLowerCase() === normalized;
+    });
+    return match?.id;
+  }
+
   async createSession(session: SessionRecord): Promise<void> {
     this.sessions = this.sessions.filter((s) => s.token !== session.token);
     this.sessions.push(session);
@@ -549,9 +595,112 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     this.sessions = this.sessions.filter((s) => s.token !== token);
   }
 
+  async deleteTenantSessionsForUser(tenantId: string, userId: string): Promise<void> {
+    this.sessions = this.sessions.filter((s) => !(s.tenantId === tenantId && s.userId === userId));
+  }
+
   async deleteExpiredSessions(): Promise<void> {
     const now = Date.now();
     this.sessions = this.sessions.filter((s) => new Date(s.expiresAt).getTime() > now);
+  }
+
+  // API keys (headless/external access — Bearer auth)
+  async createApiKey(key: ApiKeyRecord): Promise<void> {
+    this.apiKeys = this.apiKeys.filter((k) => k.id !== key.id);
+    this.apiKeys.push(key);
+  }
+
+  async listApiKeys(tenantId: string): Promise<ApiKeyRecord[]> {
+    return this.apiKeys
+      .filter((k) => k.tenantId === tenantId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getApiKeyByHash(keyHash: string): Promise<ApiKeyRecord | undefined> {
+    return this.apiKeys.find((k) => k.keyHash === keyHash);
+  }
+
+  async revokeApiKey(id: string, tenantId: string): Promise<void> {
+    const key = this.apiKeys.find((k) => k.id === id && k.tenantId === tenantId);
+    if (key) key.revokedAt = new Date().toISOString();
+  }
+
+  async touchApiKeyLastUsed(id: string, timestamp: string): Promise<void> {
+    const key = this.apiKeys.find((k) => k.id === id);
+    if (key) key.lastUsedAt = timestamp;
+  }
+
+  // AI provider credentials (per-tenant, encrypted at rest)
+  async upsertProviderCredentials(record: ProviderCredentialRecord): Promise<void> {
+    this.providerCredentials = this.providerCredentials.filter(
+      (c) => !(c.tenantId === record.tenantId && c.providerId === record.providerId),
+    );
+    this.providerCredentials.push(record);
+  }
+
+  async getProviderCredentials(tenantId: string, providerId: string): Promise<ProviderCredentialRecord | undefined> {
+    return this.providerCredentials.find((c) => c.tenantId === tenantId && c.providerId === providerId);
+  }
+
+  async listProviderCredentials(tenantId: string): Promise<ProviderCredentialRecord[]> {
+    return this.providerCredentials.filter((c) => c.tenantId === tenantId);
+  }
+
+  async deleteProviderCredentials(tenantId: string, providerId: string): Promise<void> {
+    this.providerCredentials = this.providerCredentials.filter(
+      (c) => !(c.tenantId === tenantId && c.providerId === providerId),
+    );
+  }
+
+  // Webhook endpoints (Phase 6 — outbound event notifications)
+  async createWebhookEndpoint(endpoint: WebhookEndpoint): Promise<void> {
+    this.webhookEndpoints = this.webhookEndpoints.filter((w) => w.id !== endpoint.id);
+    this.webhookEndpoints.push(endpoint);
+  }
+
+  async listWebhookEndpoints(tenantId: string): Promise<WebhookEndpoint[]> {
+    return this.webhookEndpoints
+      .filter((w) => w.tenantId === tenantId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getWebhookEndpointById(id: string, tenantId: string): Promise<WebhookEndpoint | undefined> {
+    return this.webhookEndpoints.find((w) => w.id === id && w.tenantId === tenantId);
+  }
+
+  async updateWebhookEndpoint(
+    id: string,
+    tenantId: string,
+    patch: Partial<
+      Pick<
+        WebhookEndpoint,
+        'name' | 'url' | 'secretEncrypted' | 'events' | 'enabled' | 'lastDeliveryAt' | 'lastDeliveryStatus'
+      >
+    >,
+  ): Promise<void> {
+    const endpoint = this.webhookEndpoints.find((w) => w.id === id && w.tenantId === tenantId);
+    if (!endpoint) return;
+    Object.assign(endpoint, patch, { updatedAt: new Date().toISOString() });
+  }
+
+  async deleteWebhookEndpoint(id: string, tenantId: string): Promise<void> {
+    this.webhookEndpoints = this.webhookEndpoints.filter((w) => !(w.id === id && w.tenantId === tenantId));
+  }
+
+  // Tenant settings (server-side config of record)
+  async updateTenantSettings(tenantId: string, settings: Partial<Tenant['settings']>): Promise<Tenant | undefined> {
+    const tenant = this.tenants.find((t) => t.id === tenantId);
+    if (!tenant) return undefined;
+    tenant.settings = { ...tenant.settings, ...settings };
+    return tenant;
+  }
+
+  // Subscription plan (Phase 7)
+  async updateTenantPlan(tenantId: string, plan: Tenant['plan']): Promise<Tenant | undefined> {
+    const tenant = this.tenants.find((t) => t.id === tenantId);
+    if (!tenant) return undefined;
+    tenant.plan = plan;
+    return tenant;
   }
 }
 
@@ -730,6 +879,22 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     return sourcesList;
   }
 
+  /**
+   * Cross-tenant list of connectors with a real cron schedule (not 'manual').
+   * Feeds the pg-boss scheduler reconciliation; returns scheduling fields only.
+   */
+  async getScheduledSources(): Promise<Array<{ id: string; tenantId: string; syncSchedule: string }>> {
+    if (this.useMemory) return await memoryDb.getScheduledSources();
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return await memoryDb.getScheduledSources();
+      return await getPostgresScheduledSources();
+    } catch (e) {
+      this.handleDatabaseError(e, 'getScheduledSources');
+      return await memoryDb.getScheduledSources();
+    }
+  }
+
   async getSourceById(id: string, tenantId: string): Promise<SourceConnector | undefined> {
     if (this.useMemory) return await memoryDb.getSourceById(id, tenantId);
     try {
@@ -893,7 +1058,8 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       let itemsProcessed = 1;
 
       if (source.type === 'youtube') {
-        const ytUrl = decryptedConfig?.playlistUrl || decryptedConfig?.url;
+        // channelOrVideoUrl = legacy wizard key (pre-registry catalog).
+        const ytUrl = decryptedConfig?.playlistUrl || decryptedConfig?.url || decryptedConfig?.channelOrVideoUrl;
         if (!ytUrl || typeof ytUrl !== 'string' || !ytUrl.trim()) {
           return await failSync('لا يوجد رابط فيديو مهيأ في إعدادات موصل اليوتيوب.');
         }
@@ -1214,7 +1380,8 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
           await insertPostgresDocument(updated);
 
           if (updates.collectionIds) {
-            await updateQdrantDocumentPayload(id, tenantId, { collectionIds: updates.collectionIds });
+            const vectorStore = await getVectorStoreForTenant(tenantId);
+            await vectorStore.updateDocumentPayload(id, tenantId, { collectionIds: updates.collectionIds });
           }
         } catch (e) {
           this.handleDatabaseError(e, 'updateDocument');
@@ -1230,7 +1397,8 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
     try {
       await deletePostgresDocument(id, tenantId);
-      await deleteQdrantDocument(id, tenantId);
+      const vectorStore = await getVectorStoreForTenant(tenantId);
+      await vectorStore.deleteByDocument(id, tenantId);
     } catch (extErr) {
       this.handleDatabaseError(extErr, 'deleteDocument');
     }
@@ -1331,7 +1499,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     // vectors from earlier versions kept living in Qdrant and Postgres and
     // polluted retrieval with outdated content.
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
-    await deleteQdrantDocument(documentId, tenantId);
+    await (await getVectorStoreForTenant(tenantId)).deleteByDocument(documentId, tenantId);
     await deletePostgresChunksByDocument(documentId, tenantId);
 
     const versionChunks: DocumentChunk[] = versionPageChunks.map((pageChunk, i) => ({
@@ -1419,7 +1587,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     // Replace chunks across ALL stores (memory + Qdrant + Postgres) so no
     // stale vectors from the superseded version remain searchable.
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
-    await deleteQdrantDocument(documentId, tenantId);
+    await (await getVectorStoreForTenant(tenantId)).deleteByDocument(documentId, tenantId);
     await deletePostgresChunksByDocument(documentId, tenantId);
 
     const revertChunks: DocumentChunk[] = revertPageChunks.map((pageChunk, i) => ({
@@ -1502,7 +1670,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
     // Purge the stale grid from all stores before rebuilding.
     memoryDb.chunks = memoryDb.chunks.filter((c) => !(c.documentId === documentId && c.tenantId === tenantId));
-    await deleteQdrantDocument(documentId, tenantId);
+    await (await getVectorStoreForTenant(tenantId)).deleteByDocument(documentId, tenantId);
     await deletePostgresChunksByDocument(documentId, tenantId);
 
     const chunks: DocumentChunk[] = reindexPageChunks.map((pageChunk, i) => ({
@@ -1622,21 +1790,24 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         // Warning ignored
       }
 
-      await upsertQdrantChunk({
-        id: chunk.id,
-        vector,
-        payload: {
-          tenantId: chunk.tenantId,
-          documentId: chunk.documentId,
-          documentTitle: chunk.documentTitle || '',
-          content: chunk.content,
-          chunkIndex: chunk.chunkIndex || 0,
-          pageNumber: chunk.pageNumber || 1,
-          language: chunk.language || 'ar',
-          collectionIds,
-          ...(chunk.metadata || {}),
+      const vectorStore = await getVectorStoreForTenant(chunk.tenantId);
+      await vectorStore.upsertPoints([
+        {
+          id: chunk.id,
+          vector,
+          payload: {
+            tenantId: chunk.tenantId,
+            documentId: chunk.documentId,
+            documentTitle: chunk.documentTitle || '',
+            content: chunk.content,
+            chunkIndex: chunk.chunkIndex || 0,
+            pageNumber: chunk.pageNumber || 1,
+            language: chunk.language || 'ar',
+            collectionIds,
+            ...(chunk.metadata || {}),
+          },
         },
-      });
+      ]);
     } catch (vecErr) {
       console.error('Vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
     }
@@ -1727,7 +1898,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         result.errors.push(`تعذر حفظ ${lexicalFailures} مقطع في فهرس Postgres اللفظي`);
       }
 
-      // 4. One multi-point Qdrant upsert for the whole batch.
+      // 4. One multi-point upsert to the tenant's vector store for the batch.
       const points = chunks
         .map((chunk, i) => ({
           id: chunk.id,
@@ -1751,17 +1922,18 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         result.errors.push(`فشل توليد التضمين المتجهي لـ ${embedFailed} مقطع`);
       }
 
-      const qdrantOk = await upsertQdrantChunks(points);
-      if (qdrantOk) {
+      const vectorStore = await getVectorStoreForTenant(chunks[0].tenantId);
+      const vectorOk = await vectorStore.upsertPoints(points);
+      if (vectorOk) {
         result.indexed = points.length;
         result.failed = embedFailed;
       } else {
-        // Qdrant unreachable or rejected the batch: nothing is semantically
-        // searchable yet. Report the whole batch as failed so the caller can
-        // mark the document `failed` and offer a reindex.
+        // Vector store unreachable or rejected the batch: nothing is
+        // semantically searchable yet. Report the whole batch as failed so the
+        // caller can mark the document `failed` and offer a reindex.
         result.indexed = 0;
         result.failed = chunks.length;
-        result.errors.push('تعذر الرفع إلى محرك المتجهات Qdrant — المستند غير قابل للبحث الدلالي بعد');
+        result.errors.push(`تعذر الرفع إلى محرك المتجهات (${vectorStore.nameAr}) — المستند غير قابل للبحث الدلالي بعد`);
       }
     } catch (vecErr) {
       console.error('Batch vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
@@ -1845,6 +2017,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         id: `${s.id}-${tenantId}`,
         tenantId,
       }));
+      defaultServers.push(buildSkillsServer(tenantId));
       for (const s of defaultServers) {
         await this.addMcpServer(s);
       }
@@ -1873,6 +2046,16 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       };
       await this.addMcpServer(unstructuredServer);
       serversList.push(unstructuredServer);
+    }
+
+    // Phase 4 production skills server — auto-injected for every tenant the
+    // same way as Unstructured Transform, so existing tenants pick it up
+    // without re-seeding.
+    const hasSkillsServer = serversList.some((s) => s.id.includes('mcp-omnirag-skills'));
+    if (!hasSkillsServer) {
+      const skillsServer = buildSkillsServer(tenantId);
+      await this.addMcpServer(skillsServer);
+      serversList.push(skillsServer);
     }
 
     return serversList;
@@ -2202,6 +2385,20 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     }
   }
 
+  async findTenantIdBySsoEmailDomain(domain: string): Promise<string | undefined> {
+    const memHit = await memoryDb.findTenantIdBySsoEmailDomain(domain);
+    if (this.useMemory) return memHit;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return memHit;
+      const hit = await findPostgresTenantIdBySsoDomain(domain);
+      return hit ?? memHit;
+    } catch (e) {
+      this.handleDatabaseError(e, 'findTenantIdBySsoEmailDomain');
+      return memHit;
+    }
+  }
+
   async createSession(session: SessionRecord): Promise<void> {
     await memoryDb.createSession(session);
     if (this.useMemory) return;
@@ -2239,6 +2436,18 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     }
   }
 
+  async deleteTenantSessionsForUser(tenantId: string, userId: string): Promise<void> {
+    await memoryDb.deleteTenantSessionsForUser(tenantId, userId);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await deletePostgresSessionsForTenantUser(tenantId, userId);
+    } catch (e) {
+      this.handleDatabaseError(e, 'deleteTenantSessionsForUser');
+    }
+  }
+
   async deleteExpiredSessions(): Promise<void> {
     await memoryDb.deleteExpiredSessions();
     if (this.useMemory) return;
@@ -2248,6 +2457,229 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       await deleteExpiredPostgresSessions();
     } catch (e) {
       this.handleDatabaseError(e, 'deleteExpiredSessions');
+    }
+  }
+
+  // API keys (headless/external access — Bearer auth)
+  async createApiKey(key: ApiKeyRecord): Promise<void> {
+    await memoryDb.createApiKey(key);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await insertPostgresApiKey(key);
+    } catch (e) {
+      this.handleDatabaseError(e, 'createApiKey');
+    }
+  }
+
+  async listApiKeys(tenantId: string): Promise<ApiKeyRecord[]> {
+    const mem = await memoryDb.listApiKeys(tenantId);
+    if (this.useMemory) return mem;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return mem;
+      const rows = await getPostgresApiKeys(tenantId);
+      return rows.length > 0 ? rows : mem;
+    } catch (e) {
+      this.handleDatabaseError(e, 'listApiKeys');
+      return mem;
+    }
+  }
+
+  async getApiKeyByHash(keyHash: string): Promise<ApiKeyRecord | undefined> {
+    if (this.useMemory) return await memoryDb.getApiKeyByHash(keyHash);
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return await memoryDb.getApiKeyByHash(keyHash);
+      const key = await getPostgresApiKeyByHash(keyHash);
+      return key ?? (await memoryDb.getApiKeyByHash(keyHash));
+    } catch (e) {
+      this.handleDatabaseError(e, 'getApiKeyByHash');
+      return await memoryDb.getApiKeyByHash(keyHash);
+    }
+  }
+
+  async revokeApiKey(id: string, tenantId: string): Promise<void> {
+    await memoryDb.revokeApiKey(id, tenantId);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await revokePostgresApiKey(id, tenantId);
+    } catch (e) {
+      this.handleDatabaseError(e, 'revokeApiKey');
+    }
+  }
+
+  async touchApiKeyLastUsed(id: string, timestamp: string): Promise<void> {
+    await memoryDb.touchApiKeyLastUsed(id, timestamp);
+    if (this.useMemory) return;
+    try {
+      if (this.useMemory) return;
+      await touchPostgresApiKeyLastUsed(id, timestamp);
+    } catch (e) {
+      // Best-effort telemetry — never surface into the auth path.
+      console.warn('[db] touchApiKeyLastUsed skipped:', (e as Error)?.message);
+    }
+  }
+
+  // AI provider credentials (per-tenant, encrypted at rest)
+  async upsertProviderCredentials(record: ProviderCredentialRecord): Promise<void> {
+    await memoryDb.upsertProviderCredentials(record);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await upsertPostgresProviderCredentials(record);
+    } catch (e) {
+      this.handleDatabaseError(e, 'upsertProviderCredentials');
+    }
+  }
+
+  async getProviderCredentials(tenantId: string, providerId: string): Promise<ProviderCredentialRecord | undefined> {
+    if (this.useMemory) return await memoryDb.getProviderCredentials(tenantId, providerId);
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return await memoryDb.getProviderCredentials(tenantId, providerId);
+      const row = await getPostgresProviderCredentials(tenantId, providerId);
+      return row ?? (await memoryDb.getProviderCredentials(tenantId, providerId));
+    } catch (e) {
+      this.handleDatabaseError(e, 'getProviderCredentials');
+      return await memoryDb.getProviderCredentials(tenantId, providerId);
+    }
+  }
+
+  async listProviderCredentials(tenantId: string): Promise<ProviderCredentialRecord[]> {
+    const mem = await memoryDb.listProviderCredentials(tenantId);
+    if (this.useMemory) return mem;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return mem;
+      const rows = await getPostgresProviderCredentialsList(tenantId);
+      return rows.length > 0 ? rows : mem;
+    } catch (e) {
+      this.handleDatabaseError(e, 'listProviderCredentials');
+      return mem;
+    }
+  }
+
+  async deleteProviderCredentials(tenantId: string, providerId: string): Promise<void> {
+    await memoryDb.deleteProviderCredentials(tenantId, providerId);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await deletePostgresProviderCredentials(tenantId, providerId);
+    } catch (e) {
+      this.handleDatabaseError(e, 'deleteProviderCredentials');
+    }
+  }
+
+  // Webhook endpoints (Phase 6 — outbound event notifications)
+  async createWebhookEndpoint(endpoint: WebhookEndpoint): Promise<void> {
+    await memoryDb.createWebhookEndpoint(endpoint);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await insertPostgresWebhookEndpoint(endpoint);
+    } catch (e) {
+      this.handleDatabaseError(e, 'createWebhookEndpoint');
+    }
+  }
+
+  async listWebhookEndpoints(tenantId: string): Promise<WebhookEndpoint[]> {
+    const mem = await memoryDb.listWebhookEndpoints(tenantId);
+    if (this.useMemory) return mem;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return mem;
+      const rows = await getPostgresWebhookEndpoints(tenantId);
+      return rows.length > 0 ? rows : mem;
+    } catch (e) {
+      this.handleDatabaseError(e, 'listWebhookEndpoints');
+      return mem;
+    }
+  }
+
+  async getWebhookEndpointById(id: string, tenantId: string): Promise<WebhookEndpoint | undefined> {
+    if (this.useMemory) return await memoryDb.getWebhookEndpointById(id, tenantId);
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return await memoryDb.getWebhookEndpointById(id, tenantId);
+      const row = await getPostgresWebhookEndpointById(id, tenantId);
+      return row ?? (await memoryDb.getWebhookEndpointById(id, tenantId));
+    } catch (e) {
+      this.handleDatabaseError(e, 'getWebhookEndpointById');
+      return await memoryDb.getWebhookEndpointById(id, tenantId);
+    }
+  }
+
+  async updateWebhookEndpoint(
+    id: string,
+    tenantId: string,
+    patch: Partial<
+      Pick<
+        WebhookEndpoint,
+        'name' | 'url' | 'secretEncrypted' | 'events' | 'enabled' | 'lastDeliveryAt' | 'lastDeliveryStatus'
+      >
+    >,
+  ): Promise<void> {
+    await memoryDb.updateWebhookEndpoint(id, tenantId, patch);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await updatePostgresWebhookEndpoint(id, tenantId, patch);
+    } catch (e) {
+      this.handleDatabaseError(e, 'updateWebhookEndpoint');
+    }
+  }
+
+  async deleteWebhookEndpoint(id: string, tenantId: string): Promise<void> {
+    await memoryDb.deleteWebhookEndpoint(id, tenantId);
+    if (this.useMemory) return;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return;
+      await deletePostgresWebhookEndpoint(id, tenantId);
+    } catch (e) {
+      this.handleDatabaseError(e, 'deleteWebhookEndpoint');
+    }
+  }
+
+  // Tenant settings (server-side config of record)
+  async updateTenantSettings(tenantId: string, settings: Partial<Tenant['settings']>): Promise<Tenant | undefined> {
+    const memTenant = await memoryDb.updateTenantSettings(tenantId, settings);
+    if (this.useMemory) return memTenant;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return memTenant;
+      const current = await getPostgresTenant(tenantId);
+      if (!current) return memTenant;
+      const merged = { ...current.settings, ...settings };
+      await updatePostgresTenantSettings(tenantId, JSON.stringify(merged));
+      return { ...current, settings: merged };
+    } catch (e) {
+      this.handleDatabaseError(e, 'updateTenantSettings');
+      return memTenant;
+    }
+  }
+
+  // Subscription plan (Phase 7)
+  async updateTenantPlan(tenantId: string, plan: Tenant['plan']): Promise<Tenant | undefined> {
+    const memTenant = await memoryDb.updateTenantPlan(tenantId, plan);
+    if (this.useMemory) return memTenant;
+    try {
+      await ensureSeeded();
+      if (this.useMemory) return memTenant;
+      await updatePostgresTenantPlan(tenantId, plan);
+      const current = await getPostgresTenant(tenantId);
+      return current ?? memTenant;
+    } catch (e) {
+      this.handleDatabaseError(e, 'updateTenantPlan');
+      return memTenant;
     }
   }
 }

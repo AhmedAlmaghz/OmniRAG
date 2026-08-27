@@ -198,6 +198,168 @@ export async function migrateAndSeedWithDrizzle() {
       );
     `);
 
+    // Platform tables (Phase 0): headless API keys + per-tenant AI provider
+    // credentials. key_hash is the SHA-256 of the full key — plaintext is
+    // never persisted. provider_credentials values are AES-256-GCM ciphertext.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL,
+        user_id VARCHAR(100) NOT NULL,
+        name VARCHAR(200) NOT NULL,
+        prefix VARCHAR(30) NOT NULL,
+        key_hash VARCHAR(100) NOT NULL,
+        scopes JSONB DEFAULT '[]'::jsonb,
+        rate_limit_per_minute INTEGER,
+        mcp_tools JSONB,
+        expires_at VARCHAR(100),
+        last_used_at VARCHAR(100),
+        revoked_at VARCHAR(100),
+        created_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS provider_credentials (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL,
+        provider_id VARCHAR(100) NOT NULL,
+        credentials JSONB DEFAULT '{}'::jsonb,
+        base_url TEXT,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at VARCHAR(100) NOT NULL,
+        updated_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    // Teams, memberships, invitations, resource shares and SSO flows (Phase 5).
+    // Timestamps stay varchar(100) ISO strings per the documented convention.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS memberships (
+        id VARCHAR(100) PRIMARY KEY,
+        user_id VARCHAR(100) NOT NULL,
+        tenant_id VARCHAR(100) NOT NULL,
+        role VARCHAR(20) NOT NULL DEFAULT 'viewer',
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        invited_by VARCHAR(100),
+        created_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS invitations (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        role VARCHAR(20) NOT NULL DEFAULT 'viewer',
+        token VARCHAR(100) NOT NULL,
+        invited_by VARCHAR(100) NOT NULL,
+        expires_at VARCHAR(100) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        created_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS teams (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL,
+        name VARCHAR(200) NOT NULL,
+        description TEXT,
+        created_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS team_members (
+        id VARCHAR(100) PRIMARY KEY,
+        team_id VARCHAR(100) NOT NULL,
+        user_id VARCHAR(100) NOT NULL,
+        added_by VARCHAR(100),
+        created_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS resource_shares (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL,
+        resource_type VARCHAR(50) NOT NULL,
+        resource_id VARCHAR(100) NOT NULL,
+        grantee_type VARCHAR(20) NOT NULL,
+        grantee_id VARCHAR(100) NOT NULL,
+        permission VARCHAR(20) NOT NULL DEFAULT 'read',
+        link_token VARCHAR(100),
+        shared_by VARCHAR(100) NOT NULL,
+        expires_at VARCHAR(100),
+        created_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sso_flows (
+        state VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL,
+        code_verifier VARCHAR(200) NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        expires_at VARCHAR(100) NOT NULL,
+        created_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    // Outbound webhooks (Phase 6). `secret` stores AES-256-GCM ciphertext of
+    // the HMAC signing secret (encryptToken format) — never plaintext.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS webhook_endpoints (
+        id VARCHAR(100) PRIMARY KEY,
+        tenant_id VARCHAR(100) NOT NULL,
+        name VARCHAR(200) NOT NULL,
+        url TEXT NOT NULL,
+        secret TEXT NOT NULL,
+        events JSONB DEFAULT '[]'::jsonb,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        last_delivery_at VARCHAR(100),
+        last_delivery_status VARCHAR(20),
+        created_at VARCHAR(100) NOT NULL,
+        updated_at VARCHAR(100) NOT NULL
+      );
+    `);
+
+    // Inbound Bearer auth hashes the presented key and looks up key_hash —
+    // without an index every API request would seq-scan the table. The
+    // (tenant_id, provider_id) unique index enforces one credential row per
+    // provider per tenant (upsert semantics in the credentials service).
+    await client.query(`CREATE INDEX IF NOT EXISTS api_keys_key_hash_idx ON api_keys (key_hash);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS api_keys_tenant_id_idx ON api_keys (tenant_id);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS webhook_endpoints_tenant_id_idx ON webhook_endpoints (tenant_id);`);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS provider_credentials_tenant_provider_idx
+       ON provider_credentials (tenant_id, provider_id);`,
+    );
+
+    // Phase 5 indexes: membership resolution runs on EVERY authenticated
+    // request (resolveRole), so both lookup directions must be indexed.
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS memberships_user_tenant_idx ON memberships (user_id, tenant_id);`,
+    );
+    await client.query(`CREATE INDEX IF NOT EXISTS memberships_tenant_id_idx ON memberships (tenant_id);`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS invitations_token_idx ON invitations (token);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS invitations_tenant_id_idx ON invitations (tenant_id);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS teams_tenant_id_idx ON teams (tenant_id);`);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS team_members_team_user_idx ON team_members (team_id, user_id);`,
+    );
+    await client.query(`CREATE INDEX IF NOT EXISTS team_members_user_id_idx ON team_members (user_id);`);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS resource_shares_grant_idx
+       ON resource_shares (resource_type, resource_id, grantee_type, grantee_id);`,
+    );
+    await client.query(`CREATE INDEX IF NOT EXISTS resource_shares_tenant_id_idx ON resource_shares (tenant_id);`);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS resource_shares_link_token_idx
+       ON resource_shares (link_token) WHERE link_token IS NOT NULL;`,
+    );
+
     // Ensure all Drizzle-specific table schema upgrades (missing columns) are fully processed
     await client.query(
       `ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NOT NULL DEFAULT 'file';`,
@@ -209,6 +371,10 @@ export async function migrateAndSeedWithDrizzle() {
     await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS collection_ids JSONB DEFAULT '[]'::jsonb;`);
     await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
     await client.query(`ALTER TABLE collections ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
+    // Phase 6: per-API-key rate limit ceiling (requests/minute; NULL = default)
+    // and outbound MCP tool whitelist (NULL = all tenant tools).
+    await client.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER;`);
+    await client.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS mcp_tools JSONB;`);
     // Backfill tenant_id onto any pre-existing users table from a prior
     // deployment — CREATE TABLE IF NOT EXISTS won't add the column if the
     // table already exists. DEFAULT '' satisfies NOT NULL for legacy rows.

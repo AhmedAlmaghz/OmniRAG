@@ -2,6 +2,10 @@ import {
   Tenant,
   User,
   SessionRecord,
+  ApiKeyRecord,
+  ProviderCredentialRecord,
+  WebhookEndpoint,
+  WebhookEventName,
   Document,
   DocumentChunk,
   Collection,
@@ -875,6 +879,37 @@ export async function getPostgresSourceById(id: string, tenantId: string): Promi
   }
 }
 
+/**
+ * Cross-tenant list of connectors that carry a real cron schedule (anything
+ * other than 'manual'). Used by the job scheduler to reconcile pg-boss cron
+ * entries — returns only the fields scheduling needs, never connector config.
+ */
+export async function getPostgresScheduledSources(): Promise<
+  Array<{ id: string; tenantId: string; syncSchedule: string }>
+> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return [];
+
+  const client = await p.connect();
+  try {
+    const res = await client.query(
+      `SELECT id, tenant_id, sync_schedule FROM sources
+       WHERE sync_schedule IS NOT NULL AND sync_schedule <> '' AND sync_schedule <> 'manual'`,
+    );
+    return res.rows.map((row: any) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      syncSchedule: row.sync_schedule,
+    }));
+  } catch (error) {
+    console.error('Failed to list scheduled Postgres sources:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function insertPostgresSource(source: SourceConnector) {
   await ensurePostgresTables();
   const p = getPostgresPool();
@@ -1711,6 +1746,34 @@ export async function insertPostgresTenant(tenant: Tenant): Promise<void> {
   }
 }
 
+/**
+ * Finds a tenant that has OIDC SSO enabled and bound to the given email
+ * domain. Used by the unauthenticated SSO initiate flow to resolve which
+ * workspace a corporate email belongs to. Returns only the tenant id (no
+ * settings leak). Scan is bounded by the tenants table size.
+ */
+export async function findPostgresTenantIdBySsoDomain(domain: string): Promise<string | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query(
+      `SELECT id FROM tenants
+       WHERE settings->'ssoOidc'->>'enabled' = 'true'
+         AND lower(settings->'ssoOidc'->>'emailDomain') = lower($1)
+       LIMIT 1`,
+      [domain],
+    );
+    return res.rows[0]?.id;
+  } catch (error) {
+    console.error('Failed to find tenant by SSO domain:', error);
+    return undefined;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getPostgresSession(token: string): Promise<SessionRecord | undefined> {
   await ensurePostgresTables();
   const p = getPostgresPool();
@@ -1770,6 +1833,25 @@ export async function deletePostgresSession(token: string): Promise<void> {
   }
 }
 
+/**
+ * Deletes every session a user holds for ONE tenant. Used when a member is
+ * removed from a workspace: their other workspace sessions stay intact.
+ */
+export async function deletePostgresSessionsForTenantUser(tenantId: string, userId: string): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2', [tenantId, userId]);
+  } catch (error) {
+    console.error('Failed to delete Postgres sessions for tenant user:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function deleteExpiredPostgresSessions(): Promise<void> {
   await ensurePostgresTables();
   const p = getPostgresPool();
@@ -1779,6 +1861,412 @@ export async function deleteExpiredPostgresSessions(): Promise<void> {
     await client.query('DELETE FROM sessions WHERE expires_at < $1', [new Date().toISOString()]);
   } catch (error) {
     console.error('Failed to delete expired Postgres sessions:', error);
+  } finally {
+    client.release();
+  }
+}
+
+// --- API keys (headless/external access) -----------------------------------
+
+function mapApiKeyRow(row: any): ApiKeyRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    userId: row.user_id,
+    name: row.name,
+    prefix: row.prefix,
+    keyHash: row.key_hash,
+    scopes: Array.isArray(row.scopes) ? row.scopes : [],
+    rateLimitPerMinute:
+      row.rate_limit_per_minute === null || row.rate_limit_per_minute === undefined
+        ? null
+        : Number(row.rate_limit_per_minute),
+    mcpTools: Array.isArray(row.mcp_tools) ? row.mcp_tools : null,
+    expiresAt: row.expires_at || null,
+    lastUsedAt: row.last_used_at || null,
+    revokedAt: row.revoked_at || null,
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertPostgresApiKey(key: ApiKeyRecord): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query(
+      `INSERT INTO api_keys (id, tenant_id, user_id, name, prefix, key_hash, scopes, rate_limit_per_minute, mcp_tools, expires_at, last_used_at, revoked_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (id) DO NOTHING;`,
+      [
+        key.id,
+        key.tenantId,
+        key.userId,
+        key.name,
+        key.prefix,
+        key.keyHash,
+        JSON.stringify(key.scopes || []),
+        key.rateLimitPerMinute ?? null,
+        key.mcpTools ? JSON.stringify(key.mcpTools) : null,
+        key.expiresAt,
+        key.lastUsedAt,
+        key.revokedAt,
+        key.createdAt,
+      ],
+    );
+  } catch (error) {
+    console.error('Failed to insert Postgres API key:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresApiKeys(tenantId: string): Promise<ApiKeyRecord[]> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return [];
+  const client = await p.connect();
+  try {
+    const res = await client.query('SELECT * FROM api_keys WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
+    return res.rows.map(mapApiKeyRow);
+  } catch (error) {
+    console.error('Failed to list Postgres API keys:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresApiKeyByHash(keyHash: string): Promise<ApiKeyRecord | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query('SELECT * FROM api_keys WHERE key_hash = $1 LIMIT 1', [keyHash]);
+    if (res.rows.length === 0) return undefined;
+    return mapApiKeyRow(res.rows[0]);
+  } catch (error) {
+    console.error('Failed to look up Postgres API key by hash:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function revokePostgresApiKey(id: string, tenantId: string): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('UPDATE api_keys SET revoked_at = $1 WHERE id = $2 AND tenant_id = $3', [
+      new Date().toISOString(),
+      id,
+      tenantId,
+    ]);
+  } catch (error) {
+    console.error('Failed to revoke Postgres API key:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function touchPostgresApiKeyLastUsed(id: string, timestamp: string): Promise<void> {
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('UPDATE api_keys SET last_used_at = $1 WHERE id = $2', [timestamp, id]);
+  } catch (error) {
+    // Best-effort stamp — never fail the auth path over telemetry.
+    console.warn('Failed to stamp API key last_used_at:', (error as Error)?.message);
+  } finally {
+    client.release();
+  }
+}
+
+// --- Webhook endpoints (Phase 6 — outbound event notifications) -------------
+
+function mapWebhookEndpointRow(row: any): WebhookEndpoint {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    name: row.name,
+    url: row.url,
+    secretEncrypted: row.secret,
+    events: Array.isArray(row.events) ? (row.events as WebhookEventName[]) : [],
+    enabled: row.enabled !== false,
+    lastDeliveryAt: row.last_delivery_at || null,
+    lastDeliveryStatus:
+      row.last_delivery_status === 'success' || row.last_delivery_status === 'failed' ? row.last_delivery_status : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function insertPostgresWebhookEndpoint(endpoint: WebhookEndpoint): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query(
+      `INSERT INTO webhook_endpoints (id, tenant_id, name, url, secret, events, enabled, last_delivery_at, last_delivery_status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (id) DO NOTHING;`,
+      [
+        endpoint.id,
+        endpoint.tenantId,
+        endpoint.name,
+        endpoint.url,
+        endpoint.secretEncrypted,
+        JSON.stringify(endpoint.events || []),
+        endpoint.enabled,
+        endpoint.lastDeliveryAt,
+        endpoint.lastDeliveryStatus,
+        endpoint.createdAt,
+        endpoint.updatedAt,
+      ],
+    );
+  } catch (error) {
+    console.error('Failed to insert Postgres webhook endpoint:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresWebhookEndpoints(tenantId: string): Promise<WebhookEndpoint[]> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return [];
+  const client = await p.connect();
+  try {
+    const res = await client.query('SELECT * FROM webhook_endpoints WHERE tenant_id = $1 ORDER BY created_at DESC', [
+      tenantId,
+    ]);
+    return res.rows.map(mapWebhookEndpointRow);
+  } catch (error) {
+    console.error('Failed to list Postgres webhook endpoints:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresWebhookEndpointById(
+  id: string,
+  tenantId: string,
+): Promise<WebhookEndpoint | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query('SELECT * FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2 LIMIT 1', [
+      id,
+      tenantId,
+    ]);
+    return res.rows[0] ? mapWebhookEndpointRow(res.rows[0]) : undefined;
+  } catch (error) {
+    console.error('Failed to fetch Postgres webhook endpoint:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updatePostgresWebhookEndpoint(
+  id: string,
+  tenantId: string,
+  patch: Partial<
+    Pick<
+      WebhookEndpoint,
+      'name' | 'url' | 'secretEncrypted' | 'events' | 'enabled' | 'lastDeliveryAt' | 'lastDeliveryStatus'
+    >
+  >,
+): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (patch.name !== undefined) sets.push(`name = $${values.push(patch.name)}`);
+  if (patch.url !== undefined) sets.push(`url = $${values.push(patch.url)}`);
+  if (patch.secretEncrypted !== undefined) sets.push(`secret = $${values.push(patch.secretEncrypted)}`);
+  if (patch.events !== undefined) sets.push(`events = $${values.push(JSON.stringify(patch.events))}`);
+  if (patch.enabled !== undefined) sets.push(`enabled = $${values.push(patch.enabled)}`);
+  if (patch.lastDeliveryAt !== undefined) sets.push(`last_delivery_at = $${values.push(patch.lastDeliveryAt)}`);
+  if (patch.lastDeliveryStatus !== undefined)
+    sets.push(`last_delivery_status = $${values.push(patch.lastDeliveryStatus)}`);
+  if (sets.length === 0) return;
+  sets.push(`updated_at = $${values.push(new Date().toISOString())}`);
+  values.push(id, tenantId);
+  const client = await p.connect();
+  try {
+    await client.query(
+      `UPDATE webhook_endpoints SET ${sets.join(', ')} WHERE id = $${values.length - 1} AND tenant_id = $${values.length}`,
+      values,
+    );
+  } catch (error) {
+    console.error('Failed to update Postgres webhook endpoint:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deletePostgresWebhookEndpoint(id: string, tenantId: string): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('DELETE FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+  } catch (error) {
+    console.error('Failed to delete Postgres webhook endpoint:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// --- Provider credentials (per-tenant AI provider keys, encrypted) ----------
+
+function mapProviderCredentialRow(row: any): ProviderCredentialRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    providerId: row.provider_id,
+    credentials: row.credentials || {},
+    baseUrl: row.base_url || '',
+    enabled: row.enabled !== false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function upsertPostgresProviderCredentials(record: ProviderCredentialRecord): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query(
+      `INSERT INTO provider_credentials (id, tenant_id, provider_id, credentials, base_url, enabled, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (tenant_id, provider_id) DO UPDATE
+       SET credentials = EXCLUDED.credentials,
+           base_url = EXCLUDED.base_url,
+           enabled = EXCLUDED.enabled,
+           updated_at = EXCLUDED.updated_at;`,
+      [
+        record.id,
+        record.tenantId,
+        record.providerId,
+        JSON.stringify(record.credentials || {}),
+        record.baseUrl || null,
+        record.enabled !== false,
+        record.createdAt,
+        record.updatedAt,
+      ],
+    );
+  } catch (error) {
+    console.error('Failed to upsert Postgres provider credentials:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresProviderCredentials(
+  tenantId: string,
+  providerId: string,
+): Promise<ProviderCredentialRecord | undefined> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return undefined;
+  const client = await p.connect();
+  try {
+    const res = await client.query(
+      'SELECT * FROM provider_credentials WHERE tenant_id = $1 AND provider_id = $2 LIMIT 1',
+      [tenantId, providerId],
+    );
+    if (res.rows.length === 0) return undefined;
+    return mapProviderCredentialRow(res.rows[0]);
+  } catch (error) {
+    console.error('Failed to get Postgres provider credentials:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPostgresProviderCredentialsList(tenantId: string): Promise<ProviderCredentialRecord[]> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return [];
+  const client = await p.connect();
+  try {
+    const res = await client.query('SELECT * FROM provider_credentials WHERE tenant_id = $1 ORDER BY provider_id', [
+      tenantId,
+    ]);
+    return res.rows.map(mapProviderCredentialRow);
+  } catch (error) {
+    console.error('Failed to list Postgres provider credentials:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deletePostgresProviderCredentials(tenantId: string, providerId: string): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('DELETE FROM provider_credentials WHERE tenant_id = $1 AND provider_id = $2', [
+      tenantId,
+      providerId,
+    ]);
+  } catch (error) {
+    console.error('Failed to delete Postgres provider credentials:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updatePostgresTenantSettings(tenantId: string, settingsJson: string): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('UPDATE tenants SET settings = $1 WHERE id = $2', [settingsJson, tenantId]);
+  } catch (error) {
+    console.error('Failed to update Postgres tenant settings:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updatePostgresTenantPlan(tenantId: string, plan: string): Promise<void> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return;
+  const client = await p.connect();
+  try {
+    await client.query('UPDATE tenants SET plan = $1 WHERE id = $2', [plan, tenantId]);
+  } catch (error) {
+    console.error('Failed to update Postgres tenant plan:', error);
+    throw error;
   } finally {
     client.release();
   }

@@ -1,0 +1,42 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+/**
+ * Per-request identity context (server-only).
+ *
+ * Mirrors the AsyncLocalStorage pattern in `aiModelsServer.ts`: route
+ * middleware binds the authenticated tenant/user once, and any downstream
+ * server code (provider credential resolution, tenant config, audit) can read
+ * it without threading the id through every function signature.
+ *
+ * Import contract: server code only. `node:async_hooks` cannot be bundled into
+ * a browser endpoint, so client components must never import this module.
+ */
+
+export interface RequestContext {
+  tenantId: string;
+  userId?: string;
+  /** Present for API-key-authenticated requests. */
+  apiKeyId?: string;
+}
+
+const requestContextAls = new AsyncLocalStorage<RequestContext>();
+
+/** Runs `fn` with `ctx` as the active request identity. */
+export function runWithRequestContext<T>(ctx: RequestContext, fn: () => Promise<T>): Promise<T> {
+  return requestContextAls.run(ctx, fn);
+}
+
+/** Synchronous variant for non-async code paths. */
+export function runWithRequestContextSync<T>(ctx: RequestContext, fn: () => T): T {
+  return requestContextAls.run(ctx, fn);
+}
+
+/** The bound context, or undefined outside a request scope. */
+export function getActiveRequestContext(): RequestContext | undefined {
+  return requestContextAls.getStore();
+}
+
+/** The active tenant id, or undefined outside a request scope. */
+export function getActiveTenantId(): string | undefined {
+  return requestContextAls.getStore()?.tenantId;
+}
