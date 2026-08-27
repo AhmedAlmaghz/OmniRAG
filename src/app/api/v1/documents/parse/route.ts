@@ -7,6 +7,8 @@ import { processFileBuffer, archiveUploadedFile, normalizeMimeType } from '@/lib
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
+import { getObjectStoreSelection } from '@/lib/storage/objects/registry';
+import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -292,6 +294,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
   return await runWithModelConfig(modelConfig, async () => {
     try {
+      const parseDenied = await guardPermission(authCtx, 'documents:write');
+      if (parseDenied) return parseDenied;
+
       let fileName = 'document.txt';
       let fileBuffer: Buffer | null = null;
       let cleanBase64 = '';
@@ -520,12 +525,29 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       // Optional raw-file archiving, OFF by default. The unconditional local
       // disk write ran even on cache hits and grew without bound (PII
       // retention liability on multi-tenant hosts); enable explicitly with
-      // ARCHIVE_UPLOADS=true when a retention policy exists.
+      // ARCHIVE_UPLOADS=true when a retention policy exists. When enabled,
+      // the original is archived through the tenant's chosen object store
+      // (S3 / Vercel Blob / local) so it survives parsing instead of being
+      // deleted with the transient upload.
       if (process.env.ARCHIVE_UPLOADS === 'true') {
         try {
           const tenantIdForArchive = authCtx.tenantId;
-          const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantIdForArchive, fileHash);
-          console.log(`[Document Ingestion] File archived to disk: ${archivedPath}`);
+          const { store: archiveStore } = await getObjectStoreSelection(tenantIdForArchive);
+          if (archiveStore.id === 'local') {
+            // Historical archive directory for existing self-hosted deployments.
+            const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantIdForArchive, fileHash);
+            console.log(`[Document Ingestion] File archived to disk: ${archivedPath}`);
+          } else {
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const safeName = (fileName || 'document.bin').replace(/[^\w.\-() ]/g, '_').slice(-120);
+            const archiveKey = `archive/${tenantIdForArchive}/${dateStr}/${fileHash.substring(0, 16)}_${safeName}`;
+            const archived = await archiveStore.put(archiveKey, fileBuffer, resolvedMime);
+            if (archived) {
+              console.log(`[Document Ingestion] File archived to ${archiveStore.id}: ${archiveKey}`);
+            } else {
+              console.warn(`[Document Ingestion] Archiving to ${archiveStore.id} failed (non-fatal)`);
+            }
+          }
         } catch (archiveErr: any) {
           console.warn('[Document Ingestion] Archiving failed (non-fatal):', archiveErr?.message);
         }
