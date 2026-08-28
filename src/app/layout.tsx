@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import 'katex/dist/katex.min.css';
 import './globals.css';
 import { headers } from 'next/headers';
+import { Analytics } from '@vercel/analytics/next';
 
 export const metadata: Metadata = {
   title: 'OmniRAG - Enterprise Agentic RAG Platform',
@@ -40,6 +41,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
         {children}
+        <Analytics />
       </body>
     </html>
   );
