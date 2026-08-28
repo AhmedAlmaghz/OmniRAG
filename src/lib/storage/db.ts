@@ -715,8 +715,14 @@ async function ensureSeeded(): Promise<void> {
   seedingPromise = (async () => {
     let timeoutId: NodeJS.Timeout;
     try {
+      // Init budget: the migration runner pipelines its DDL (one round-trip),
+      // but a cold Neon compute wake + pooler handshake can still take several
+      // seconds. 20s keeps the first request on a cold serverless instance
+      // well inside Vercel's function timeout while almost never demoting a
+      // configured-but-slow database to the in-memory fallback (which loses
+      // sessions → 401s for the whole instance lifetime).
       const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 8000);
+        timeoutId = setTimeout(() => reject(new Error('PostgreSQL connection timeout')), 20000);
       });
 
       const dbPromise = ensurePostgresTables().catch((err) => {
