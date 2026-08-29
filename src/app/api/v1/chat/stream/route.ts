@@ -28,6 +28,7 @@ import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 import { buildTenantMcpTools } from '@/lib/mcp/aiSdkTools';
 import { generateTextResilient } from '@/lib/ai/resilientGenerate';
 import { guardPermission } from '@/lib/auth/permissions';
+import { getTokenBudgetStatus, recordTokenUsage } from '@/lib/services/planService';
 import type { MCPToolCall } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
@@ -144,6 +145,20 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
   try {
     const chatDenied = await guardPermission(authCtx, 'chat:use');
     if (chatDenied) return chatDenied;
+
+    // Monthly token budget (Phase 4): hard-stop when the workspace exhausted
+    // its plan's LLM allowance for the current month.
+    const budget = await getTokenBudgetStatus(authCtx.tenantId);
+    if (budget.exhausted) {
+      return NextResponse.json(
+        {
+          error: `تم استهلاك حصة الرموز الشهرية للخطة (${budget.budget} token). سيتم تجديدها مطلع الشهر القادم (Monthly token budget exhausted)`,
+          code: '429_TOKEN_BUDGET_EXHAUSTED',
+          budget: { used: budget.used, limit: budget.budget },
+        },
+        { status: 429 },
+      );
+    }
 
     const body = await req.json();
     const tenantId = authCtx.tenantId;
@@ -345,6 +360,13 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             tokensUsed = { input: usage?.inputTokens ?? 0, output: usage?.outputTokens ?? 0 };
           } catch {
             // Stream aborted/consumed — metadata stays zeroed.
+          }
+
+          // Atomic monthly counter increment (fail-open — accounting must not
+          // break the stream).
+          const totalTokens = tokensUsed.input + tokensUsed.output;
+          if (totalTokens > 0) {
+            await recordTokenUsage(tenantId, totalTokens);
           }
 
           writer.write({

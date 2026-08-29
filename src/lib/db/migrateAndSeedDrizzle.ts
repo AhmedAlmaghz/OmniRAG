@@ -16,11 +16,32 @@ import { getPostgresPool } from '../storage/postgres';
  */
 const DDL_BATCH_SIZE = 12;
 
+/**
+ * Schema revision for the DDL batch below. Bump whenever the DDL changes;
+ * already-migrated databases then re-run the full pass once and stamp the new
+ * revision. The revision marker makes cold starts a single SELECT instead of
+ * the full 4-round-trip DDL transaction.
+ */
+const SCHEMA_REVISION = '2026-08-29-perf-indexes';
+
 export async function migrateAndSeedWithDrizzle() {
   const pool = getPostgresPool();
   if (!pool) {
     console.warn('[Drizzle] Postgres is not configured. Skipping Drizzle migrations and seeding.');
     return;
+  }
+
+  // Fast path: one indexed SELECT. On serverless every cold start re-ran the
+  // full 47-statement DDL transaction (~4 round-trips) just to verify what was
+  // already there; the revision row lets identical schema deployments skip it.
+  try {
+    const meta = await pool.query(`SELECT 1 FROM schema_meta WHERE key = 'schema_revision' AND value = $1 LIMIT 1`, [
+      SCHEMA_REVISION,
+    ]);
+    if (meta.rowCount === 1) return;
+  } catch {
+    // Table missing on first boot — fall through to the full migration, which
+    // creates schema_meta below.
   }
 
   console.log('[Drizzle] Initializing database migration with Drizzle ORM...');
@@ -385,6 +406,28 @@ export async function migrateAndSeedWithDrizzle() {
     `);
     ddl(`CREATE INDEX IF NOT EXISTS rate_limit_windows_window_start_idx ON rate_limit_windows (window_start);`);
 
+    // Cold-start fast-path marker (see SCHEMA_REVISION above): stamped after a
+    // successful full pass, checked before every subsequent run.
+    ddl(`
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        key VARCHAR(100) PRIMARY KEY,
+        value VARCHAR(200) NOT NULL
+      );
+    `);
+
+    // Monthly per-tenant token accounting (Phase 4): plan budgets are enforced
+    // against this counter — a single atomic upsert per completion, no locks.
+    // period is 'YYYY-MM'; the row is deleted/rewritten when the month rolls.
+    ddl(`
+      CREATE TABLE IF NOT EXISTS usage_counters (
+        tenant_id VARCHAR(100) NOT NULL,
+        period VARCHAR(7) NOT NULL,
+        tokens_used BIGINT NOT NULL DEFAULT 0,
+        updated_at VARCHAR(100) NOT NULL,
+        PRIMARY KEY (tenant_id, period)
+      );
+    `);
+
     // Ensure all Drizzle-specific table schema upgrades (missing columns) are fully processed
     ddl(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NOT NULL DEFAULT 'file';`);
     ddl(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_count INT DEFAULT 0;`);
@@ -403,11 +446,34 @@ export async function migrateAndSeedWithDrizzle() {
     // table already exists. DEFAULT '' satisfies NOT NULL for legacy rows.
     ddl(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100) NOT NULL DEFAULT '';`);
 
+    // ── Performance indexes (Phase 4 audit) ─────────────────────────────────
+    // Lexical search runs `to_tsvector($1, content) @@ to_tsquery($1, $2)`
+    // with $1 ∈ {arabic, english}; without a matching expression index the
+    // planner seq-scans every tenant chunk per query. One GIN index per
+    // dictionary config keeps the expression byte-identical so the planner
+    // can use it.
+    ddl(`CREATE INDEX IF NOT EXISTS chunks_fts_arabic_gin
+         ON chunks USING gin (to_tsvector('arabic'::regconfig, content));`);
+    ddl(`CREATE INDEX IF NOT EXISTS chunks_fts_english_gin
+         ON chunks USING gin (to_tsvector('english'::regconfig, content));`);
+    // Hot-path composite: nearly every chunk query filters both dimensions.
+    ddl(`CREATE INDEX IF NOT EXISTS chunks_tenant_document_idx ON chunks (tenant_id, document_id);`);
+    // Conversation history ordering (list conversations, latest messages).
+    ddl(`CREATE INDEX IF NOT EXISTS messages_tenant_conversation_idx
+         ON messages (tenant_id, conversation_id);`);
+
     // One round-trip per batch; Postgres executes the joined statements
     // sequentially and aborts the whole transaction on the first error.
     for (let i = 0; i < ddlStatements.length; i += DDL_BATCH_SIZE) {
       await client.query(ddlStatements.slice(i, i + DDL_BATCH_SIZE).join('\n'));
     }
+    // Stamp the revision INSIDE the transaction: a failed DDL batch rolls the
+    // stamp back too, so the next cold start retries instead of skipping.
+    await client.query(
+      `INSERT INTO schema_meta (key, value) VALUES ('schema_revision', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [SCHEMA_REVISION],
+    );
     await client.query('COMMIT');
     console.log('[Drizzle] Schema tables validated and migrated successfully.');
   } catch (error) {

@@ -292,5 +292,12 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     },
   ];
 
-  return NextResponse.json({ sourceTypes });
+  // Effectively static catalog: private caching avoids recomputing the whole
+  // connector list on every request while keeping it out of shared CDNs.
+  return NextResponse.json(
+    { sourceTypes },
+    {
+      headers: { 'Cache-Control': 'private, max-age=60, stale-while-revalidate=300' },
+    },
+  );
 });

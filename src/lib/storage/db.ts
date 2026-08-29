@@ -29,6 +29,7 @@ import {
   insertPostgresDocument,
   deletePostgresDocument,
   getPostgresChunks,
+  getPostgresChunksByDocument,
   insertPostgresChunk,
   deletePostgresChunksByDocument,
   getPostgresSources,
@@ -306,6 +307,17 @@ export class MemoryDatabase implements IOmniRAGDatabase {
 
   async getChunks(tenantId: string): Promise<DocumentChunk[]> {
     return this.chunks.filter((c) => c.tenantId === tenantId);
+  }
+
+  async getChunksByDocument(
+    tenantId: string,
+    documentId: string,
+    opts: { limit?: number; offset?: number } = {},
+  ): Promise<{ chunks: DocumentChunk[]; total: number }> {
+    const limit = Math.min(Math.max(opts.limit ?? 200, 1), 500);
+    const offset = Math.max(opts.offset ?? 0, 0);
+    const all = this.chunks.filter((c) => c.tenantId === tenantId && c.documentId === documentId);
+    return { chunks: all.slice(offset, offset + limit), total: all.length };
   }
 
   async addChunk(chunk: DocumentChunk): Promise<void> {
@@ -1762,6 +1774,37 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     }
 
     return chunksList;
+  }
+
+  /**
+   * Document-scoped, paginated chunk read. Filters and paginates in SQL (the
+   * (tenant_id, document_id) index) instead of loading every tenant chunk and
+   * filtering in JS — the old GET /documents?documentId= behavior.
+   */
+  async getChunksByDocument(
+    tenantId: string,
+    documentId: string,
+    opts: { limit?: number; offset?: number } = {},
+  ): Promise<{ chunks: DocumentChunk[]; total: number }> {
+    const limit = Math.min(Math.max(opts.limit ?? 200, 1), 500);
+    const offset = Math.max(opts.offset ?? 0, 0);
+
+    if (this.useMemory) {
+      const all = (await memoryDb.getChunks(tenantId)).filter((c) => c.documentId === documentId);
+      return { chunks: all.slice(offset, offset + limit), total: all.length };
+    }
+    try {
+      await ensureSeeded();
+      if (this.useMemory) {
+        const all = (await memoryDb.getChunks(tenantId)).filter((c) => c.documentId === documentId);
+        return { chunks: all.slice(offset, offset + limit), total: all.length };
+      }
+      return await getPostgresChunksByDocument(tenantId, documentId, { limit, offset });
+    } catch (e) {
+      this.handleDatabaseError(e, 'getChunksByDocument');
+      const all = (await memoryDb.getChunks(tenantId)).filter((c) => c.documentId === documentId);
+      return { chunks: all.slice(offset, offset + limit), total: all.length };
+    }
   }
 
   async addChunk(chunk: DocumentChunk): Promise<void> {

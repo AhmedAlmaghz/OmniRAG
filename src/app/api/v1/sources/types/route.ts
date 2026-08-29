@@ -8,5 +8,10 @@ import { toConnectorCatalog } from '@/lib/connectors/registry';
  * extractions — so the wizard fields and the sync worker can never drift.
  */
 export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
-  return NextResponse.json({ sourceTypes: toConnectorCatalog() });
+  return NextResponse.json(
+    { sourceTypes: toConnectorCatalog() },
+    {
+      headers: { 'Cache-Control': 'private, max-age=60, stale-while-revalidate=300' },
+    },
+  );
 });

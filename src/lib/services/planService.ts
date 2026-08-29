@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '../storage/db';
+import { getPostgresPool } from '../storage/postgres';
 import { listTenantMemberships, listTenantTeams } from './membershipService';
 import type { PlanId, Tenant } from '../types/omnirag';
 
@@ -37,6 +38,16 @@ export interface PlanDescriptor {
   name: { ar: string; en: string };
   description: { ar: string; en: string };
   quotas: PlanQuotas;
+  /**
+   * Monthly LLM token ceiling for the whole workspace (input+output, all
+   * chat/completions). null = unlimited. Enforced via usage_counters — the
+   * tokens were recorded per message before but never budgeted, so a single
+   * tenant could burn the platform's provider keys indefinitely. Lives on
+   * the descriptor (not in PlanQuotas) because it is a spend budget, not a
+   * countable resource: QUOTA_RESOURCES drives the usage snapshot and must
+   * stay per-resource.
+   */
+  monthlyTokenBudget: number | null;
 }
 
 export const PLANS: Record<PlanId, PlanDescriptor> = {
@@ -56,6 +67,7 @@ export const PLANS: Record<PlanId, PlanDescriptor> = {
       maxWebhooks: 1,
       maxTeams: 1,
     },
+    monthlyTokenBudget: 2_000_000,
   },
   team: {
     id: 'team',
@@ -73,6 +85,7 @@ export const PLANS: Record<PlanId, PlanDescriptor> = {
       maxWebhooks: 3,
       maxTeams: 5,
     },
+    monthlyTokenBudget: 10_000_000,
   },
   business: {
     id: 'business',
@@ -90,6 +103,7 @@ export const PLANS: Record<PlanId, PlanDescriptor> = {
       maxWebhooks: 10,
       maxTeams: 20,
     },
+    monthlyTokenBudget: 50_000_000,
   },
   enterprise: {
     id: 'enterprise',
@@ -107,6 +121,7 @@ export const PLANS: Record<PlanId, PlanDescriptor> = {
       maxWebhooks: null,
       maxTeams: null,
     },
+    monthlyTokenBudget: null,
   },
 };
 
@@ -255,4 +270,73 @@ export async function guardQuota(tenantId: string, resource: QuotaResource): Pro
     },
     { status: 403 },
   );
+}
+
+/* ── Monthly token budget (Phase 4) ─────────────────────────────────────────
+   tokensUsed was recorded per message but never budgeted — one tenant could
+   burn the platform's provider keys indefinitely. The usage_counters row is
+   the atomic source of truth: one upsert per completion, fail-open on DB
+   errors (a quota counter outage must not take chat down). */
+
+/** Current calendar month key, e.g. '2026-08'. */
+function currentPeriod(): string {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+export interface TokenBudgetStatus {
+  budget: number | null;
+  used: number;
+  remaining: number | null;
+  exhausted: boolean;
+}
+
+/** Read the tenant's month-to-date token spend (0 when the DB is away). */
+export async function getTokenUsage(tenantId: string, period = currentPeriod()): Promise<number> {
+  try {
+    const pool = getPostgresPool();
+    if (!pool) return 0;
+    const res = await pool.query('SELECT tokens_used FROM usage_counters WHERE tenant_id = $1 AND period = $2', [
+      tenantId,
+      period,
+    ]);
+    return Number(res.rows[0]?.tokens_used ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+export async function getTokenBudgetStatus(tenantId: string): Promise<TokenBudgetStatus> {
+  const plan = await getTenantPlan(tenantId);
+  const budget = plan.monthlyTokenBudget;
+  const used = await getTokenUsage(tenantId);
+  return {
+    budget,
+    used,
+    remaining: budget === null ? null : Math.max(0, budget - used),
+    exhausted: budget !== null && used >= budget,
+  };
+}
+
+/**
+ * Atomically add `tokens` to the month counter (single guarded upsert, no
+ * read-modify-write). Call after each completion with the model-reported
+ * usage; fail-open so accounting can never break chat.
+ */
+export async function recordTokenUsage(tenantId: string, tokens: number, period = currentPeriod()): Promise<void> {
+  if (!Number.isFinite(tokens) || tokens <= 0) return;
+  try {
+    const pool = getPostgresPool();
+    if (!pool) return;
+    await pool.query(
+      `INSERT INTO usage_counters (tenant_id, period, tokens_used, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (tenant_id, period) DO UPDATE SET
+         tokens_used = usage_counters.tokens_used + $3,
+         updated_at = $4`,
+      [tenantId, period, Math.round(tokens), new Date().toISOString()],
+    );
+  } catch (err) {
+    console.warn('[plans] token usage record failed:', (err as Error)?.message);
+  }
 }

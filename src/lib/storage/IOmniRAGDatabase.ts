@@ -65,6 +65,16 @@ export interface IOmniRAGDatabase {
   updateDocument(id: string, updates: Partial<Document>, tenantId: string): Promise<Document | undefined>;
   deleteDocument(id: string, tenantId: string): Promise<void>;
   getChunks(tenantId: string): Promise<DocumentChunk[]>;
+  /**
+   * Document-scoped, paginated chunk read. Filters in SQL via the
+   * (tenant_id, document_id) composite index instead of loading the whole
+   * tenant chunk grid — use for per-document views (documents GET ?documentId).
+   */
+  getChunksByDocument(
+    tenantId: string,
+    documentId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{ chunks: DocumentChunk[]; total: number }>;
   addChunk(chunk: DocumentChunk): Promise<void>;
   /**
    * Ingest a batch of chunks in one pass: embeddings are generated with bounded

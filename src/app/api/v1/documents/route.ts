@@ -62,9 +62,15 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     const documentId = req.nextUrl.searchParams.get('documentId');
 
     if (documentId) {
-      const allChunks = await db.getChunks(tenantId);
-      const docChunks = allChunks.filter((c) => c.documentId === documentId);
-      return NextResponse.json({ chunks: docChunks });
+      // Scoped + paginated read (SQL filtering via the composite index) — the
+      // previous behavior loaded every tenant chunk and filtered in JS.
+      const limitParam = Number(req.nextUrl.searchParams.get('limit') || '200');
+      const offsetParam = Number(req.nextUrl.searchParams.get('offset') || '0');
+      const { chunks, total } = await db.getChunksByDocument(tenantId, documentId, {
+        limit: Number.isFinite(limitParam) ? limitParam : 200,
+        offset: Number.isFinite(offsetParam) ? offsetParam : 0,
+      });
+      return NextResponse.json({ chunks, total });
     }
 
     const docs = await db.getDocuments(tenantId);

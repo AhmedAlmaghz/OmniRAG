@@ -748,6 +748,54 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
 }
 
 /**
+ * Tenant- and document-scoped chunk fetch with pagination. The documents GET
+ * route previously loaded ALL tenant chunks and filtered in JS; the hot
+ * (tenant_id, document_id) composite index makes this a single indexed query.
+ */
+export async function getPostgresChunksByDocument(
+  tenantId: string,
+  documentId: string,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<{ chunks: DocumentChunk[]; total: number }> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return { chunks: [], total: 0 };
+
+  const { limit = 200, offset = 0 } = opts;
+  const client = await p.connect();
+  try {
+    await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
+    const countRes = await client.query(
+      'SELECT COUNT(*)::int AS total FROM chunks WHERE tenant_id = $1 AND document_id = $2',
+      [tenantId, documentId],
+    );
+    const res = await client.query(
+      'SELECT * FROM chunks WHERE tenant_id = $1 AND document_id = $2 ORDER BY chunk_index ASC LIMIT $3 OFFSET $4',
+      [tenantId, documentId, limit, offset],
+    );
+    return {
+      chunks: res.rows.map((row: any) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        documentId: row.document_id,
+        documentTitle: row.document_title,
+        content: row.content,
+        chunkIndex: row.chunk_index,
+        pageNumber: row.page_number || 1,
+        language: row.language,
+        metadata: row.metadata || {},
+      })),
+      total: countRes.rows[0]?.total ?? 0,
+    };
+  } catch (error) {
+    console.error('Failed to get Postgres chunks by document:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Delete all lexical chunk rows belonging to one document. Used by the
  * version/revert/reindex paths, which replace a document's entire chunk grid:
  * without this, rows from superseded versions accumulate in Postgres forever
