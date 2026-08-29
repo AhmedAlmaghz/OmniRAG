@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getAllowedOrigins, buildCsp, baseSecurityHeaders } from '@/lib/security/securityHeaders';
-import { randomUUID } from 'node:crypto';
 
 /**
  * Edge middleware: CORS handling for /api/* and security headers for every
@@ -8,6 +7,9 @@ import { randomUUID } from 'node:crypto';
  * depend on the request carrying a vetted Origin (the previous behavior left
  * non-CORS browser requests with zero hardening).
  */
+
+// Edge runtime: node:crypto is unavailable; the global Web Crypto API is.
+declare const crypto: { randomUUID(): string };
 
 function applyCors(response: NextResponse, allowed: string[], origin: string) {
   // Only echo back vetted origins. Never reflect arbitrary / null origins.
@@ -42,7 +44,7 @@ export function middleware(request: NextRequest) {
     // Pages: strict CSP with a per-request nonce. The nonce is exposed to the
     // server layout via the request header so layout.tsx can stamp it on the
     // one inline script; response copy keeps it for tests/diagnostics.
-    const nonce = randomUUID();
+    const nonce = crypto.randomUUID();
     response.headers.set('Content-Security-Policy', buildCsp(nonce));
     response.headers.set('x-csp-nonce', nonce);
     // For page requests the nonce must also reach the server component tree:

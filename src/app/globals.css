@@ -1,4 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Cairo:wght@400;600;700&family=Tajawal:wght@400;500;700&family=Amiri:ital,wght@0,400;0,700;1,400&display=swap');
+/* Fonts are self-hosted via next/font (see src/app/layout.tsx) — the old
+   render-blocking Google Fonts @import was removed. The next/font CSS
+   variables (--font-ibm-plex-sans-arabic, --font-cairo-next, --font-tajawal-next,
+   --font-amiri-next) are consumed below and in @theme. */
 @import 'tailwindcss';
 /* KaTeX4Arabic rendering styles (RTL math, Arabic operator names, mirroring).
    Loaded after tailwind so its `.katex-arabic` rules win over preflight. */
@@ -9,9 +12,9 @@
    the live `--font-arabic` variable, which the preferences store overrides
    via html[data-arabic-font]. */
 @theme {
-  --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, sans-serif;
-  --font-cairo: 'Cairo', 'IBM Plex Sans Arabic', system-ui, sans-serif;
-  --font-tajawal: 'Tajawal', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --font-arabic: var(--font-ibm-plex-sans-arabic), var(--font-cairo-next), system-ui, -apple-system, sans-serif;
+  --font-cairo: var(--font-cairo-next), var(--font-ibm-plex-sans-arabic), system-ui, sans-serif;
+  --font-tajawal: var(--font-tajawal-next), var(--font-ibm-plex-sans-arabic), system-ui, sans-serif;
 
   /* Extra slate steps used across the UI (`border-slate-150`, `bg-slate-850`).
      Tailwind v4 ships neither shade, so every usage previously generated NO
@@ -38,8 +41,8 @@
 
 :root {
   color-scheme: light;
-  --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, sans-serif;
-  --font-math-arabic: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', 'Cairo', serif;
+  --font-arabic: var(--font-ibm-plex-sans-arabic), var(--font-cairo-next), system-ui, -apple-system, sans-serif;
+  --font-math-arabic: var(--font-amiri-next), 'Scheherazade New', 'Noto Naskh Arabic', var(--font-cairo-next), serif;
   --bg-primary: #f8fafc;
   --text-primary: #0f172a;
 }
@@ -69,13 +72,13 @@ body {
 
 /* ── Arabic font family (Settings → Appearance → Arabic Font) ─────────── */
 html[data-arabic-font='cairo'] {
-  --font-arabic: 'Cairo', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --font-arabic: var(--font-cairo-next), var(--font-ibm-plex-sans-arabic), system-ui, sans-serif;
 }
 html[data-arabic-font='tajawal'] {
-  --font-arabic: 'Tajawal', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --font-arabic: var(--font-tajawal-next), var(--font-ibm-plex-sans-arabic), system-ui, sans-serif;
 }
 html[data-arabic-font='ibm'] {
-  --font-arabic: 'IBM Plex Sans Arabic', 'Cairo', system-ui, sans-serif;
+  --font-arabic: var(--font-ibm-plex-sans-arabic), var(--font-cairo-next), system-ui, sans-serif;
 }
 
 /* ── Global text size (Settings → Appearance → Text Sizing) ─────────────
@@ -771,7 +774,7 @@ html[data-density='compact'] .space-y-5 > :not(:last-child) {
 
 /* Arabic Math Font & Notation Styles */
 .arabic-math-formula {
-  font-family: 'Amiri', 'Traditional Arabic', serif;
+  font-family: var(--font-amiri-next), 'Traditional Arabic', serif;
   direction: rtl;
   font-size: 1.15em;
   line-height: 1.6;

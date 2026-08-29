@@ -132,6 +132,18 @@ function persist(prefs: UserPreferences) {
   } catch {
     /* quota / privacy mode — in-memory state still works */
   }
+  // Mirror language + theme into cookies so the server renders <html lang/dir>
+  // and the dark class on FIRST byte (no flash, correct screen-reader
+  // language). max-age = 1 year, Lax — same-site navigations always carry it.
+  try {
+    const cookie = (name: string, value: string) => {
+      document.cookie = `${name}=${value}; path=/; max-age=31536000; samesite=lax`;
+    };
+    cookie('omnirag_lang', prefs.language);
+    cookie('omnirag_theme', resolveTheme(prefs.theme));
+  } catch {
+    /* cookie writes can be blocked — localStorage above is the real store */
+  }
 }
 
 /* ── DOM application ───────────────────────────────────────────────────── */
