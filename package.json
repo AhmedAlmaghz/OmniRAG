@@ -34,6 +34,7 @@
     "@node-rs/argon2": "^2.1.0",
     "@qdrant/js-client-rest": "^1.11.0",
     "@remotion/player": "^4.0.512",
+    "@tanstack/react-query": "^5.102.8",
     "@types/pdf-parse": "^1.1.5",
     "@vercel/blob": "^2.8.0",
     "ai": "^7.0.66",

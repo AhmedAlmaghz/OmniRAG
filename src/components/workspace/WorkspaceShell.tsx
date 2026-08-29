@@ -12,8 +12,9 @@
  * so its existing props contract is unchanged.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Header, { type WorkspaceRef } from '@/components/Header';
 import { ToastProvider } from '@/components/ui/Toast';
 import { WorkspaceProvider } from '@/components/workspace/WorkspaceContext';
@@ -187,57 +188,70 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const activeTab = pathToTab(pathname);
   const isChat = activeTab === 'chat';
 
+  // One QueryClient per workspace session (created client-side only).
+  const queryClient = useMemo(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 },
+        },
+      }),
+    [],
+  );
+
   return (
-    <ToastProvider>
-      <WorkspaceProvider value={{ tenantId, lang, userEmail, logOut: handleLogOut }}>
-        <div
-          className={`print-expand min-h-screen flex flex-col font-sans transition-colors duration-300 ${
-            resolvedTheme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
-          } ${isChat ? 'h-screen' : ''}`}
-          dir={lang === 'ar' ? 'rtl' : 'ltr'}
-        >
-          <Header
-            currentTenantId={tenantId}
-            onTenantChange={handleTenantChange}
-            lang={lang}
-            onLangChange={setLang}
-            onNavigateTab={handleNavigateTab}
-            userEmail={userEmail}
-            onLogOut={handleLogOut}
-            currentTenantName={currentTenantName}
-            activeTab={activeTab}
-            theme={resolvedTheme}
-            onThemeChange={handleThemeChange}
-            workspaces={workspaces}
-          />
-          <main className="print-expand flex-1 w-full min-h-0">{children}</main>
-          {!isChat && (
-            <footer
-              className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${
-                resolvedTheme === 'dark'
-                  ? 'bg-slate-900 border-t border-slate-800'
-                  : 'bg-white border-t border-slate-200'
-              }`}
-            >
-              <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
-                <span>
-                  POWERED BY{' '}
-                  <a
-                    href="https://github.com/ahmedAlmaghz/omnirag"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-bold text-indigo-600 hover:text-indigo-800 underline transition"
-                  >
-                    ENG. AHMED ALMAGHZ
-                  </a>{' '}
-                  - 2026 - v{APP_VERSION}
-                </span>
-                <span>OmniRAG Platform — Enterprise Agentic RAG &amp; MCP Security Gateway</span>
-              </div>
-            </footer>
-          )}
-        </div>
-      </WorkspaceProvider>
-    </ToastProvider>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <WorkspaceProvider value={{ tenantId, lang, userEmail, logOut: handleLogOut }}>
+          <div
+            className={`print-expand min-h-screen flex flex-col font-sans transition-colors duration-300 ${
+              resolvedTheme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
+            } ${isChat ? 'h-screen' : ''}`}
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+          >
+            <Header
+              currentTenantId={tenantId}
+              onTenantChange={handleTenantChange}
+              lang={lang}
+              onLangChange={setLang}
+              onNavigateTab={handleNavigateTab}
+              userEmail={userEmail}
+              onLogOut={handleLogOut}
+              currentTenantName={currentTenantName}
+              activeTab={activeTab}
+              theme={resolvedTheme}
+              onThemeChange={handleThemeChange}
+              workspaces={workspaces}
+            />
+            <main className="print-expand flex-1 w-full min-h-0">{children}</main>
+            {!isChat && (
+              <footer
+                className={`py-4 text-center text-xs text-slate-500 transition-colors duration-300 ${
+                  resolvedTheme === 'dark'
+                    ? 'bg-slate-900 border-t border-slate-800'
+                    : 'bg-white border-t border-slate-200'
+                }`}
+              >
+                <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    POWERED BY{' '}
+                    <a
+                      href="https://github.com/ahmedAlmaghz/omnirag"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-bold text-indigo-600 hover:text-indigo-800 underline transition"
+                    >
+                      ENG. AHMED ALMAGHZ
+                    </a>{' '}
+                    - 2026 - v{APP_VERSION}
+                  </span>
+                  <span>OmniRAG Platform — Enterprise Agentic RAG &amp; MCP Security Gateway</span>
+                </div>
+              </footer>
+            )}
+          </div>
+        </WorkspaceProvider>
+      </ToastProvider>
+    </QueryClientProvider>
   );
 }

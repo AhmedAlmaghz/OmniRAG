@@ -435,6 +435,8 @@ export const en = {
     tabMcp: 'MCP',
     tabCitations: 'Citations',
     tabLog: 'Log',
+    openSidebar: 'Open conversations',
+    closeSidebar: 'Close conversations',
     mcpServersTitle: 'MCP Servers',
     refreshTitle: 'Refresh',
     noMcpServers: 'No MCP servers registered.',

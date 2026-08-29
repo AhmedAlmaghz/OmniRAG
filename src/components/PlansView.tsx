@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React from 'react';
 import { CreditCard, RefreshCw, AlertTriangle, CheckCircle2, Infinity as InfinityIcon } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { t } from '@/lib/i18n';
 
@@ -11,6 +12,9 @@ import { t } from '@/lib/i18n';
  * `billing:manage` (owner only); everyone else with settings:read sees a
  * read-only view (the switch button is hidden server-side by the 403, and
  * client-side via `canManage`).
+ *
+ * Data layer runs on TanStack Query: cached reads, background refetch, and
+ * mutation-driven invalidation instead of hand-rolled loading/error state.
  */
 
 interface QuotaUsage {
@@ -42,41 +46,33 @@ const QUOTA_LABEL_KEYS: Record<string, string> = {
   maxTeams: 'plans.quotaTeams',
 };
 
+async function fetchPlanDetails(lang: 'ar' | 'en'): Promise<PlanDetails> {
+  const res = await fetchWithAuth('/api/v1/plan');
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data?.error || t(lang, 'plans.loadFailed'));
+  }
+  return data as PlanDetails;
+}
+
 export default function PlansView({ lang }: { lang: 'ar' | 'en' }) {
-  const [details, setDetails] = useState<PlanDetails | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [switching, setSwitching] = useState<string | null>(null);
-  const ar = lang === 'ar';
+  const queryClient = useQueryClient();
+  const [notice, setNotice] = React.useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetchWithAuth('/api/v1/plan');
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setError(data?.error || t(lang, 'plans.loadFailed'));
-        return;
-      }
-      setDetails(data);
-    } catch (e: any) {
-      setError(e?.message || t(lang, 'common.connectionError'));
-    } finally {
-      setLoading(false);
-    }
-  }, [lang]);
+  const {
+    data: details,
+    isPending: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: ['plan', 'details'],
+    queryFn: () => fetchPlanDetails(lang),
+    staleTime: 30_000,
+    retry: 1,
+  });
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const switchPlan = async (planId: string) => {
-    setSwitching(planId);
-    setError(null);
-    setNotice(null);
-    try {
+  const switchMutation = useMutation({
+    mutationFn: async (planId: string) => {
       const res = await fetchWithAuth('/api/v1/plan', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -84,17 +80,25 @@ export default function PlansView({ lang }: { lang: 'ar' | 'en' }) {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setError(data?.error || t(lang, 'plans.changeFailed'));
-        return;
+        throw new Error(data?.error || t(lang, 'plans.changeFailed'));
       }
+      return data;
+    },
+    onSuccess: () => {
       setNotice(t(lang, 'plans.planChanged'));
-      await load();
-    } catch (e: any) {
-      setError(e?.message || t(lang, 'common.error'));
-    } finally {
-      setSwitching(null);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['plan', 'details'] });
+    },
+  });
+
+  const error = queryError
+    ? (queryError as Error).message
+    : switchMutation.error
+      ? (switchMutation.error as Error).message
+      : null;
+  const switching: string | null = switchMutation.isPending ? (switchMutation.variables ?? null) : null;
+  const ar = lang === 'ar';
+
+  const switchPlan = (planId: string) => switchMutation.mutate(planId);
 
   const renderQuotaRow = (key: string, usage: QuotaUsage | undefined) => {
     if (!usage) return null;

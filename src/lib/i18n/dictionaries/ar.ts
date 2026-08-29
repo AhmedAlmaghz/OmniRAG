@@ -436,6 +436,8 @@ export const ar: Dictionary = {
     tabMcp: 'البوابات',
     tabCitations: 'المراجع',
     tabLog: 'السجل',
+    openSidebar: 'فتح المحادثات',
+    closeSidebar: 'إغلاق المحادثات',
     mcpServersTitle: 'خوادم MCP',
     refreshTitle: 'تحديث',
     noMcpServers: 'لا توجد خوادم MCP مسجلة.',

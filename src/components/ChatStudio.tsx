@@ -76,6 +76,19 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
     return () => mq.removeEventListener('change', apply);
   }, []);
 
+  // Mobile layout: below lg the resizable 3-panel design is unusable — the
+  // sidebar becomes an overlay drawer and the chat surface takes the full width.
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const apply = () => {
+      if (mq.matches) setIsMobileDrawerOpen(false);
+    };
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
+
   // Persist the sidebar collapse preference across sessions
   useEffect(() => {
     localStorage.setItem('omnirag-chat-sidebar-open', String(isSidebarOpen));
@@ -871,410 +884,476 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
 
   return (
     <div className="print-expand flex h-full w-full overflow-hidden bg-white" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-      <Group orientation="horizontal" className="h-full w-full">
-        {/* Conversation Sidebar — collapsible & drag-resizable */}
-        <Panel
-          id="sidebar"
-          panelRef={sidebarPanelRef}
-          collapsible
-          collapsedSize={0}
-          defaultSize="19"
-          minSize="13"
-          maxSize="32"
-          onResize={(size) => setIsSidebarOpen(size.asPercentage > 0.5)}
-          className="no-print min-w-0"
+      {/* Mobile sidebar drawer (below lg): the resizable-panel layout is
+          desktop-only; phones get a slide-in drawer + scrim overlay. */}
+      <div className="lg:hidden">
+        {isMobileDrawerOpen && (
+          <button
+            type="button"
+            aria-label={t(lang, 'chat.closeSidebar') || 'Close conversations'}
+            className="fixed inset-0 z-30 bg-slate-900/50 backdrop-blur-[2px] animate-fadeIn"
+            onClick={() => setIsMobileDrawerOpen(false)}
+          />
+        )}
+        <aside
+          className={`fixed top-0 bottom-0 z-40 w-72 max-w-[85vw] bg-white border-e border-slate-200 shadow-2xl transition-transform duration-300 ${
+            isMobileDrawerOpen ? 'translate-x-0' : '-translate-x-full rtl:translate-x-full'
+          }`}
+          aria-hidden={!isMobileDrawerOpen}
         >
           <ChatSidebar
             conversations={conversations}
             activeConversationId={activeConversationId}
             isLoading={isLoadingConversations}
             lang={lang}
-            isOpen={isSidebarOpen}
-            onToggle={toggleSidebar}
+            isOpen
+            onToggle={() => setIsMobileDrawerOpen(false)}
             onSelectConversation={(convId) => {
               if (convId !== activeConversationId) {
                 setActiveConversationId(convId);
                 setAiSuggestions([]);
                 fetchMessagesForConv(convId);
               }
+              setIsMobileDrawerOpen(false);
             }}
-            onCreateNew={handleCreateNewConversation}
+            onCreateNew={() => {
+              handleCreateNewConversation();
+              setIsMobileDrawerOpen(false);
+            }}
             onDeleteConversation={handleDeleteConversation}
             onRenameConversation={handleRenameConversation}
           />
-        </Panel>
+        </aside>
+      </div>
 
-        <Separator className="panel-resize-handle" />
+      {/* Mobile floating button — open the conversations drawer */}
+      {!isMobileDrawerOpen && (
+        <button
+          type="button"
+          onClick={() => setIsMobileDrawerOpen(true)}
+          className="lg:hidden absolute top-3 z-20 w-10 h-10 rounded-xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center"
+          style={{ [lang === 'ar' ? 'right' : 'left']: '0.75rem' }}
+          aria-label={t(lang, 'chat.openSidebar') || 'Open conversations'}
+        >
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h10" />
+          </svg>
+        </button>
+      )}
 
-        {/* Chat Surface — primary workspace, fills the remaining width */}
-        <Panel id="chat" minSize="30" className="min-w-0">
-          {chatSurface}
-        </Panel>
+      {/* Desktop: resizable 3-panel workspace */}
+      <div className="hidden lg:flex h-full w-full">
+        <Group orientation="horizontal" className="h-full w-full">
+          {/* Conversation Sidebar — collapsible & drag-resizable */}
+          <Panel
+            id="sidebar"
+            panelRef={sidebarPanelRef}
+            collapsible
+            collapsedSize={0}
+            defaultSize="19"
+            minSize="13"
+            maxSize="32"
+            onResize={(size) => setIsSidebarOpen(size.asPercentage > 0.5)}
+            className="no-print min-w-0"
+          >
+            <ChatSidebar
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              isLoading={isLoadingConversations}
+              lang={lang}
+              isOpen={isSidebarOpen}
+              onToggle={toggleSidebar}
+              onSelectConversation={(convId) => {
+                if (convId !== activeConversationId) {
+                  setActiveConversationId(convId);
+                  setAiSuggestions([]);
+                  fetchMessagesForConv(convId);
+                }
+              }}
+              onCreateNew={handleCreateNewConversation}
+              onDeleteConversation={handleDeleteConversation}
+              onRenameConversation={handleRenameConversation}
+            />
+          </Panel>
 
-        {/* Right Inspector (MCP, Citations, Logs) — collapsible & resizable, xl+ only */}
-        {showRightInspector && (
-          <>
-            <Separator className="panel-resize-handle" />
-            <Panel
-              id="inspector"
-              panelRef={inspectorPanelRef}
-              collapsible
-              collapsedSize={0}
-              defaultSize="22"
-              minSize="16"
-              maxSize="36"
-              onResize={(size) => setIsInspectorCollapsed(size.asPercentage <= 0.5)}
-              className="no-print min-w-0"
-            >
-              <div className="h-full flex flex-col bg-slate-50 border-slate-200/80 p-4 overflow-hidden">
-                <div className="flex flex-col h-full overflow-hidden">
-                  {/* Tabs */}
-                  <div className="flex border-b border-slate-200 gap-1 mb-4">
-                    <button
-                      onClick={() => {
-                        setActiveRightTab('mcp');
-                        inspectorPanelRef.current?.expand();
-                      }}
-                      className={`flex-1 py-1.5 text-center text-xs font-bold border-b-2 transition cursor-pointer flex items-center justify-center gap-1 ${
-                        activeRightTab === 'mcp'
-                          ? 'border-indigo-600 text-indigo-600'
-                          : 'border-transparent text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <Plug className="w-3.5 h-3.5" />
-                      <span>{t(lang, 'chat.tabMcp')}</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setActiveRightTab('citations');
-                        inspectorPanelRef.current?.expand();
-                      }}
-                      className={`flex-1 py-1.5 text-center text-xs font-bold border-b-2 transition cursor-pointer flex items-center justify-center gap-1 ${
-                        activeRightTab === 'citations'
-                          ? 'border-indigo-600 text-indigo-600'
-                          : 'border-transparent text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <BookOpen className="w-3.5 h-3.5" />
-                      <span>{t(lang, 'chat.tabCitations')}</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setActiveRightTab('logs');
-                        inspectorPanelRef.current?.expand();
-                      }}
-                      className={`flex-1 py-1.5 text-center text-xs font-bold border-b-2 transition cursor-pointer flex items-center justify-center gap-1 ${
-                        activeRightTab === 'logs'
-                          ? 'border-indigo-600 text-indigo-600'
-                          : 'border-transparent text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <Activity className="w-3.5 h-3.5" />
-                      <span>{t(lang, 'chat.tabLog')}</span>
-                      {sessionToolCalls.length > 0 && (
-                        <span className="w-4 h-4 bg-amber-500 text-white rounded-full text-[9px] flex items-center justify-center font-bold">
-                          {sessionToolCalls.length}
-                        </span>
-                      )}
-                    </button>
-                  </div>
+          <Separator className="panel-resize-handle" />
 
-                  <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
-                    {/* TAB: MCP SERVERS */}
-                    {activeRightTab === 'mcp' && (
-                      <div className="space-y-4 animate-fadeIn">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                            {t(lang, 'chat.mcpServersTitle')}
+          {/* Chat Surface — primary workspace, fills the remaining width */}
+          <Panel id="chat" minSize="30" className="min-w-0">
+            {chatSurface}
+          </Panel>
+
+          {/* Right Inspector (MCP, Citations, Logs) — collapsible & resizable, xl+ only */}
+          {showRightInspector && (
+            <>
+              <Separator className="panel-resize-handle" />
+              <Panel
+                id="inspector"
+                panelRef={inspectorPanelRef}
+                collapsible
+                collapsedSize={0}
+                defaultSize="22"
+                minSize="16"
+                maxSize="36"
+                onResize={(size) => setIsInspectorCollapsed(size.asPercentage <= 0.5)}
+                className="no-print min-w-0"
+              >
+                <div className="h-full flex flex-col bg-slate-50 border-slate-200/80 p-4 overflow-hidden">
+                  <div className="flex flex-col h-full overflow-hidden">
+                    {/* Tabs */}
+                    <div className="flex border-b border-slate-200 gap-1 mb-4">
+                      <button
+                        onClick={() => {
+                          setActiveRightTab('mcp');
+                          inspectorPanelRef.current?.expand();
+                        }}
+                        className={`flex-1 py-1.5 text-center text-xs font-bold border-b-2 transition cursor-pointer flex items-center justify-center gap-1 ${
+                          activeRightTab === 'mcp'
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Plug className="w-3.5 h-3.5" />
+                        <span>{t(lang, 'chat.tabMcp')}</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setActiveRightTab('citations');
+                          inspectorPanelRef.current?.expand();
+                        }}
+                        className={`flex-1 py-1.5 text-center text-xs font-bold border-b-2 transition cursor-pointer flex items-center justify-center gap-1 ${
+                          activeRightTab === 'citations'
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        <span>{t(lang, 'chat.tabCitations')}</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setActiveRightTab('logs');
+                          inspectorPanelRef.current?.expand();
+                        }}
+                        className={`flex-1 py-1.5 text-center text-xs font-bold border-b-2 transition cursor-pointer flex items-center justify-center gap-1 ${
+                          activeRightTab === 'logs'
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Activity className="w-3.5 h-3.5" />
+                        <span>{t(lang, 'chat.tabLog')}</span>
+                        {sessionToolCalls.length > 0 && (
+                          <span className="w-4 h-4 bg-amber-500 text-white rounded-full text-[9px] flex items-center justify-center font-bold">
+                            {sessionToolCalls.length}
                           </span>
-                          <button
-                            onClick={fetchMcpServers}
-                            disabled={isRefreshingServers}
-                            className="p-1 rounded-md text-slate-500 hover:bg-slate-200 transition"
-                            title={t(lang, 'chat.refreshTitle')}
-                          >
-                            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingServers ? 'animate-spin' : ''}`} />
-                          </button>
-                        </div>
+                        )}
+                      </button>
+                    </div>
 
-                        {mcpServers.length === 0 ? (
-                          <p className="text-xs text-slate-400 bg-white p-4 rounded-xl border border-slate-200/60 text-center">
-                            {t(lang, 'chat.noMcpServers')}
-                          </p>
-                        ) : (
-                          <div className="space-y-3">
-                            {mcpServers.map((server) => {
-                              const isExpanded = expandedServerId === server.id;
-                              return (
-                                <div
-                                  key={server.id}
-                                  className="bg-white rounded-xl border border-slate-200 shadow-3xs overflow-hidden"
-                                >
-                                  <div className="p-3 flex items-center justify-between bg-slate-50/50">
-                                    <div className="flex items-center gap-2">
-                                      <span
-                                        className={`w-2.5 h-2.5 rounded-full ${server.status === 'healthy' ? 'bg-emerald-500' : server.status === 'degraded' ? 'bg-amber-500' : 'bg-rose-500'}`}
-                                      />
-                                      <div>
-                                        <h4 className="text-xs font-bold text-slate-800">{server.name}</h4>
-                                        <span className="text-[10px] text-slate-400 font-mono">
-                                          {server.latencyMs}ms
-                                        </span>
+                    <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+                      {/* TAB: MCP SERVERS */}
+                      {activeRightTab === 'mcp' && (
+                        <div className="space-y-4 animate-fadeIn">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                              {t(lang, 'chat.mcpServersTitle')}
+                            </span>
+                            <button
+                              onClick={fetchMcpServers}
+                              disabled={isRefreshingServers}
+                              className="p-1 rounded-md text-slate-500 hover:bg-slate-200 transition"
+                              title={t(lang, 'chat.refreshTitle')}
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingServers ? 'animate-spin' : ''}`} />
+                            </button>
+                          </div>
+
+                          {mcpServers.length === 0 ? (
+                            <p className="text-xs text-slate-400 bg-white p-4 rounded-xl border border-slate-200/60 text-center">
+                              {t(lang, 'chat.noMcpServers')}
+                            </p>
+                          ) : (
+                            <div className="space-y-3">
+                              {mcpServers.map((server) => {
+                                const isExpanded = expandedServerId === server.id;
+                                return (
+                                  <div
+                                    key={server.id}
+                                    className="bg-white rounded-xl border border-slate-200 shadow-3xs overflow-hidden"
+                                  >
+                                    <div className="p-3 flex items-center justify-between bg-slate-50/50">
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className={`w-2.5 h-2.5 rounded-full ${server.status === 'healthy' ? 'bg-emerald-500' : server.status === 'degraded' ? 'bg-amber-500' : 'bg-rose-500'}`}
+                                        />
+                                        <div>
+                                          <h4 className="text-xs font-bold text-slate-800">{server.name}</h4>
+                                          <span className="text-[10px] text-slate-400 font-mono">
+                                            {server.latencyMs}ms
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          onClick={() => handlePingServer(server.id)}
+                                          disabled={pingingServerId === server.id}
+                                          className="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-indigo-600 transition"
+                                          title={t(lang, 'chat.pingTitle')}
+                                        >
+                                          <RefreshCw
+                                            className={`w-3 h-3 ${pingingServerId === server.id ? 'animate-spin' : ''}`}
+                                          />
+                                        </button>
+                                        <button
+                                          onClick={() => setExpandedServerId(isExpanded ? null : server.id)}
+                                          className="p-1 rounded-md hover:bg-slate-200 text-slate-500 transition"
+                                        >
+                                          {isExpanded ? (
+                                            <ChevronUp className="w-3.5 h-3.5" />
+                                          ) : (
+                                            <ChevronDown className="w-3.5 h-3.5" />
+                                          )}
+                                        </button>
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-1.5">
-                                      <button
-                                        onClick={() => handlePingServer(server.id)}
-                                        disabled={pingingServerId === server.id}
-                                        className="p-1 rounded-md hover:bg-slate-200 text-slate-400 hover:text-indigo-600 transition"
-                                        title={t(lang, 'chat.pingTitle')}
-                                      >
-                                        <RefreshCw
-                                          className={`w-3 h-3 ${pingingServerId === server.id ? 'animate-spin' : ''}`}
+
+                                    {isExpanded && (
+                                      <div className="p-3 border-t border-slate-100 bg-white space-y-2.5 animate-fadeIn">
+                                        <p className="text-[11px] text-slate-500">{server.description}</p>
+                                        <div className="pt-2 border-t border-slate-100">
+                                          <span className="text-[10px] font-bold text-slate-400 block mb-1.5 uppercase">
+                                            {t(lang, 'chat.toolsLabel')}
+                                          </span>
+                                          {server.enabledTools.length === 0 ? (
+                                            <p className="text-[10px] text-slate-400 italic">
+                                              {t(lang, 'chat.noToolsEnabled')}
+                                            </p>
+                                          ) : (
+                                            <div className="space-y-1.5">
+                                              {server.enabledTools.map((tool) => {
+                                                const isExternal = ['slack_', 'github_', 'web_', 'fetch_'].some((p) =>
+                                                  tool.startsWith(p),
+                                                );
+                                                const isBlocked = selectedMode === 'private' && isExternal;
+                                                return (
+                                                  <div
+                                                    key={tool}
+                                                    className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50/50 border border-slate-100 text-xs"
+                                                  >
+                                                    <span
+                                                      className={`font-mono text-[11px] font-semibold ${isBlocked ? 'line-through text-slate-400' : 'text-slate-700'}`}
+                                                    >
+                                                      {tool}
+                                                    </span>
+                                                    {isBlocked ? (
+                                                      <span className="px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-600 text-[9px] font-bold border border-rose-100 flex items-center gap-0.5">
+                                                        <Lock className="w-2.5 h-2.5" />
+                                                        {t(lang, 'chat.containedBadge')}
+                                                      </span>
+                                                    ) : (
+                                                      <button
+                                                        onClick={() => handleToggleTool(server.id, tool)}
+                                                        className="px-2 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] transition border border-indigo-100 cursor-pointer"
+                                                      >
+                                                        {t(lang, 'chat.disableTool')}
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* TAB: CITATION INSPECTOR */}
+                      {activeRightTab === 'citations' && (
+                        <div className="space-y-4 animate-fadeIn">
+                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                            {t(lang, 'chat.sourceVerificationTitle')}
+                          </span>
+                          {activeCitation ? (
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-3xs space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-indigo-600">
+                                  {t(lang, 'chat.citationIndex', { index: activeCitation.index })}
+                                </span>
+                                <span className="text-[10px] font-mono bg-indigo-50 px-2 py-0.5 rounded-md text-indigo-700 font-bold border border-indigo-100">
+                                  {t(lang, 'chat.citationMatch', { pct: (activeCitation.score * 100).toFixed(0) })}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-slate-800 font-semibold text-xs">
+                                <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                                <h4>{activeCitation.documentTitle}</h4>
+                              </div>
+                              <div className="text-[11px] font-mono text-slate-400 block">
+                                {t(lang, 'chat.citationPage', { page: activeCitation.pageNumber || 1 })}
+                              </div>
+                              <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100 font-mono whitespace-pre-wrap">
+                                &ldquo;{activeCitation.snippet}&rdquo;
+                              </p>
+                              {activeCitation.sourceUrl && (
+                                <a
+                                  href={activeCitation.sourceUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                  <span>{t(lang, 'chat.openOriginalSource')}</span>
+                                </a>
+                              )}
+                              {onNavigateTab && (
+                                <button
+                                  type="button"
+                                  onClick={() => onNavigateTab('knowledge')}
+                                  className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer border border-indigo-200/80"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                  <span>{t(lang, 'chat.viewInKnowledge')}</span>
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400 leading-relaxed bg-white p-4 rounded-xl border border-slate-200/60 text-center">
+                              {t(lang, 'chat.citationHint')}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* TAB: MCP LOGS */}
+                      {activeRightTab === 'logs' && (
+                        <div className="space-y-4 animate-fadeIn">
+                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                            {t(lang, 'chat.mcpLogsTitle')}
+                          </span>
+                          {sessionToolCalls.length === 0 ? (
+                            <p className="text-xs text-slate-400 bg-white p-4 rounded-xl border border-slate-200/60 text-center">
+                              {t(lang, 'chat.noToolsExecuted')}
+                            </p>
+                          ) : (
+                            <div className="space-y-3">
+                              {sessionToolCalls.map((tc) => {
+                                const isExpanded = expandedToolCallId === tc.id;
+                                const isPending = tc.status === 'pending';
+                                return (
+                                  <div
+                                    key={tc.id}
+                                    className={`rounded-xl border shadow-3xs overflow-hidden transition ${isPending ? 'bg-amber-50/50 border-amber-300' : tc.status === 'failed' || tc.status === 'rejected' ? 'bg-rose-50/50 border-rose-300' : 'bg-white border-slate-200'}`}
+                                  >
+                                    <div className="p-3 flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className={`w-2 h-2 rounded-full ${isPending ? 'bg-amber-500 animate-pulse' : tc.status === 'failed' || tc.status === 'rejected' ? 'bg-rose-500' : 'bg-emerald-500'}`}
                                         />
-                                      </button>
+                                        <div>
+                                          <span className="font-mono text-xs font-bold text-slate-800">
+                                            {tc.scopedToolName}
+                                          </span>
+                                          <div className="flex items-center gap-1.5 mt-0.5">
+                                            <span className="text-[9px] text-slate-400 font-mono">
+                                              {tc.latencyMs || 0}ms
+                                            </span>
+                                            <span
+                                              className={`text-[9px] px-1 rounded font-semibold ${isPending ? 'bg-amber-100 text-amber-800' : tc.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}
+                                            >
+                                              {tc.status}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
                                       <button
-                                        onClick={() => setExpandedServerId(isExpanded ? null : server.id)}
-                                        className="p-1 rounded-md hover:bg-slate-200 text-slate-500 transition"
+                                        onClick={() => setExpandedToolCallId(isExpanded ? null : tc.id)}
+                                        className="p-1 rounded-md hover:bg-slate-200/80 text-slate-500 transition"
                                       >
-                                        {isExpanded ? (
-                                          <ChevronUp className="w-3.5 h-3.5" />
-                                        ) : (
-                                          <ChevronDown className="w-3.5 h-3.5" />
-                                        )}
+                                        <Eye className="w-3.5 h-3.5" />
                                       </button>
                                     </div>
-                                  </div>
-
-                                  {isExpanded && (
-                                    <div className="p-3 border-t border-slate-100 bg-white space-y-2.5 animate-fadeIn">
-                                      <p className="text-[11px] text-slate-500">{server.description}</p>
-                                      <div className="pt-2 border-t border-slate-100">
-                                        <span className="text-[10px] font-bold text-slate-400 block mb-1.5 uppercase">
-                                          {t(lang, 'chat.toolsLabel')}
-                                        </span>
-                                        {server.enabledTools.length === 0 ? (
-                                          <p className="text-[10px] text-slate-400 italic">
-                                            {t(lang, 'chat.noToolsEnabled')}
-                                          </p>
-                                        ) : (
-                                          <div className="space-y-1.5">
-                                            {server.enabledTools.map((tool) => {
-                                              const isExternal = ['slack_', 'github_', 'web_', 'fetch_'].some((p) =>
-                                                tool.startsWith(p),
-                                              );
-                                              const isBlocked = selectedMode === 'private' && isExternal;
-                                              return (
-                                                <div
-                                                  key={tool}
-                                                  className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50/50 border border-slate-100 text-xs"
-                                                >
-                                                  <span
-                                                    className={`font-mono text-[11px] font-semibold ${isBlocked ? 'line-through text-slate-400' : 'text-slate-700'}`}
-                                                  >
-                                                    {tool}
-                                                  </span>
-                                                  {isBlocked ? (
-                                                    <span className="px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-600 text-[9px] font-bold border border-rose-100 flex items-center gap-0.5">
-                                                      <Lock className="w-2.5 h-2.5" />
-                                                      {t(lang, 'chat.containedBadge')}
-                                                    </span>
-                                                  ) : (
-                                                    <button
-                                                      onClick={() => handleToggleTool(server.id, tool)}
-                                                      className="px-2 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] transition border border-indigo-100 cursor-pointer"
-                                                    >
-                                                      {t(lang, 'chat.disableTool')}
-                                                    </button>
-                                                  )}
-                                                </div>
-                                              );
-                                            })}
+                                    {isExpanded && (
+                                      <div className="p-3 border-t border-slate-100 bg-slate-50/50 space-y-2.5 animate-fadeIn">
+                                        <div>
+                                          <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">
+                                            {t(lang, 'chat.inputsLabel')}
+                                          </span>
+                                          <pre className="bg-slate-800 text-slate-200 p-2 rounded-lg text-[10px] font-mono overflow-x-auto whitespace-pre-wrap max-h-40">
+                                            {JSON.stringify(tc.inputParams, null, 2)}
+                                          </pre>
+                                        </div>
+                                        {tc.outputResult && (
+                                          <div>
+                                            <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">
+                                              {t(lang, 'chat.resultLabel')}
+                                            </span>
+                                            <pre className="bg-slate-900 text-indigo-200 p-2 rounded-lg text-[10px] font-mono overflow-x-auto whitespace-pre-wrap max-h-40 border border-slate-800">
+                                              {JSON.stringify(tc.outputResult, null, 2)}
+                                            </pre>
                                           </div>
                                         )}
                                       </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* TAB: CITATION INSPECTOR */}
-                    {activeRightTab === 'citations' && (
-                      <div className="space-y-4 animate-fadeIn">
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                          {t(lang, 'chat.sourceVerificationTitle')}
-                        </span>
-                        {activeCitation ? (
-                          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-3xs space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-indigo-600">
-                                {t(lang, 'chat.citationIndex', { index: activeCitation.index })}
-                              </span>
-                              <span className="text-[10px] font-mono bg-indigo-50 px-2 py-0.5 rounded-md text-indigo-700 font-bold border border-indigo-100">
-                                {t(lang, 'chat.citationMatch', { pct: (activeCitation.score * 100).toFixed(0) })}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-slate-800 font-semibold text-xs">
-                              <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                              <h4>{activeCitation.documentTitle}</h4>
-                            </div>
-                            <div className="text-[11px] font-mono text-slate-400 block">
-                              {t(lang, 'chat.citationPage', { page: activeCitation.pageNumber || 1 })}
-                            </div>
-                            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100 font-mono whitespace-pre-wrap">
-                              &ldquo;{activeCitation.snippet}&rdquo;
-                            </p>
-                            {activeCitation.sourceUrl && (
-                              <a
-                                href={activeCitation.sourceUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                <span>{t(lang, 'chat.openOriginalSource')}</span>
-                              </a>
-                            )}
-                            {onNavigateTab && (
-                              <button
-                                type="button"
-                                onClick={() => onNavigateTab('knowledge')}
-                                className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer border border-indigo-200/80"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                <span>{t(lang, 'chat.viewInKnowledge')}</span>
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-xs text-slate-400 leading-relaxed bg-white p-4 rounded-xl border border-slate-200/60 text-center">
-                            {t(lang, 'chat.citationHint')}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* TAB: MCP LOGS */}
-                    {activeRightTab === 'logs' && (
-                      <div className="space-y-4 animate-fadeIn">
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                          {t(lang, 'chat.mcpLogsTitle')}
-                        </span>
-                        {sessionToolCalls.length === 0 ? (
-                          <p className="text-xs text-slate-400 bg-white p-4 rounded-xl border border-slate-200/60 text-center">
-                            {t(lang, 'chat.noToolsExecuted')}
-                          </p>
-                        ) : (
-                          <div className="space-y-3">
-                            {sessionToolCalls.map((tc) => {
-                              const isExpanded = expandedToolCallId === tc.id;
-                              const isPending = tc.status === 'pending';
-                              return (
-                                <div
-                                  key={tc.id}
-                                  className={`rounded-xl border shadow-3xs overflow-hidden transition ${isPending ? 'bg-amber-50/50 border-amber-300' : tc.status === 'failed' || tc.status === 'rejected' ? 'bg-rose-50/50 border-rose-300' : 'bg-white border-slate-200'}`}
-                                >
-                                  <div className="p-3 flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                      <span
-                                        className={`w-2 h-2 rounded-full ${isPending ? 'bg-amber-500 animate-pulse' : tc.status === 'failed' || tc.status === 'rejected' ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                                      />
-                                      <div>
-                                        <span className="font-mono text-xs font-bold text-slate-800">
-                                          {tc.scopedToolName}
-                                        </span>
-                                        <div className="flex items-center gap-1.5 mt-0.5">
-                                          <span className="text-[9px] text-slate-400 font-mono">
-                                            {tc.latencyMs || 0}ms
-                                          </span>
-                                          <span
-                                            className={`text-[9px] px-1 rounded font-semibold ${isPending ? 'bg-amber-100 text-amber-800' : tc.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}
-                                          >
-                                            {tc.status}
-                                          </span>
-                                        </div>
+                                    )}
+                                    {isPending && (
+                                      <div className="p-3 bg-amber-50/80 border-t border-amber-200 flex gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleApproveTool(tc)}
+                                          className="flex-1 py-1 bg-emerald-600 text-white rounded-md text-[11px] font-bold hover:bg-emerald-700 transition cursor-pointer"
+                                        >
+                                          {t(lang, 'chat.approve')}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSessionToolCalls((prev) =>
+                                              prev.map((t) => (t.id === tc.id ? { ...t, status: 'rejected' } : t)),
+                                            );
+                                            if (pendingToolApproval?.id === tc.id) setPendingToolApproval(null);
+                                          }}
+                                          className="flex-1 py-1 bg-slate-200 text-slate-700 rounded-md text-[11px] font-bold hover:bg-slate-300 transition cursor-pointer"
+                                        >
+                                          {t(lang, 'chat.deny')}
+                                        </button>
                                       </div>
-                                    </div>
-                                    <button
-                                      onClick={() => setExpandedToolCallId(isExpanded ? null : tc.id)}
-                                      className="p-1 rounded-md hover:bg-slate-200/80 text-slate-500 transition"
-                                    >
-                                      <Eye className="w-3.5 h-3.5" />
-                                    </button>
+                                    )}
                                   </div>
-                                  {isExpanded && (
-                                    <div className="p-3 border-t border-slate-100 bg-slate-50/50 space-y-2.5 animate-fadeIn">
-                                      <div>
-                                        <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">
-                                          {t(lang, 'chat.inputsLabel')}
-                                        </span>
-                                        <pre className="bg-slate-800 text-slate-200 p-2 rounded-lg text-[10px] font-mono overflow-x-auto whitespace-pre-wrap max-h-40">
-                                          {JSON.stringify(tc.inputParams, null, 2)}
-                                        </pre>
-                                      </div>
-                                      {tc.outputResult && (
-                                        <div>
-                                          <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">
-                                            {t(lang, 'chat.resultLabel')}
-                                          </span>
-                                          <pre className="bg-slate-900 text-indigo-200 p-2 rounded-lg text-[10px] font-mono overflow-x-auto whitespace-pre-wrap max-h-40 border border-slate-800">
-                                            {JSON.stringify(tc.outputResult, null, 2)}
-                                          </pre>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  {isPending && (
-                                    <div className="p-3 bg-amber-50/80 border-t border-amber-200 flex gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleApproveTool(tc)}
-                                        className="flex-1 py-1 bg-emerald-600 text-white rounded-md text-[11px] font-bold hover:bg-emerald-700 transition cursor-pointer"
-                                      >
-                                        {t(lang, 'chat.approve')}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setSessionToolCalls((prev) =>
-                                            prev.map((t) => (t.id === tc.id ? { ...t, status: 'rejected' } : t)),
-                                          );
-                                          if (pendingToolApproval?.id === tc.id) setPendingToolApproval(null);
-                                        }}
-                                        className="flex-1 py-1 bg-slate-200 text-slate-700 rounded-md text-[11px] font-bold hover:bg-slate-300 transition cursor-pointer"
-                                      >
-                                        {t(lang, 'chat.deny')}
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
 
-                  {/* Workspace Info Footer */}
-                  <div className="pt-4 border-t border-slate-200 text-xs text-slate-500 shrink-0">
-                    <p className="font-bold text-slate-700 mb-1.5 flex items-center gap-1">
-                      <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>{t(lang, 'chat.activeMode')}</span>
-                    </p>
-                    <p className="text-[11px] text-slate-600 leading-relaxed mb-2">{modeDescriptions[selectedMode]}</p>
+                    {/* Workspace Info Footer */}
+                    <div className="pt-4 border-t border-slate-200 text-xs text-slate-500 shrink-0">
+                      <p className="font-bold text-slate-700 mb-1.5 flex items-center gap-1">
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>{t(lang, 'chat.activeMode')}</span>
+                      </p>
+                      <p className="text-[11px] text-slate-600 leading-relaxed mb-2">
+                        {modeDescriptions[selectedMode]}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Panel>
-          </>
-        )}
-      </Group>
+              </Panel>
+            </>
+          )}
+        </Group>
+      </div>
+
+      {/* Mobile chat surface: full-width below lg (the desktop panels are
+          hidden there, so this is the only visible surface on phones). */}
+      <div className="lg:hidden h-full w-full">{chatSurface}</div>
 
       <ConfirmDialog
         open={pendingDeleteConversationId !== null}

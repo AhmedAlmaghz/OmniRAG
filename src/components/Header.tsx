@@ -158,8 +158,32 @@ export default function Header({
           </div>
         </button>
 
-        {/* Embedded Desktop Nav Links */}
-        <nav className="hidden md:flex items-center gap-1 bg-slate-950/60 p-1.5 rounded-2xl border border-slate-800/80 mx-4">
+        {/* Embedded Desktop Nav Links — real tablist semantics for screen
+            readers + keyboard arrow navigation (WAI-ARIA tabs pattern). */}
+        <nav
+          className="hidden md:flex items-center gap-1 bg-slate-950/60 p-1.5 rounded-2xl border border-slate-800/80 mx-4"
+          role="tablist"
+          aria-label={t(lang, 'header.tagline')}
+          onKeyDown={(e) => {
+            const ids = navTabs.map((tab) => tab.id);
+            const current = ids.indexOf(activeTab);
+            let next = -1;
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+              const dir = e.key === 'ArrowRight' ? 1 : -1;
+              // RTL lists mirror: ArrowRight moves visually-left in Arabic.
+              const effective = document.dir === 'rtl' ? -dir : dir;
+              next = (current + effective + ids.length) % ids.length;
+            } else if (e.key === 'Home') {
+              next = 0;
+            } else if (e.key === 'End') {
+              next = ids.length - 1;
+            }
+            if (next >= 0) {
+              e.preventDefault();
+              onNavigateTab(ids[next]);
+            }
+          }}
+        >
           {navTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -167,6 +191,10 @@ export default function Header({
               <button
                 key={tab.id}
                 type="button"
+                role="tab"
+                aria-selected={isActive}
+                aria-current={isActive ? 'page' : undefined}
+                tabIndex={isActive ? 0 : -1}
                 onClick={() => onNavigateTab(tab.id)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap select-none ${
                   isActive
@@ -396,7 +424,10 @@ export default function Header({
       </div>
 
       {/* Embedded Mobile Subnav Row */}
-      <div className="md:hidden border-t border-slate-800/60 bg-slate-950/95 px-2 py-2 overflow-x-auto flex items-center gap-1 scrollbar-none">
+      <div
+        className="md:hidden border-t border-slate-800/60 bg-slate-950/95 px-2 py-2 overflow-x-auto flex items-center gap-1 scrollbar-none"
+        role="tablist"
+      >
         {navTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -404,6 +435,8 @@ export default function Header({
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => onNavigateTab(tab.id)}
               className={`flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
                 isActive
