@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev-pro, 'dev/**']
   pull_request:
-    branches: [main]
+    branches: [main, dev-pro, 'dev/**']
 
 # Cancel in-progress runs on the same ref when a new commit lands.
 concurrency:

@@ -1,6 +1,20 @@
-# 🚀 منصة OmniRAG (الإصدار v0.1.8)
+# 🚀 منصة OmniRAG (الإصدار v0.10.0)
 
 **OmniRAG** هي منصة متكاملة ومتقدمة للجيل الجديد من أنظمة **الاسترجاع المعزز بالتوليد (RAG)** الموثوقة والمخصصة للمؤسسات متعددة المستأجرين (Multi-Tenant Enterprise RAG & MCP Agentic Engine).
+
+---
+
+## 🔐 متغيرات البيئة الإلزامية في الإنتاج (Mandatory Production Env)
+
+> التطبيق **يرفض العمل** في الإنتاج (`NODE_ENV=production`) بدون المتغيرات التالية:
+
+| المتغير                             | الغرض                                                                                           |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `DATABASE_URL` أو `POSTGRES_URL`    | قاعدة بيانات PostgreSQL (Neon/Supabase أو أي مزوّد)                                             |
+| `MCP_OAUTH_ENCRYPTION_KEY`          | مفتاح AES-256-GCM لتشفير اعتمادات الموصلات وأسرار Webhooks — ولّده بـ `openssl rand -base64 32` |
+| `CRON_SECRET` أو `JOBS_TICK_SECRET` | حماية مسار `/api/v1/jobs/tick` (Vercel Cron) — بدونه يرد 401                                    |
+
+متغيرات اختيارية مهمة: `PLAN_SELF_SERVE=true` يسمح بالترقية الذاتية بين الخطط (مقفلة افتراضيًا إلى إدخال مزود فواتير)، `ALLOWED_ORIGINS` لقائمة CORS المسموحة، `ALLOW_CLIENT_ENV` لقبول متغيرات من الواجهة (غير موصى به في الإنتاج).
 
 ---
 
@@ -41,7 +55,7 @@
 
 ## 🛠️ التقنيات المستخدمة (Tech Stack)
 
-- **الإطار البرمجي:** Next.js 15+ (App Router) & React 19
+- **الإطار البرمجي:** Next.js 16.3 (App Router، مسارات متعددة `/chat`, `/knowledge`, `/mcp`, `/analytics`, `/settings`) & React 19.2
 - **لغة البرمجة:** TypeScript
 - **التنسيق والواجهات:** Tailwind CSS v4 & Lucide Icons
 - **قاعدة البيانات والتخزين الدائم:** PostgreSQL (Drizzle ORM) & Qdrant للبحث المتجهي
