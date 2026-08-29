@@ -371,6 +371,20 @@ export async function migrateAndSeedWithDrizzle() {
     ddl(`CREATE UNIQUE INDEX IF NOT EXISTS resource_shares_link_token_idx
        ON resource_shares (link_token) WHERE link_token IS NOT NULL;`);
 
+    // Durable rate-limit windows: the in-memory limiter is per-process, so on
+    // serverless the effective limit is N× instances and every cold start
+    // wipes the counters (brute-force/share-token abuse). One upsert per
+    // request, atomic via the single-statement CASE below. Timestamps follow
+    // the repo-wide varchar(ISO-8601) convention (see schema.ts header).
+    ddl(`
+      CREATE TABLE IF NOT EXISTS rate_limit_windows (
+        bucket_id VARCHAR(300) PRIMARY KEY,
+        count INTEGER NOT NULL DEFAULT 1,
+        window_start VARCHAR(100) NOT NULL
+      );
+    `);
+    ddl(`CREATE INDEX IF NOT EXISTS rate_limit_windows_window_start_idx ON rate_limit_windows (window_start);`);
+
     // Ensure all Drizzle-specific table schema upgrades (missing columns) are fully processed
     ddl(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(50) NOT NULL DEFAULT 'file';`);
     ddl(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS chunk_count INT DEFAULT 0;`);

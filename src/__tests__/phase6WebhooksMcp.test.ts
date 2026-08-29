@@ -1,4 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+// The SSRF guard now resolves DNS before allowing a fetch. These tests dial
+// fictional hosts (hooks.acme-corp.net) over a mocked global fetch, so DNS is
+// mocked to a public address; the REAL DNS rejection path is covered
+// separately in mcpNetSsrf.test.ts (nip.io / localtest.me / unresolvable).
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}));
 import { db, memoryDb } from '@/lib/storage/db';
 import {
   generateWebhookSecret,

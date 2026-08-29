@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
+import { buildDocsCsp } from '@/lib/security/securityHeaders';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,8 +11,13 @@ export const dynamic = 'force-dynamic';
  * rendered into the page.
  */
 export async function GET(req: NextRequest) {
-  const rl = checkRateLimit(req, 30, 60000);
+  const rl = await checkRateLimit(req, 30, 60000);
   if (!rl.success && rl.response) return rl.response;
+
+  // Scoped CSP for this page only (unpkg assets); the app-wide CSP forbids
+  // third-party scripts, so this route relaxes exactly what Swagger needs.
+  const nonce = req.headers.get('x-csp-nonce') || '';
+  const csp = buildDocsCsp(nonce);
 
   const html = `<!DOCTYPE html>
 <html lang="en" dir="ltr">
@@ -29,7 +35,7 @@ export async function GET(req: NextRequest) {
 <body>
   <div id="swagger-ui"></div>
   <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
-  <script>
+  <script nonce="${nonce}">
     window.onload = () => {
       window.ui = window.SwaggerUIBundle({
         url: '/api/docs/openapi.json',
@@ -48,6 +54,7 @@ export async function GET(req: NextRequest) {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=300',
+      'Content-Security-Policy': csp,
     },
   });
 }

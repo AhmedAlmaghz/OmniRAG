@@ -4,6 +4,7 @@ import { checkRateLimit } from '../security/rateLimiter';
 import { getEnv } from '../env/runtimeEnv';
 import { db } from '../storage/db';
 import { runWithRequestContext } from '../config/requestContext';
+import { isSameOriginRequest, getAllowedOrigins } from '../security/securityHeaders';
 
 type ApiHandler = (req: NextRequest, authCtx: AuthenticatedContext, props?: any) => Promise<Response | NextResponse>;
 
@@ -37,9 +38,16 @@ export function withAuthAndRateLimit(handler: ApiHandler, options?: { limit?: nu
       }
 
       // 2. Rate Limiting
-      const rateLimit = checkRateLimit(req, options?.limit || 30, options?.windowMs || 60000);
+      const rateLimit = await checkRateLimit(req, options?.limit || 30, options?.windowMs || 60000);
       if (!rateLimit.success && rateLimit.response) {
         return rateLimit.response;
+      }
+
+      // 2b. CSRF origin gate for state-changing requests. Cookie-authenticated
+      // mutations must originate from this deployment or an allowlisted CORS
+      // origin; Bearer API-key traffic is exempt (not ambient credentials).
+      if (!isSameOriginRequest(req, getAllowedOrigins())) {
+        return NextResponse.json({ error: 'Forbidden (cross-origin request rejected)' }, { status: 403 });
       }
 
       // 3. Authentication (strict: rejects missing/invalid tokens — see apiAuth.ts)

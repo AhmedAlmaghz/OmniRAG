@@ -1,4 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+// The webhook quota test dials a fictional host (hooks.acme-corp.net); the
+// SSRF guard resolves DNS before allowing it, so mock a public answer. Real
+// DNS rejection is covered in mcpNetSsrf.test.ts.
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}));
 import { db, memoryDb } from '@/lib/storage/db';
 import { t, isLocale, getDictionary, SUPPORTED_LOCALES, type Dictionary, type Locale } from '@/lib/i18n';
 import { en } from '@/lib/i18n/dictionaries/en';

@@ -22,18 +22,35 @@ describe('assertPublicHttpUrl — SSRF guard', () => {
     'https://mcp.slack.internal/v2', // seeded dummy host
   ];
 
-  it.each(blocked)('blocks %s', (url) => {
-    expect(() => assertPublicHttpUrl(url)).toThrow();
+  it.each(blocked)('blocks %s (literal patterns, no DNS needed)', async (url) => {
+    await expect(assertPublicHttpUrl(url)).rejects.toThrow();
   });
 
-  it('allows public https URLs', () => {
-    expect(assertPublicHttpUrl('https://example.org/page?q=1').hostname).toBe('example.org');
-    expect(assertPublicHttpUrl('http://api.public-source.dev/data').protocol).toBe('http:');
+  it('allows public https URLs (resolvable public hosts)', async () => {
+    // example.org is the IANA-reserved public documentation host with stable
+    // public A records; a live DNS query here also proves the happy path.
+    const url = await assertPublicHttpUrl('https://example.org/page?q=1');
+    expect(url.hostname).toBe('example.org');
   });
 
-  it('rejects garbage input', () => {
-    expect(() => assertPublicHttpUrl('not a url')).toThrow();
-    expect(() => assertPublicHttpUrl('')).toThrow();
+  it('rejects garbage input', async () => {
+    await expect(assertPublicHttpUrl('not a url')).rejects.toThrow();
+    await expect(assertPublicHttpUrl('')).rejects.toThrow();
+  });
+
+  it('rejects hostnames that do not resolve (unverifiable = unfetchable)', async () => {
+    await expect(assertPublicHttpUrl('https://this-host-does-not-exist-anywhere.invalid/x')).rejects.toThrow();
+  });
+
+  it('blocks DNS-rebinding style hostnames that resolve to private IPs (nip.io)', async () => {
+    // nip.io maps *.10.0.0.5.nip.io → 10.0.0.5 — passes the literal regex,
+    // must be caught by the DNS resolution check.
+    await expect(assertPublicHttpUrl('http://10.0.0.5.nip.io/admin')).rejects.toThrow();
+    await expect(assertPublicHttpUrl('http://192-168-1-10.nip.io/')).rejects.toThrow();
+  });
+
+  it('blocks localtest.me (always resolves to 127.0.0.1)', async () => {
+    await expect(assertPublicHttpUrl('http://localtest.me/api')).rejects.toThrow();
   });
 });
 

@@ -9,7 +9,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * 4. Custom tools on servers with PUBLIC endpoints are dispatched remotely via
  *    the stateless JSON-RPC protocol; private/dummy endpoints are rejected by
  *    the SSRF guard.
+ *
+ * DNS note: fictional public hosts (mcp.public-relay.org) get a mocked public
+ * DNS answer here; real DNS rejection is covered in mcpNetSsrf.test.ts.
  */
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}));
 
 function makeDbMock(servers: any[] = []) {
   return {

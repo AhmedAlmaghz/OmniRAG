@@ -30,27 +30,27 @@ function makeReq(authorization?: string): NextRequest {
 describe('checkKeyedRateLimit — sliding window buckets', () => {
   beforeEach(() => resetRateLimitStore());
 
-  it('allows requests up to the limit, then rejects with retryAfterMs', () => {
+  it('allows requests up to the limit, then rejects with retryAfterMs', async () => {
     for (let i = 0; i < 5; i++) {
-      expect(checkKeyedRateLimit('bucket-a', 5, 60000).success).toBe(true);
+      expect((await checkKeyedRateLimit('bucket-a', 5, 60000)).success).toBe(true);
     }
-    const blocked = checkKeyedRateLimit('bucket-a', 5, 60000);
+    const blocked = await checkKeyedRateLimit('bucket-a', 5, 60000);
     expect(blocked.success).toBe(false);
     expect(blocked.retryAfterMs).toBeGreaterThan(0);
     expect(blocked.retryAfterMs).toBeLessThanOrEqual(60000);
   });
 
-  it('keeps independent buckets isolated', () => {
-    for (let i = 0; i < 3; i++) checkKeyedRateLimit('bucket-b', 3, 60000);
-    expect(checkKeyedRateLimit('bucket-b', 3, 60000).success).toBe(false);
-    expect(checkKeyedRateLimit('bucket-c', 3, 60000).success).toBe(true);
+  it('keeps independent buckets isolated', async () => {
+    for (let i = 0; i < 3; i++) await checkKeyedRateLimit('bucket-b', 3, 60000);
+    expect((await checkKeyedRateLimit('bucket-b', 3, 60000)).success).toBe(false);
+    expect((await checkKeyedRateLimit('bucket-c', 3, 60000)).success).toBe(true);
   });
 
-  it('resetRateLimitStore clears every bucket', () => {
-    for (let i = 0; i < 3; i++) checkKeyedRateLimit('bucket-d', 3, 60000);
-    expect(checkKeyedRateLimit('bucket-d', 3, 60000).success).toBe(false);
+  it('resetRateLimitStore clears every bucket', async () => {
+    for (let i = 0; i < 3; i++) await checkKeyedRateLimit('bucket-d', 3, 60000);
+    expect((await checkKeyedRateLimit('bucket-d', 3, 60000)).success).toBe(false);
     resetRateLimitStore();
-    expect(checkKeyedRateLimit('bucket-d', 3, 60000).success).toBe(true);
+    expect((await checkKeyedRateLimit('bucket-d', 3, 60000)).success).toBe(true);
   });
 });
 

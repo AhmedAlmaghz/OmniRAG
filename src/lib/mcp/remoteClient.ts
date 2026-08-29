@@ -106,7 +106,7 @@ export async function withRemoteMcpSession<T>(
       return await fn(client);
     }
 
-    const url = assertPublicHttpUrl(server.endpointUrl);
+    const url = await assertPublicHttpUrl(server.endpointUrl);
 
     // Attach the tenant's decrypted OAuth bearer token when one is provisioned
     // for this server (fixes the old gap where tokens were stored but never sent).

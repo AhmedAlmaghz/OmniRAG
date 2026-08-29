@@ -51,7 +51,7 @@ const DEFAULT_TENANT_SETTINGS: TenantSettings = {
 export async function POST(req: NextRequest) {
   // Rate-limit BEFORE any work, including before CSRF/Argon2, so a flood of
   // registration requests cannot weaponise Argon2 hashing as a CPU DoS.
-  const rl = checkRateLimit(req, REGISTER_RATE_LIMIT, REGISTER_RATE_WINDOW);
+  const rl = await checkRateLimit(req, REGISTER_RATE_LIMIT, REGISTER_RATE_WINDOW);
   if (!rl.success && rl.response) return rl.response;
 
   if (!isCsrfOk(req)) return csrfDenied();

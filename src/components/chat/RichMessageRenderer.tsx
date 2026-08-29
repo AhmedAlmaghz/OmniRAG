@@ -38,6 +38,7 @@ import { CitationInline } from '@/components/chat/CitationInline';
 import { Citation } from '@/lib/types/omnirag';
 import { normalizeChartSpec, toEChartsOption } from '@/lib/skills/charts';
 import { t } from '@/lib/i18n';
+import { sanitizeSvg } from '@/lib/security/svgSanitizer';
 
 interface RichMessageRendererProps {
   content: string;
@@ -140,7 +141,7 @@ const MermaidBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lan
         });
         const id = `mermaid-${Math.random().toString(36).slice(2)}`;
         const { svg } = await mermaid.render(id, code);
-        if (!cancelled) setSvg(svg);
+        if (!cancelled) setSvg(sanitizeSvg(svg));
       } catch (e: any) {
         if (!cancelled) setError(e?.message || 'mermaid render failed');
       }

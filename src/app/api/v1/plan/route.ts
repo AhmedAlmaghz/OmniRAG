@@ -4,7 +4,15 @@ import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { guardPermission, requirePermission } from '@/lib/auth/permissions';
-import { PLANS, PLAN_IDS, getTenantPlan, getTenantUsage, normalizePlanId } from '@/lib/services/planService';
+import {
+  PLANS,
+  PLAN_IDS,
+  getTenantPlan,
+  getTenantPlanId,
+  getTenantUsage,
+  normalizePlanId,
+  canSwitchPlan,
+} from '@/lib/services/planService';
 import type { PlanId } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
@@ -55,6 +63,22 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx) => {
       );
     }
     const planId = normalizePlanId(requested);
+
+    // Free-tier lock: without a billing provider, self-serve upgrades would
+    // grant unlimited (enterprise) quotas for free. Upgrades require the
+    // operator's PLAN_SELF_SERVE=true opt-in; downgrades always pass.
+    const currentPlan = await getTenantPlanId(authCtx.tenantId);
+    const switchCheck = canSwitchPlan(currentPlan, planId);
+    if (!switchCheck.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            'ترقية الخطة تتطلب تفعيلًا من الإدارة. يُسمح بتخفيض الخطة فقط عبر الخدمة الذاتية (Plan upgrade requires operator approval; only downgrades are self-serve).',
+          code: '403_PLAN_UPGRADE_LOCKED',
+        },
+        { status: 403 },
+      );
+    }
 
     const tenant = await db.updateTenantPlan(authCtx.tenantId, planId);
     if (!tenant) {

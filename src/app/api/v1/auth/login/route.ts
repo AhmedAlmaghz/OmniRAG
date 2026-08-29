@@ -36,7 +36,7 @@ const LOGIN_EMAIL_RATE_LIMIT = 5;
 export async function POST(req: NextRequest) {
   // Rate-limit BEFORE any work, including before CSRF, so a flood of bogus
   // requests cannot weaponise the Argon2 dummy-verify as a CPU DoS.
-  const rl = checkRateLimit(req, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW);
+  const rl = await checkRateLimit(req, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW);
   if (!rl.success && rl.response) return rl.response;
 
   if (!isCsrfOk(req)) return csrfDenied();
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     // Secondary per-credential throttle: an attacker rotating IPs across the
     // per-IP ceiling still cannot exceed this per-email budget. Checked AFTER
     // input validation so a malformed email cannot seed a bucket entry.
-    const emailRl = checkRateLimit(req, LOGIN_EMAIL_RATE_LIMIT, LOGIN_RATE_WINDOW, email);
+    const emailRl = await checkRateLimit(req, LOGIN_EMAIL_RATE_LIMIT, LOGIN_RATE_WINDOW, email);
     if (!emailRl.success && emailRl.response) return emailRl.response;
 
     const user = await db.getUserByEmail(email);

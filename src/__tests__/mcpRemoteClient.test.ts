@@ -9,7 +9,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * 3. Tool results are extracted from standard CallToolResult content;
  *    protocol-level isError surfaces as a thrown error with the server's
  *    message.
+ *
+ * DNS note: the SSRF guard resolves hostnames before connecting. The
+ * fictional public hosts used here (mcp.corp-gateway.org, …) do not exist,
+ * so DNS is mocked to a public address — real DNS rejection (nip.io,
+ * localtest.me, unresolvable) is covered in mcpNetSsrf.test.ts.
  */
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}));
 
 async function loadRemoteClient(opts: { oauthToken?: string | null } = {}) {
   vi.resetModules();

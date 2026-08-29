@@ -1,19 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-interface RateLimitStore {
-  [key: string]: { count: number; resetAt: number };
-}
-
-const store: RateLimitStore = {};
+import { checkKeyedRateLimitDurable, resetDurableRateLimitStore } from './durableRateLimiter';
 
 /**
- * In-memory sliding window Rate Limiter for API endpoints.
+ * Rate limiter for API endpoints.
  *
- * NOTE: store is per-process and resets on cold start. On serverless (Vercel/
- * Cloud Run) with N concurrent instances the effective limit is N× higher and a
- * cold start wipes the counter. For production-grade throttling back this with
- * an external store (Upstash Redis / Vercel KV). The per-instance limiter
- * remains a useful first line and is what every route currently uses.
+ * The window state now lives in Postgres (rate_limit_windows table) via a
+ * single atomic upsert per request, so the limit is enforced across ALL
+ * serverless instances and survives cold starts — the previous in-memory
+ * store multiplied the effective limit by the instance count and reset on
+ * every cold boot. When Postgres is unreachable (local dev without a DB,
+ * transient outage) the durable limiter falls back to an in-memory window
+ * rather than blocking traffic; see durableRateLimiter.ts.
  *
  * @param req NextRequest
  * @param limit Max requests per window
@@ -24,79 +21,57 @@ const store: RateLimitStore = {};
  *   ceiling. Callers typically run BOTH the per-IP limit (no customKey) and
  *   the per-credential limit (with customKey), accepting the stricter result.
  */
-export function checkRateLimit(
+export async function checkRateLimit(
   req: NextRequest,
   limit: number = 30,
   windowMs: number = 60000,
   customKey?: string,
-): { success: boolean; response?: NextResponse } {
+): Promise<{ success: boolean; response?: NextResponse }> {
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || req.headers.get('x-real-ip') || '127.0.0.1';
   const path = req.nextUrl.pathname;
   // A customKey REPLACES the IP dimension so the credential bucket is
   // IP-independent (defeats IP rotation in credential stuffing). The plain
-  // per-IP bucket preserves its original `(ip,path)` shape.
+  // per-IP bucket preserves its original `(ip:path)` shape.
   const key = customKey ? `${customKey}:${path}` : `${ip}:${path}`;
-  const now = Date.now();
 
-  const record = store[key];
+  const result = await checkKeyedRateLimitDurable(key, limit, windowMs);
+  if (result.success) return { success: true };
 
-  if (!record || now > record.resetAt) {
-    store[key] = { count: 1, resetAt: now + windowMs };
-    return { success: true };
-  }
-
-  if (record.count >= limit) {
-    return {
-      success: false,
-      response: NextResponse.json(
-        {
-          error: 'تم تجاوز حد الطلبات المسموح به. يرجى المحاولة لاحقاً (Rate Limit Exceeded)',
-          code: '429_TOO_MANY_REQUESTS',
-          retryAfterMs: record.resetAt - now,
+  return {
+    success: false,
+    response: NextResponse.json(
+      {
+        error: 'تم تجاوز حد الطلبات المسموح به. يرجى المحاولة لاحقاً (Rate Limit Exceeded)',
+        code: '429_TOO_MANY_REQUESTS',
+        retryAfterMs: result.retryAfterMs ?? windowMs,
+      },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': Math.ceil((result.retryAfterMs ?? windowMs) / 1000).toString(),
         },
-        {
-          status: 429,
-          headers: {
-            'Retry-After': Math.ceil((record.resetAt - now) / 1000).toString(),
-          },
-        },
-      ),
-    };
-  }
-
-  record.count += 1;
-  return { success: true };
+      },
+    ),
+  };
 }
 
 /**
  * Request-independent sliding-window check keyed by an arbitrary bucket
- * identifier (e.g. `apikey:${keyId}` for per-API-key ceilings). Shares the
- * same in-memory store and per-process caveats as checkRateLimit, but needs
- * no NextRequest — use it in auth layers and background services where the
+ * identifier (e.g. `apikey:${keyId}` for per-API-key ceilings). Persists via
+ * the durable store; use it in auth layers and background services where the
  * caller already knows the credential/account identity.
  */
-export function checkKeyedRateLimit(
+export async function checkKeyedRateLimit(
   bucketKey: string,
   limit: number,
   windowMs: number = 60000,
-): { success: boolean; retryAfterMs?: number } {
-  const now = Date.now();
-  const record = store[bucketKey];
-
-  if (!record || now > record.resetAt) {
-    store[bucketKey] = { count: 1, resetAt: now + windowMs };
-    return { success: true };
-  }
-
-  if (record.count >= limit) {
-    return { success: false, retryAfterMs: record.resetAt - now };
-  }
-
-  record.count += 1;
-  return { success: true };
+): Promise<{ success: boolean; retryAfterMs?: number }> {
+  const result = await checkKeyedRateLimitDurable(bucketKey, limit, windowMs);
+  if (result.success) return { success: true };
+  return { success: false, retryAfterMs: result.retryAfterMs };
 }
 
-/** Test/maintenance hook — clears all in-memory rate limit buckets. */
+/** Test/maintenance hook — clears the fallback store inside the durable limiter. */
 export function resetRateLimitStore(): void {
-  for (const key of Object.keys(store)) delete store[key];
+  resetDurableRateLimitStore();
 }

@@ -28,11 +28,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   const origin = `${isSecure ? 'https' : 'http'}://${host}`;
 
+  // Per-request CSP nonce stamped by the middleware; the inline origin script
+  // below is the only inline script in the app.
+  const nonce = headersList.get('x-csp-nonce') || '';
+
   return (
     <html lang="ar" dir="rtl" className="h-full">
       <head>
         <link rel="icon" href="/icon.svg" type="image/svg+xml" />
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: `window.__APP_ORIGIN__ = ${JSON.stringify(origin)};`,
           }}

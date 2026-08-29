@@ -10,7 +10,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  *    back via onAutoExecuted with the real outcome.
  * 4. Custom tenant schemas (AI-generated / remote) are exposed as dynamic
  *    tools from their stored JSON schema.
+ *
+ * DNS note: fictional remote hosts get a mocked public DNS answer (the SSRF
+ * guard resolves before connecting); real rejection is in mcpNetSsrf.test.ts.
  */
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+}));
 
 async function loadBridge() {
   vi.resetModules();

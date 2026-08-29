@@ -116,7 +116,7 @@ async function dispatchToRemoteServer(
   // stdio servers spawn a local process (self-hosted only, gated again inside
   // the transport layer) and have no URL to guard.
   if (server.transportType !== 'stdio') {
-    assertPublicHttpUrl(server.endpointUrl);
+    await assertPublicHttpUrl(server.endpointUrl);
   }
   return callRemoteTool(tenantId, server, toolName, args, timeoutMs);
 }

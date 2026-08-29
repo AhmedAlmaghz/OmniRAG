@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
       getEnv(key, req);
     }
 
-    const rateLimit = checkRateLimit(req, 20, 60000, 'public-share-link');
+    const rateLimit = await checkRateLimit(req, 20, 60000, 'public-share-link');
     if (!rateLimit.success && rateLimit.response) return rateLimit.response;
 
     const { token } = await params;

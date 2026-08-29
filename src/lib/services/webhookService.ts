@@ -92,7 +92,7 @@ export async function createWebhookEndpoint(
 ): Promise<{ endpoint?: WebhookEndpoint; plainSecret?: string; error?: string; code?: string }> {
   const url = typeof input.url === 'string' ? input.url.trim() : '';
   try {
-    assertPublicHttpUrl(url);
+    await assertPublicHttpUrl(url);
   } catch (err: any) {
     return { error: err?.message || 'رابط غير صالح (Invalid URL)', code: '400_BAD_URL' };
   }
@@ -162,7 +162,7 @@ export async function updateWebhookEndpoint(
   if (input.url !== undefined) {
     const url = typeof input.url === 'string' ? input.url.trim() : '';
     try {
-      assertPublicHttpUrl(url);
+      await assertPublicHttpUrl(url);
     } catch (err: any) {
       return { error: err?.message || 'رابط غير صالح (Invalid URL)', code: '400_BAD_URL' };
     }
@@ -221,7 +221,7 @@ export async function deliverToEndpoint(
   // Re-validate at dispatch time — a URL that was public at creation could
   // have been edited around the guard or re-pointed via DNS.
   try {
-    assertPublicHttpUrl(endpoint.url);
+    await assertPublicHttpUrl(endpoint.url);
   } catch (err: any) {
     await stamp('failed');
     return { ok: false, status: null, error: err?.message || 'URL rejected' };

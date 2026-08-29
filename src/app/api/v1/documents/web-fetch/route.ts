@@ -77,7 +77,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
     // Early scheme/SSRF validation for a precise error message; safeFetchBinary
     // re-validates (defense in depth) before any byte is downloaded.
     try {
-      assertPublicHttpUrl(url);
+      await assertPublicHttpUrl(url);
     } catch (urlErr: any) {
       return NextResponse.json(
         { error: urlErr?.message || 'رابط غير مسموح', code: '400_URL_REJECTED' },

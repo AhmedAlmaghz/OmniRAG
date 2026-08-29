@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     getEnv(key, req);
   }
 
-  const rl = checkRateLimit(req, 10, 60000, 'sso-callback');
+  const rl = await checkRateLimit(req, 10, 60000, 'sso-callback');
   if (!rl.success && rl.response) return rl.response;
 
   const { searchParams } = new URL(req.url);

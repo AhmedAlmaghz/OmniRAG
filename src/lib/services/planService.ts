@@ -141,6 +141,31 @@ export async function getTenantPlan(tenantId: string): Promise<PlanDescriptor> {
   return PLANS[await getTenantPlanId(tenantId)];
 }
 
+/**
+ * Plan tier order — used to distinguish upgrades from downgrades.
+ * Enterprise sits above business; the numeric order matches PLAN_IDS.
+ */
+const PLAN_RANK: Record<PlanId, number> = { individual: 0, team: 1, business: 2, enterprise: 3 };
+
+export interface PlanSwitchCheck {
+  allowed: boolean;
+  /** True when the change raises the tier (needs PLAN_SELF_SERVE). */
+  isUpgrade: boolean;
+}
+
+/**
+ * Self-serve plan switching gate. Until a billing provider is wired, free
+ * upgrades would hand every owner enterprise (unlimited) quotas for free, so
+ * upgrades require an explicit operator opt-in via PLAN_SELF_SERVE=true.
+ * Downgrades are always allowed — they only ever shrink the tenant's quotas.
+ */
+export function canSwitchPlan(currentPlan: PlanId, requestedPlan: PlanId): PlanSwitchCheck {
+  const isUpgrade = PLAN_RANK[requestedPlan] > PLAN_RANK[currentPlan];
+  if (!isUpgrade) return { allowed: true, isUpgrade: false };
+  const selfServe = (process.env.PLAN_SELF_SERVE || '').toLowerCase() === 'true';
+  return { allowed: selfServe, isUpgrade: true };
+}
+
 export type QuotaResource = keyof PlanQuotas;
 
 export const QUOTA_RESOURCES: readonly QuotaResource[] = [

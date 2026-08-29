@@ -11,23 +11,22 @@ describe('System Config & Rate Limiter Tests', () => {
     expect(SYSTEM_CONFIG.RAG.HYBRID_WEIGHTS.LEXICAL).toBe(0.3);
   });
 
-  it('should rate limit requests exceeding threshold', () => {
+  it('should rate limit requests exceeding threshold', async () => {
     const req = new NextRequest('http://localhost:3000/api/v1/chat/completions', {
       headers: { 'x-forwarded-for': '127.0.0.1' },
     });
-    
+
     // First request should pass
-    const firstCheck = checkRateLimit(req, 2, 60000);
+    const firstCheck = await checkRateLimit(req, 2, 60000);
     expect(firstCheck.success).toBe(true);
 
     // Second request should pass
-    const secondCheck = checkRateLimit(req, 2, 60000);
+    const secondCheck = await checkRateLimit(req, 2, 60000);
     expect(secondCheck.success).toBe(true);
 
     // Third request should be blocked
-    const thirdCheck = checkRateLimit(req, 2, 60000);
+    const thirdCheck = await checkRateLimit(req, 2, 60000);
     expect(thirdCheck.success).toBe(false);
     expect(thirdCheck.response?.status).toBe(429);
   });
 });
-

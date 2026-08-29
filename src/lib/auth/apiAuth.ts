@@ -78,7 +78,7 @@ async function verifyApiKeyAuth(req: NextRequest): Promise<AuthenticatedContext 
   // Per-key ceiling (requests/minute) — bucketed by key id so the limit is
   // independent of client IP and applies uniformly across all routes.
   if (typeof record.rateLimitPerMinute === 'number' && record.rateLimitPerMinute > 0) {
-    const rl = checkKeyedRateLimit(`apikey:${record.id}`, record.rateLimitPerMinute, 60000);
+    const rl = await checkKeyedRateLimit(`apikey:${record.id}`, record.rateLimitPerMinute, 60000);
     if (!rl.success) {
       return {
         authenticated: false,

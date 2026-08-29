@@ -39,7 +39,7 @@ function deriveRedirectUri(req: NextRequest): string {
 
 export async function POST(req: NextRequest) {
   // Tight limit: this is unauthenticated and hits the DB + provider discovery.
-  const rl = checkRateLimit(req, 10, 60000, 'sso-initiate');
+  const rl = await checkRateLimit(req, 10, 60000, 'sso-initiate');
   if (!rl.success && rl.response) return rl.response;
 
   try {

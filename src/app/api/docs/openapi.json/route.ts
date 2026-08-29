@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
  * rate-limited — the spec contains no secrets, only the contract.
  */
 export async function GET(req: NextRequest) {
-  const rl = checkRateLimit(req, 30, 60000);
+  const rl = await checkRateLimit(req, 30, 60000);
   if (!rl.success && rl.response) return rl.response;
 
   return NextResponse.json(buildOpenApiDocument(), {
