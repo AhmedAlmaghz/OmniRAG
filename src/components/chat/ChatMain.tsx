@@ -515,7 +515,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowModeMenu(false)} />
                   <div
-                    className="absolute bottom-full mb-2 p-2 bg-white rounded-xl shadow-xl border border-slate-200 w-52 z-30 animate-fadeIn left-0"
+                    className="absolute bottom-full mb-2 p-2 bg-white rounded-xl shadow-xl border border-slate-200 w-52 z-30 animate-fadeIn start-0"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1.5 px-2">
