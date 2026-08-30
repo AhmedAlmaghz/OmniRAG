@@ -4,6 +4,8 @@ import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { guardPermission } from '@/lib/auth/permissions';
+import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
+import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,29 +38,35 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { para
   getEnv('QDRANT_URL', req);
   getEnv('QDRANT_API_KEY', req);
 
-  try {
-    const existing = await db.getDocumentById(id, tenantId);
-    if (!existing) {
-      return NextResponse.json({ error: 'المستند غير موجود', code: 'NOT_FOUND' }, { status: 404 });
-    }
+  // Bind the client's configured models to this request: reindexing regenerates
+  // embeddings, which must use the user's embeddingModel choice — not the default.
+  const modelConfig = parseModelConfigFromRequest(req);
 
-    const outcome = await db.reindexDocument(id, tenantId);
-    if (!outcome) {
-      return NextResponse.json(
-        { error: 'تعذرت إعادة الفهرسة: المستند لا يحتوي على محتوى', code: 'EMPTY_CONTENT' },
-        { status: 422 },
-      );
-    }
+  return await runWithModelConfig(modelConfig, async () => {
+    try {
+      const existing = await db.getDocumentById(id, tenantId);
+      if (!existing) {
+        return NextResponse.json({ error: 'المستند غير موجود', code: 'NOT_FOUND' }, { status: 404 });
+      }
 
-    return NextResponse.json({
-      success: outcome.result.success,
-      message: outcome.result.success
-        ? `تمت إعادة فهرسة "${outcome.document.title}" بنجاح (${outcome.result.indexed} مقطع)`
-        : `اكتملت إعادة الفهرسة مع أخطاء: ${outcome.result.errors.join('؛ ')}`,
-      document: outcome.document,
-      indexing: outcome.result,
-    });
-  } catch (err: any) {
-    return serverErrorResponse('documents reindex POST', err);
-  }
+      const outcome = await db.reindexDocument(id, tenantId);
+      if (!outcome) {
+        return NextResponse.json(
+          { error: 'تعذرت إعادة الفهرسة: المستند لا يحتوي على محتوى', code: 'EMPTY_CONTENT' },
+          { status: 422 },
+        );
+      }
+
+      return NextResponse.json({
+        success: outcome.result.success,
+        message: outcome.result.success
+          ? `تمت إعادة فهرسة "${outcome.document.title}" بنجاح (${outcome.result.indexed} مقطع)`
+          : `اكتملت إعادة الفهرسة مع أخطاء: ${outcome.result.errors.join('؛ ')}`,
+        document: outcome.document,
+        indexing: outcome.result,
+      });
+    } catch (err: any) {
+      return serverErrorResponse('documents reindex POST', err);
+    }
+  });
 });

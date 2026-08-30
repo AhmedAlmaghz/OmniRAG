@@ -4,6 +4,8 @@ import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { guardPermission } from '@/lib/auth/permissions';
 import { dispatchWebhookEvent } from '@/lib/services/webhookService';
+import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
+import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
 // The background sync keeps running after the response is sent (Next `after`).
 // On serverless hosts this budget covers the whole invocation, including the
@@ -26,6 +28,12 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { para
   getEnv('QDRANT_URL', req);
   getEnv('QDRANT_API_KEY', req);
 
+  // Bind the client's configured models BEFORE scheduling the background sync:
+  // the sync pipeline runs inside `after()` — outside any request context — so
+  // OCR (ocrModel), transcription (whisperModel) and embedding (embeddingModel)
+  // must resolve from THIS request's config, captured here and re-bound below.
+  const modelConfig = parseModelConfigFromRequest(req);
+
   const source = await db.getSourceById(id, tenantId);
   if (!source) {
     return NextResponse.json({ error: 'Source connector not found' }, { status: 404 });
@@ -41,23 +49,28 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { para
   await db.updateSource(id, { status: 'syncing' }, tenantId);
 
   after(async () => {
-    try {
-      await db.syncSource(id, tenantId);
-      // Outbound webhook (Phase 6) — sync finished successfully. Best-effort:
-      // dispatch never throws and must not affect the sync outcome.
-      const synced = await db.getSourceById(id, tenantId).catch(() => null);
-      await dispatchWebhookEvent(tenantId, 'sync.completed', {
-        sourceId: id,
-        sourceName: synced?.name ?? null,
-      });
-    } catch (err) {
-      console.error(`[sources/sync] Background sync failed for ${id}:`, err);
+    // Re-bind the captured config: AsyncLocalStorage does not propagate into
+    // the post-response callback, so without this the background pipeline
+    // would silently fall back to DEFAULT_AI_MODELS.
+    await runWithModelConfig(modelConfig, async () => {
       try {
-        await db.updateSource(id, { status: 'error', lastError: (err as Error)?.message || String(err) }, tenantId);
-      } catch {
-        /* best effort */
+        await db.syncSource(id, tenantId);
+        // Outbound webhook (Phase 6) — sync finished successfully. Best-effort:
+        // dispatch never throws and must not affect the sync outcome.
+        const synced = await db.getSourceById(id, tenantId).catch(() => null);
+        await dispatchWebhookEvent(tenantId, 'sync.completed', {
+          sourceId: id,
+          sourceName: synced?.name ?? null,
+        });
+      } catch (err) {
+        console.error(`[sources/sync] Background sync failed for ${id}:`, err);
+        try {
+          await db.updateSource(id, { status: 'error', lastError: (err as Error)?.message || String(err) }, tenantId);
+        } catch {
+          /* best effort */
+        }
       }
-    }
+    });
   });
 
   return NextResponse.json({

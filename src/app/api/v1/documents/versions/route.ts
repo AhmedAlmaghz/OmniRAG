@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { db } from '@/lib/storage/db';
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { guardPermission } from '@/lib/auth/permissions';
+import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
+import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,71 +67,77 @@ export const GET = withAuthAndRateLimit(async (req, authCtx) => {
 });
 
 export const POST = withAuthAndRateLimit(async (req, authCtx) => {
-  try {
-    const denied = await guardPermission(authCtx, 'documents:write');
-    if (denied) return denied;
+  // Bind the client's configured models: revert re-chunks and re-embeds the
+  // document, which must use the user's embeddingModel — not the default.
+  const modelConfig = parseModelConfigFromRequest(req);
 
-    const tenantId = authCtx.tenantId;
-    const body = await req.json();
+  return await runWithModelConfig(modelConfig, async () => {
+    try {
+      const denied = await guardPermission(authCtx, 'documents:write');
+      if (denied) return denied;
 
-    const parsed = versionsActionSchema.safeParse(body);
-    if (!parsed.success) {
-      const firstIssue = parsed.error.issues[0];
-      return NextResponse.json(
+      const tenantId = authCtx.tenantId;
+      const body = await req.json();
+
+      const parsed = versionsActionSchema.safeParse(body);
+      if (!parsed.success) {
+        const firstIssue = parsed.error.issues[0];
+        return NextResponse.json(
+          {
+            error: firstIssue?.message || 'بيانات طلب الإصدارات غير صالحة',
+            code: 'VALIDATION_ERROR',
+            issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+          },
+          { status: 400 },
+        );
+      }
+
+      const data = parsed.data;
+
+      if (data.action === 'revert') {
+        const result = await db.revertDocumentVersion(data.documentId, data.versionNumber, tenantId);
+        if (!result) {
+          return NextResponse.json({ error: 'Target version not found or revert failed' }, { status: 404 });
+        }
+
+        const allVersions = await db.getDocumentVersions(data.documentId, tenantId);
+
+        return NextResponse.json({
+          success: true,
+          message: `تم استرجاع المستند إلى الإصدار v${data.versionNumber} بنجاح`,
+          document: result.document,
+          restoredVersion: result.restoredVersion,
+          versions: allVersions,
+        });
+      }
+
+      // action === 'create'
+      const result = await db.createDocumentVersion(
+        data.documentId,
         {
-          error: firstIssue?.message || 'بيانات طلب الإصدارات غير صالحة',
-          code: 'VALIDATION_ERROR',
-          issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+          title: data.title,
+          content: data.content,
+          changeSummary: data.changeSummary,
+          createdBy: data.createdBy,
         },
-        { status: 400 },
+        tenantId,
       );
-    }
 
-    const data = parsed.data;
-
-    if (data.action === 'revert') {
-      const result = await db.revertDocumentVersion(data.documentId, data.versionNumber, tenantId);
       if (!result) {
-        return NextResponse.json({ error: 'Target version not found or revert failed' }, { status: 404 });
+        return NextResponse.json({ error: 'Failed to create document version' }, { status: 400 });
       }
 
       const allVersions = await db.getDocumentVersions(data.documentId, tenantId);
 
       return NextResponse.json({
         success: true,
-        message: `تم استرجاع المستند إلى الإصدار v${data.versionNumber} بنجاح`,
+        message: `تم حفظ الإصدار v${result.version.versionNumber} بنجاح`,
         document: result.document,
-        restoredVersion: result.restoredVersion,
+        version: result.version,
         versions: allVersions,
       });
+    } catch (error: any) {
+      return serverErrorResponse('document versions POST', error);
     }
-
-    // action === 'create'
-    const result = await db.createDocumentVersion(
-      data.documentId,
-      {
-        title: data.title,
-        content: data.content,
-        changeSummary: data.changeSummary,
-        createdBy: data.createdBy,
-      },
-      tenantId,
-    );
-
-    if (!result) {
-      return NextResponse.json({ error: 'Failed to create document version' }, { status: 400 });
-    }
-
-    const allVersions = await db.getDocumentVersions(data.documentId, tenantId);
-
-    return NextResponse.json({
-      success: true,
-      message: `تم حفظ الإصدار v${result.version.versionNumber} بنجاح`,
-      document: result.document,
-      version: result.version,
-      versions: allVersions,
-    });
-  } catch (error: any) {
-    return serverErrorResponse('document versions POST', error);
-  }
+  });
 });

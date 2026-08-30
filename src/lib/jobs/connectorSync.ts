@@ -1,6 +1,8 @@
 import { db } from '../storage/db';
 import { getJobQueue, CONNECTOR_SYNC_QUEUE } from './queue';
 import type { Job } from 'pg-boss';
+import { DEFAULT_AI_MODELS } from '../config/aiModels';
+import { runWithModelConfig } from '../config/aiModelsServer';
 
 /**
  * connector.sync job — executes a knowledge-source sync through the existing
@@ -8,6 +10,14 @@ import type { Job } from 'pg-boss';
  * is the executor that `syncSchedule` cron entries were previously stored
  * without; the scheduler in reconcileConnectorSchedules() wires each source's
  * cron to this queue via pg-boss.
+ *
+ * MODEL-CONFIG CONSTRAINT: this worker has NO HTTP request, so the user's
+ * per-request model choices (x-ai-model-config header / browser cookie) cannot
+ * reach it — scheduled syncs intentionally run with DEFAULT_AI_MODELS, bound
+ * explicitly below so getAiModel() inside the pipeline never resolves to an
+ * accidental ambient context. Interactive syncs (the sync route) DO bind the
+ * user's config. Storing model preferences per-tenant in the DB would lift
+ * this limitation — out of scope, documented here for the next reader.
  */
 
 export interface ConnectorSyncJobData {
@@ -59,15 +69,19 @@ export async function startConnectorSyncWorker(): Promise<boolean> {
     for (const job of jobs) {
       const { sourceId, tenantId } = job.data || ({} as ConnectorSyncJobData);
       if (!sourceId || !tenantId) continue;
-      try {
-        const result = await db.syncSource(sourceId, tenantId);
-        if (!result.success) {
-          console.warn(`[ConnectorSync] Sync reported failure for source ${sourceId}.`);
+      // No request context exists here — bind DEFAULT_AI_MODELS explicitly so
+      // the pipeline's getAiModel() calls are deterministic (see header note).
+      await runWithModelConfig({ ...DEFAULT_AI_MODELS }, async () => {
+        try {
+          const result = await db.syncSource(sourceId, tenantId);
+          if (!result.success) {
+            console.warn(`[ConnectorSync] Sync reported failure for source ${sourceId}.`);
+          }
+        } catch (err) {
+          // syncSource already records failure state/logs; this guards the worker.
+          console.error(`[ConnectorSync] Sync threw for source ${sourceId}:`, err);
         }
-      } catch (err) {
-        // syncSource already records failure state/logs; this guards the worker.
-        console.error(`[ConnectorSync] Sync threw for source ${sourceId}:`, err);
-      }
+      });
     }
   });
 
