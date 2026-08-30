@@ -242,13 +242,11 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
     id: 'omnirag-chat-studio',
     transport: chatTransport,
     onError: (error) => {
-      // The stream route emits {type:'error'} when the LLM provider fails
-      // (e.g. Gemini free-tier quota: 429 RESOURCE_EXHAUSTED). Generic
-      // "connection error" wording misled users — the server was healthy.
-      // Classify so the user gets an actionable message.
+      // The stream route's onError rewrite (UIMessageStreamOptions) sends
+      // descriptive provider errors; quota hits carry RESOURCE_EXHAUSTED/429.
+      // Anything else (network aborts included) stays a connection error.
       const text = String((error as Error)?.message || (error as any)?.errorText || '');
-      const isQuota =
-        /quota|RESOURCE_EXHAUSTED|429|rate.?limit|billing/i.test(text) || text.includes('An error occurred'); // SDK default when provider 429s
+      const isQuota = /RESOURCE_EXHAUSTED|exceeded your current quota|حصة مزوّد|AI provider quota/i.test(text);
       setSecurityNotice(isQuota ? t(lang, 'chat.providerQuota') : t(lang, 'chat.connectionError'));
     },
     onData: (part) => {
