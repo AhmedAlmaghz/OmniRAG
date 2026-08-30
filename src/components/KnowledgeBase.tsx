@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDocumentCache } from '@/hooks/useDocumentCache';
 import { OcrCacheEntry } from '@/lib/cache/mistralOcrCache';
@@ -273,7 +273,11 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   }, [kbQueryError]);
 
   // Legacy shim: every existing call site (refresh buttons, silent post-
-  // mutation refreshes, processing-doc polling) keeps the same contract.
+  // mutation refreshes) keeps the old fetchKnowledgeData contract. The query
+  // itself auto-fetches on mount — do NOT call this in a mount effect: it
+  // resets the query and re-fetches, and because kbRefetch changes identity
+  // after every fetch cycle, an effect keyed on this callback would loop
+  // (mount → fetch → new identity → effect again → double loads).
   const fetchKnowledgeData = useCallback(
     async (opts?: { silent?: boolean }) => {
       // `silent` = background refetch (keep current data visible); a full
@@ -283,10 +287,6 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
     },
     [queryClient, kbRefetch],
   );
-
-  useEffect(() => {
-    fetchKnowledgeData();
-  }, [fetchKnowledgeData]);
 
   // Live status polling: while any document is still processing/pending, poll
   // the lightweight status endpoint every 4s and merge fresh statuses in. This
@@ -335,15 +335,66 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
 
   // Background connector sync: syncs now run AFTER the HTTP response (they can
   // take minutes on large/scanned files), so while any connector is 'syncing'
-  // poll every 4s to reflect the outcome (new document + healthy/degraded
-  // status) without requiring a manual refresh.
+  // poll the LIGHTWEIGHT status endpoint every 4s. The old behavior polled the
+  // full data query (4 parallel requests per tick = 60 req/min), which blew
+  // the 30/min per-endpoint rate ceiling within ~20s and surfaced as the
+  // "تعذر الاتصال بالخادم" outage banner. When the last sync finishes, refresh
+  // everything ONCE through the React Query invalidation.
   const hasSyncingSources = useMemo(() => sources.some((s) => s.status === 'syncing'), [sources]);
+  const wasSyncingRef = useRef(hasSyncingSources);
+  // Stable handle for the interval effect — fetchKnowledgeData's identity
+  // churns between fetch cycles (kbRefetch), which would re-arm the interval
+  // on every poll if listed directly in the effect deps.
+  const fetchRef = useRef(fetchKnowledgeData);
+  useEffect(() => {
+    fetchRef.current = fetchKnowledgeData;
+  }, [fetchKnowledgeData]);
 
   useEffect(() => {
-    if (!hasSyncingSources) return;
-    const interval = setInterval(() => fetchKnowledgeData({ silent: true }), 4000);
-    return () => clearInterval(interval);
-  }, [hasSyncingSources, fetchKnowledgeData]);
+    if (!hasSyncingSources) {
+      // A sync just finished (or none running): one full silent refresh to
+      // pick up new documents / final connector statuses.
+      if (wasSyncingRef.current) {
+        wasSyncingRef.current = false;
+        fetchRef.current({ silent: true });
+      }
+      return;
+    }
+    wasSyncingRef.current = true;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetchWithAuth(`/api/v1/sources/sync-status?tenantId=${tenantId}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !Array.isArray(data?.statuses)) return;
+
+        const statusById = new Map<string, any>(data.statuses.map((s: any) => [s.id, s]));
+        setSources((prev) =>
+          prev.map((src) => {
+            const fresh = statusById.get(src.id);
+            if (!fresh || fresh.status === src.status) return src;
+            return {
+              ...src,
+              status: fresh.status,
+              lastSyncAt: fresh.lastSyncAt ?? src.lastSyncAt,
+              documentCount: fresh.documentCount ?? src.documentCount,
+              lastError: fresh.lastError ?? src.lastError,
+            };
+          }),
+        );
+      } catch {
+        /* transient polling failure — retry on next tick */
+      }
+    };
+
+    const interval = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [hasSyncingSources, tenantId]);
 
   // Sync single source — with per-connector busy state so each card's Sync
   // button shows its own spinner (previously only "Sync All" had one).
