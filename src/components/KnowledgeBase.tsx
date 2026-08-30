@@ -1,10 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDocumentCache } from '@/hooks/useDocumentCache';
 import { OcrCacheEntry } from '@/lib/cache/mistralOcrCache';
 import { SourceConnector, SyncLogEntry, McpResourceItem, Collection, Document } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { t } from '@/lib/i18n';
 import { useToast } from './ui/Toast';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { Modal, ModalCloseButton } from './ui/Modal';
@@ -70,23 +72,25 @@ type TabType =
 
 const KB_TAB_STORAGE_KEY = 'omnirag_kb_active_tab';
 
-/** Data-driven knowledge-base sections — single source for the tab bar and keyboard navigation. */
+/** Data-driven knowledge-base sections — single source for the tab bar and keyboard navigation.
+ *  Labels resolve through the Phase-7 dictionaries (kb.* keys); the old
+ *  parallel labelAr/labelEn fields duplicated the dictionaries and would
+ *  drift. */
 const KB_TABS: Array<{
   id: TabType;
   icon: React.ElementType;
-  labelAr: string;
-  labelEn: string;
+  labelKey: string;
   amber?: boolean;
 }> = [
-  { id: 'dashboard', icon: BarChart3, labelAr: 'لوحة التحكم والصحة', labelEn: 'Overview & Health' },
-  { id: 'documents', icon: Layers, labelAr: 'بطاقات المستندات', labelEn: 'Document Cards' },
-  { id: 'collections', icon: Folder, labelAr: 'المجموعات المعرفية', labelEn: 'Collections Map' },
-  { id: 'upload', icon: Upload, labelAr: 'استوديو الرفع والتجزئة', labelEn: 'Ingestion Studio' },
-  { id: 'ocr_cache', icon: Zap, labelAr: 'ذاكرة OCR المؤقتة', labelEn: 'Mistral OCR Cache', amber: true },
-  { id: 'connectors', icon: Database, labelAr: 'الموصلات الآلية', labelEn: 'Connectors' },
-  { id: 'youtube', icon: MonitorPlay, labelAr: 'مفرغ يوتيوب الذكي', labelEn: 'YouTube Transcriber' },
-  { id: 'keys', icon: Key, labelAr: 'مفاتيح الخدمات', labelEn: 'API Integrations' },
-  { id: 'mcp', icon: Zap, labelAr: 'سياق MCP', labelEn: 'MCP Context' },
+  { id: 'dashboard', icon: BarChart3, labelKey: 'kb.tabDashboard' },
+  { id: 'documents', icon: Layers, labelKey: 'kb.tabDocuments' },
+  { id: 'collections', icon: Folder, labelKey: 'kb.tabCollections' },
+  { id: 'upload', icon: Upload, labelKey: 'kb.tabUpload' },
+  { id: 'ocr_cache', icon: Zap, labelKey: 'kb.tabOcrCache', amber: true },
+  { id: 'connectors', icon: Database, labelKey: 'kb.tabConnectors' },
+  { id: 'youtube', icon: MonitorPlay, labelKey: 'kb.tabYoutube' },
+  { id: 'keys', icon: Key, labelKey: 'kb.tabKeys' },
+  { id: 'mcp', icon: Zap, labelKey: 'kb.tabMcp' },
 ];
 
 export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar' }: KnowledgeBaseProps) {
@@ -184,84 +188,100 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
 
   // Load all knowledge base data. Tracks whether ANY core request failed so
-  // the UI can show an error banner with retry instead of silently rendering an
-  // empty state that is indistinguishable from "no documents yet".
-  // `silent` refreshes data in the background WITHOUT flipping the whole view
-  // back to skeletons — mutations (delete/reindex/sync) previously triggered a
-  // full-grid skeleton flicker on every action.
+  // the UI can show an error banner with retry instead of silently rendering
+  // an empty state that is indistinguishable from "no documents yet".
+  //
+  // TanStack Query powers the fetch: the `kb.data` query caches across route
+  // navigations (returning to /knowledge shows cached data instantly) and
+  // `fetchKnowledgeData({silent:true})` maps to refetch (no skeleton flicker
+  // after mutations). All 13 legacy call sites keep working through the shim
+  // below.
+  const queryClient = useQueryClient();
+  const {
+    data: kbData,
+    isPending: kbIsLoading,
+    error: kbQueryError,
+    refetch: kbRefetch,
+  } = useQuery({
+    queryKey: ['kb', 'data', tenantId],
+    queryFn: async () => {
+      const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
+        fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(() => null),
+        fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(() => null),
+        fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(() => null),
+        fetchWithAuth('/api/v1/sources/system-status').catch(() => null),
+      ]);
+
+      let failedRequests = 0;
+      const parse = async (res: Response | null) => {
+        if (!res) {
+          failedRequests++;
+          return {};
+        }
+        try {
+          if (res.ok) return await res.json();
+          failedRequests++;
+          return {};
+        } catch {
+          failedRequests++;
+          return {};
+        }
+      };
+
+      const sourcesData: any = await parse(sourcesRes);
+      const colsData: any = await parse(colsRes);
+      const docsData: any = await parse(docsRes);
+      // keys status is non-critical — never count its failure.
+      const keysData: any = keysRes?.ok ? await keysRes.json().catch(() => null) : null;
+
+      // Surface core failures instead of an empty-looking knowledge base.
+      if (failedRequests >= 2) {
+        throw new Error(t(lang, 'kb.loadFailed'));
+      }
+
+      return {
+        sources: (sourcesData.sources || []) as SourceConnector[],
+        syncLogs: (sourcesData.syncLogs || []) as SyncLogEntry[],
+        mcpResources: (sourcesData.mcpResources || []) as McpResourceItem[],
+        collections: (colsData.collections || []) as Collection[],
+        documents: (docsData.documents || []) as Document[],
+        keysStatus: keysData as KeysStatus | null,
+      };
+    },
+    staleTime: 15_000,
+    retry: 1,
+  });
+
+  // Server data → local state (single direction; mutations refresh the query).
+  useEffect(() => {
+    if (!kbData) return;
+    setSources(kbData.sources);
+    setSyncLogs(kbData.syncLogs);
+    setMcpResources(kbData.mcpResources);
+    setCollections(kbData.collections);
+    setDocuments(kbData.documents);
+    if (kbData.keysStatus) setKeysStatus(kbData.keysStatus);
+  }, [kbData]);
+
+  // React Query states → legacy view flags.
+  useEffect(() => {
+    setIsLoading(kbIsLoading);
+  }, [kbIsLoading]);
+
+  useEffect(() => {
+    setLoadError(kbQueryError ? (kbQueryError as Error).message : null);
+  }, [kbQueryError]);
+
+  // Legacy shim: every existing call site (refresh buttons, silent post-
+  // mutation refreshes, processing-doc polling) keeps the same contract.
   const fetchKnowledgeData = useCallback(
     async (opts?: { silent?: boolean }) => {
-      if (!opts?.silent) {
-        setIsLoading(true);
-      }
-      setLoadError(null);
-      try {
-        const [sourcesRes, colsRes, docsRes, keysRes] = await Promise.all([
-          fetchWithAuth(`/api/v1/sources?tenantId=${tenantId}`).catch(() => null),
-          fetchWithAuth(`/api/v1/collections?tenantId=${tenantId}`).catch(() => null),
-          fetchWithAuth(`/api/v1/documents?tenantId=${tenantId}`).catch(() => null),
-          fetchWithAuth('/api/v1/sources/system-status').catch(() => null),
-        ]);
-
-        let sourcesData: any = {};
-        let colsData: any = {};
-        let docsData: any = {};
-        let keysData: any = null;
-        let failedRequests = 0;
-
-        try {
-          if (sourcesRes?.ok) sourcesData = await sourcesRes.json();
-          else failedRequests++;
-        } catch (e) {
-          failedRequests++;
-        }
-
-        try {
-          if (colsRes?.ok) colsData = await colsRes.json();
-          else failedRequests++;
-        } catch (e) {
-          failedRequests++;
-        }
-
-        try {
-          if (docsRes?.ok) docsData = await docsRes.json();
-          else failedRequests++;
-        } catch (e) {
-          failedRequests++;
-        }
-
-        try {
-          if (keysRes?.ok) keysData = await keysRes.json();
-        } catch (e) {
-          /* keys status is non-critical */
-        }
-
-        if (sourcesData.sources) setSources(sourcesData.sources);
-        if (sourcesData.syncLogs) setSyncLogs(sourcesData.syncLogs);
-        if (sourcesData.mcpResources) setMcpResources(sourcesData.mcpResources);
-        if (colsData.collections) setCollections(colsData.collections);
-        if (keysData) setKeysStatus(keysData);
-        if (docsData.documents) setDocuments(docsData.documents);
-
-        // If the core document/source loads failed, surface it — a backend
-        // outage must not masquerade as an empty knowledge base.
-        if (failedRequests >= 2) {
-          setLoadError(
-            isRtl
-              ? 'تعذر الاتصال بالخادم أثناء تحميل بيانات قاعدة المعرفة'
-              : 'Could not reach the server while loading knowledge base data',
-          );
-        }
-      } catch (error) {
-        console.error('Failed to load knowledge base data:', error);
-        setLoadError(
-          isRtl ? 'حدث خطأ غير متوقع أثناء تحميل البيانات' : 'An unexpected error occurred while loading data',
-        );
-      } finally {
-        setIsLoading(false);
-      }
+      // `silent` = background refetch (keep current data visible); a full
+      // call resets the query to pending so skeletons show — then refetches.
+      if (!opts?.silent) await queryClient.resetQueries({ queryKey: ['kb', 'data'] });
+      await kbRefetch();
     },
-    [tenantId, isRtl],
+    [queryClient, kbRefetch],
   );
 
   useEffect(() => {
@@ -341,7 +361,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
           // Sync runs in the background now — the connector card shows the
           // 'syncing' status until the polling refresh picks the outcome up.
           toast({
-            title: isRtl ? 'بدأت المزامنة في الخلفية — تابع حالة الموصل' : 'Sync started in the background',
+            title: t(lang, 'kb.syncStarted'),
             variant: 'success',
           });
         } else {
@@ -351,17 +371,17 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               ? isRtl
                 ? 'تمت المزامنة بنجاح'
                 : 'Sync completed'
-              : data?.result?.message || (isRtl ? 'اكتملت المزامنة مع أخطاء' : 'Sync finished with errors'),
+              : data?.result?.message || t(lang, 'kb.syncPartial'),
             variant: syncOk ? 'success' : 'warning',
           });
         }
         fetchKnowledgeData({ silent: true });
       } else {
-        toast({ title: isRtl ? 'فشلت المزامنة' : 'Sync failed', variant: 'error' });
+        toast({ title: t(lang, 'kb.syncFailed'), variant: 'error' });
       }
     } catch (err) {
       console.error('Sync failed:', err);
-      toast({ title: isRtl ? 'فشلت المزامنة' : 'Sync failed', variant: 'error' });
+      toast({ title: t(lang, 'kb.syncFailed'), variant: 'error' });
     } finally {
       setSyncingSourceId(null);
     }
@@ -381,13 +401,13 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         ),
       );
       toast({
-        title: isRtl ? `بدأت مزامنة ${sources.length} موصل في الخلفية` : `Started syncing ${sources.length} connectors`,
+        title: t(lang, 'kb.syncAllStarted', { count: String(sources.length) }),
         variant: 'success',
       });
       await fetchKnowledgeData({ silent: true });
     } catch (err) {
       console.error('Sync all failed:', err);
-      toast({ title: isRtl ? 'فشلت مزامنة بعض الموصلات' : 'Some connectors failed to sync', variant: 'error' });
+      toast({ title: t(lang, 'kb.syncSomeFailed'), variant: 'error' });
     } finally {
       setIsSyncingAll(false);
     }
@@ -403,14 +423,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         method: 'DELETE',
       });
       if (res.ok) {
-        toast({ title: isRtl ? 'تم حذف الموصل' : 'Connector deleted', variant: 'success' });
+        toast({ title: t(lang, 'kb.connectorDeleted'), variant: 'success' });
         fetchKnowledgeData({ silent: true });
       } else {
-        toast({ title: isRtl ? 'فشل حذف الموصل' : 'Failed to delete connector', variant: 'error' });
+        toast({ title: t(lang, 'kb.connectorDeleteFailed'), variant: 'error' });
       }
     } catch (err) {
       console.error('Delete source failed:', err);
-      toast({ title: isRtl ? 'فشل حذف الموصل' : 'Failed to delete connector', variant: 'error' });
+      toast({ title: t(lang, 'kb.connectorDeleteFailed'), variant: 'error' });
     } finally {
       setIsDeleting(false);
       setPendingDeleteSource(null);
@@ -429,14 +449,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       if (res.ok) {
         if (inspectingDoc?.id === docId) setInspectingDoc(null);
         if (previewingDoc?.id === docId) setPreviewingDoc(null);
-        toast({ title: isRtl ? 'تم حذف المستند ومتجهاته' : 'Document and vectors deleted', variant: 'success' });
+        toast({ title: t(lang, 'kb.documentDeleted'), variant: 'success' });
         fetchKnowledgeData({ silent: true });
       } else {
-        toast({ title: isRtl ? 'فشل حذف المستند' : 'Failed to delete document', variant: 'error' });
+        toast({ title: t(lang, 'kb.documentDeleteFailed'), variant: 'error' });
       }
     } catch (err) {
       console.error('Delete document failed:', err);
-      toast({ title: isRtl ? 'فشل حذف المستند' : 'Failed to delete document', variant: 'error' });
+      toast({ title: t(lang, 'kb.documentDeleteFailed'), variant: 'error' });
     } finally {
       setIsDeleting(false);
       setPendingDeleteDoc(null);
@@ -456,13 +476,13 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
         toast({
-          title: isRtl ? `تمت إعادة فهرسة "${doc.title}"` : `Reindexed "${doc.title}"`,
-          message: isRtl ? `${data?.indexing?.indexed ?? 0} مقطع دلالي` : `${data?.indexing?.indexed ?? 0} chunks`,
+          title: t(lang, 'kb.reindexed', { title: doc.title }),
+          message: t(lang, 'kb.reindexedChunks', { count: String(data?.indexing?.indexed ?? 0) }),
           variant: 'success',
         });
       } else {
         toast({
-          title: isRtl ? 'فشلت إعادة الفهرسة' : 'Reindex failed',
+          title: t(lang, 'kb.reindexFailed'),
           message: data?.message || data?.error,
           variant: 'error',
         });
@@ -470,7 +490,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       await fetchKnowledgeData({ silent: true });
     } catch (err) {
       console.error('Reindexing failed:', err);
-      toast({ title: isRtl ? 'فشلت إعادة الفهرسة' : 'Reindex failed', variant: 'error' });
+      toast({ title: t(lang, 'kb.reindexFailed'), variant: 'error' });
     } finally {
       setReindexingDocId(null);
     }
@@ -485,11 +505,11 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       body: JSON.stringify({ tenantId, ...updates }),
     });
     if (!res.ok) {
-      throw new Error(isRtl ? 'فشل حفظ تعديلات الموصل' : 'Failed to save connector changes');
+      throw new Error(t(lang, 'kb.connectorSaveFailed'));
     }
     fetchKnowledgeData({ silent: true });
     setEditingSource(null);
-    toast({ title: isRtl ? 'تم حفظ التعديلات' : 'Changes saved', variant: 'success' });
+    toast({ title: t(lang, 'kb.changesSaved'), variant: 'success' });
   };
 
   // Compute stats
@@ -713,7 +733,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 }`}
                 aria-hidden="true"
               />
-              <span>{isRtl ? tab.labelAr : tab.labelEn}</span>
+              <span>{t(lang, tab.labelKey)}</span>
               {typeof liveCount === 'number' && (
                 <span
                   className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${

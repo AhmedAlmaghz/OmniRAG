@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import {
   User,
   Monitor,
@@ -22,17 +23,22 @@ import {
   Fingerprint,
   CreditCard,
 } from 'lucide-react';
+// Heavy admin sections are lazy-loaded: each becomes its own chunk, fetched
+// on first visit only. Once mounted they STAY mounted (hidden via CSS) so
+// unsaved drafts survive tab switches — the behavior the previous
+// all-mounted-always layout guaranteed, without paying for every section's
+// code on the initial settings visit.
+const ModelSettingsView = dynamic(() => import('./ModelSettingsView'));
+const MembersView = dynamic(() => import('./MembersView'));
+const SsoSettingsView = dynamic(() => import('./SsoSettingsView'));
+const DiagnosticUtility = dynamic(() => import('./diagnostics/DiagnosticUtility'));
+const EnvVariablesManager = dynamic(() => import('./env/EnvVariablesManager'));
+const FirstLaunchEnvModal = dynamic(() => import('./env/FirstLaunchEnvModal'));
 import IngestionSettingsView from './IngestionSettingsView';
-import ModelSettingsView from './ModelSettingsView';
 import ProvidersView from './ProvidersView';
 import ApiKeysView from './ApiKeysView';
 import StorageView from './StorageView';
-import MembersView from './MembersView';
-import SsoSettingsView from './SsoSettingsView';
 import PlansView from './PlansView';
-import DiagnosticUtility from './diagnostics/DiagnosticUtility';
-import EnvVariablesManager from './env/EnvVariablesManager';
-import FirstLaunchEnvModal from './env/FirstLaunchEnvModal';
 import { useUserPreferences, type MathMode } from '@/lib/preferences/userPreferences';
 // i18n lookups are aliased as `tr` throughout this component.
 import { t as tr } from '@/lib/i18n';
@@ -128,6 +134,18 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Visited-sections ledger: a section mounts on FIRST visit and stays
+  // mounted (hidden via CSS) afterwards — unsaved drafts in models/ingestion/
+  // env survive tab switches, while never-visited sections cost nothing
+  // upfront (their lazy chunk isn't even fetched).
+  const [visitedSections, setVisitedSections] = useState<Set<TabType>>(new Set(['account']));
+  const openTab = (tab: TabType) => {
+    setActiveTab(tab);
+    setVisitedSections((prev) => (prev.has(tab) ? prev : new Set(prev).add(tab)));
+  };
+  const sectionCls = (id: TabType) => (activeTab === id ? 'space-y-6' : 'hidden');
+  const shouldMount = (id: TabType) => visitedSections.has(id);
 
   // Auto-launch the env wizard once per browser until the user finishes it.
   // The `omnirag_env_first_launch_done` flag was previously WRITTEN by the
@@ -291,7 +309,7 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => openTab(tab.id)}
                 aria-current={isActive ? 'page' : undefined}
                 className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-medium text-xs transition duration-200 cursor-pointer ${
                   isActive
@@ -741,46 +759,69 @@ export default function SettingsView({ tenantId, lang, userEmail, onLogOut }: Se
             </div>
           </section>
 
-          {/* PERSISTENT CHILD SECTIONS — never unmount on tab switch */}
-          <section id="section-aimodels" className={activeTab === 'aiModels' ? '' : 'hidden'}>
-            <ModelSettingsView />
-          </section>
+          {/* PERSISTENT CHILD SECTIONS — mount on first visit, never unmount.
+              `shouldMount` gates the initial render (lazy chunks for heavy
+              views are only fetched when the section is actually opened);
+              after that the hidden-class toggle preserves draft state. */}
+          {shouldMount('aiModels') && (
+            <section id="section-aimodels" className={sectionCls('aiModels')}>
+              <ModelSettingsView />
+            </section>
+          )}
 
-          <section id="section-providers" className={activeTab === 'providers' ? '' : 'hidden'}>
-            <ProvidersView lang={lang} />
-          </section>
+          {shouldMount('providers') && (
+            <section id="section-providers" className={sectionCls('providers')}>
+              <ProvidersView lang={lang} />
+            </section>
+          )}
 
-          <section id="section-apikeys" className={activeTab === 'apiKeys' ? '' : 'hidden'}>
-            <ApiKeysView lang={lang} />
-          </section>
+          {shouldMount('apiKeys') && (
+            <section id="section-apikeys" className={sectionCls('apiKeys')}>
+              <ApiKeysView lang={lang} />
+            </section>
+          )}
 
-          <section id="section-members" className={activeTab === 'members' ? '' : 'hidden'}>
-            <MembersView lang={lang} />
-          </section>
+          {shouldMount('members') && (
+            <section id="section-members" className={sectionCls('members')}>
+              <MembersView lang={lang} />
+            </section>
+          )}
 
-          <section id="section-sso" className={activeTab === 'sso' ? '' : 'hidden'}>
-            <SsoSettingsView lang={lang} />
-          </section>
+          {shouldMount('sso') && (
+            <section id="section-sso" className={sectionCls('sso')}>
+              <SsoSettingsView lang={lang} />
+            </section>
+          )}
 
-          <section id="section-plans" className={activeTab === 'plans' ? '' : 'hidden'}>
-            <PlansView lang={lang} />
-          </section>
+          {shouldMount('plans') && (
+            <section id="section-plans" className={sectionCls('plans')}>
+              <PlansView lang={lang} />
+            </section>
+          )}
 
-          <section id="section-storage" className={activeTab === 'storage' ? '' : 'hidden'}>
-            <StorageView lang={lang} />
-          </section>
+          {shouldMount('storage') && (
+            <section id="section-storage" className={sectionCls('storage')}>
+              <StorageView lang={lang} />
+            </section>
+          )}
 
-          <section id="section-ingestion" className={activeTab === 'ingestion' ? '' : 'hidden'}>
-            <IngestionSettingsView lang={lang} />
-          </section>
+          {shouldMount('ingestion') && (
+            <section id="section-ingestion" className={sectionCls('ingestion')}>
+              <IngestionSettingsView lang={lang} />
+            </section>
+          )}
 
-          <section id="section-envvars" className={activeTab === 'envVars' ? '' : 'hidden'}>
-            <EnvVariablesManager lang={lang} onOpenWizard={() => setShowFirstLaunchWizard(true)} />
-          </section>
+          {shouldMount('envVars') && (
+            <section id="section-envvars" className={sectionCls('envVars')}>
+              <EnvVariablesManager lang={lang} onOpenWizard={() => setShowFirstLaunchWizard(true)} />
+            </section>
+          )}
 
-          <section id="section-diagnostics" className={activeTab === 'diagnostics' ? '' : 'hidden'}>
-            <DiagnosticUtility lang={lang} autoRunOnMount={activeTab === 'diagnostics'} />
-          </section>
+          {shouldMount('diagnostics') && (
+            <section id="section-diagnostics" className={sectionCls('diagnostics')}>
+              <DiagnosticUtility lang={lang} autoRunOnMount={activeTab === 'diagnostics'} />
+            </section>
+          )}
 
           <FirstLaunchEnvModal
             lang={lang}

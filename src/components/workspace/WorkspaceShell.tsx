@@ -173,6 +173,18 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [router]);
 
+  // One QueryClient per workspace session. MUST run before any conditional
+  // return (Rules of Hooks) — the boot splash below returns early.
+  const queryClient = useMemo(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 },
+        },
+      }),
+    [],
+  );
+
   // Boot splash while the session resolves.
   if (isAuthenticated !== true) {
     return (
@@ -187,17 +199,6 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
   const activeTab = pathToTab(pathname);
   const isChat = activeTab === 'chat';
-
-  // One QueryClient per workspace session (created client-side only).
-  const queryClient = useMemo(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 },
-        },
-      }),
-    [],
-  );
 
   return (
     <QueryClientProvider client={queryClient}>
