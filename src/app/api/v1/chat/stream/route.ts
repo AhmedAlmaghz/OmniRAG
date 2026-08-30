@@ -291,6 +291,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
 
           let aiTools: ToolSet | undefined;
           const pendingApprovalRef: { value: MCPToolCall | null } = { value: null };
+          // Set when the provider rate-limited the main generation — skips the
+          // follow-up suggestions call so a quota-limited key isn't hit twice.
+          const quotaHitRef = { value: false };
           if (!approvedToolCall && toolsToOffer.length > 0) {
             aiTools = buildTenantMcpTools(toolsToOffer, customSchemas, {
               tenantId,
@@ -331,6 +334,21 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),
             stopWhen: stepCountIs(5),
             temperature: 0.2,
+            onError: ({ error }) => {
+              // The SDK's default error part is a bare "An error occurred",
+              // which the client surfaced as a generic connection error —
+              // hiding real causes like provider quota exhaustion (429
+              // RESOURCE_EXHAUSTED on free-tier Gemini keys). Classify and
+              // forward an actionable message instead.
+              const raw = String((error as any)?.data?.error?.message || (error as any)?.message || error || '');
+              const isQuota = /quota|RESOURCE_EXHAUSTED|exceeded your current quota|429/i.test(raw);
+              if (isQuota) quotaHitRef.value = true;
+              const message = isQuota
+                ? 'استُهلكت حصة مزوّد الذكاء الاصطناعي مؤقتًا (429 RESOURCE_EXHAUSTED) — انتظر دقيقة أو اضبط مفتاحًا مدفوعًا/نموذجًا آخر من الإعدادات (AI provider quota exhausted — configure a paid key or another model).'
+                : `تعذّر التوليد من مزوّد النموذج: ${raw.slice(0, 200) || 'unknown provider error'}`;
+              console.error('[chat/stream] provider error:', raw.slice(0, 300));
+              writer.write({ type: 'error', errorText: message });
+            },
           });
 
           // Stream model output through the PII redactor, then merge.
@@ -382,7 +400,10 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
           });
 
           // Best-effort AI follow-up suggestions after the answer completes.
-          if (fullText) {
+          // NOTE: this is a SECOND provider call per user message — on free-tier
+          // keys (e.g. Gemini 20 RPM) it doubles quota pressure, so it silently
+          // no-ops when the provider is already rate-limited.
+          if (fullText && !fullText.includes('RESOURCE_EXHAUSTED') && !quotaHitRef.value) {
             try {
               const suggestionsResult = await generateTextResilient({
                 model: modelAlias,

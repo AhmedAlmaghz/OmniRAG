@@ -401,6 +401,8 @@ export const en = {
     welcome:
       "Welcome to **OmniRAG Agentic Chat Studio (v{version})**.\n\nThe system now supports **short-term and long-term conversation memory** — I'll remember our prior context and respond naturally.\n\nSupported features:\n- 🧮 **Math Equations (KaTeX):** Formulas like $E = mc^2$ with Arabic notation toggle.\n- 💻 **Syntax-Highlighted Code Blocks:** Shiki highlighting with line numbers, folding, and copy.\n- 🎬 **Embedded Media:** Direct playback for images, video, and audio.\n- 📚 **Inline Citations:** Source numbers [1] link directly to the original source.\n- 🖥️ **Dynamic Workspace:** Drag-resizable collapsible panels and fullscreen mode (Ctrl+B toggles the sidebar).\n- 🔊 **Text-To-Speech (TTS) and Markdown Exports.**",
     connectionError: 'Connection error.',
+    providerQuota:
+      'The AI provider quota is exhausted (free-tier limit reached). Wait a minute or configure a paid key / different model in Settings → AI Models.',
     requestBlocked: 'Request blocked by security engine.',
     newConversationTitle: 'New Conversation',
     newSessionWelcome: 'Welcome to the new session. How can I help you today?',
