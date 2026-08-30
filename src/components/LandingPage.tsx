@@ -1,6 +1,7 @@
 'use client';
 
 import { APP_VERSION } from '@/lib/config/systemConfig';
+import { t as tr } from '@/lib/i18n';
 
 import React, { useState } from 'react';
 import dynamic from 'next/dynamic';
@@ -26,13 +27,10 @@ import {
   Building2,
   FileText,
   Search,
-  MessageSquare
+  MessageSquare,
 } from 'lucide-react';
 
-const RemotionHeroPlayer = dynamic(
-  () => import('@/components/remotion/RemotionHeroPlayer'),
-  { ssr: false }
-);
+const RemotionHeroPlayer = dynamic(() => import('@/components/remotion/RemotionHeroPlayer'), { ssr: false });
 
 interface LandingPageProps {
   onEnterApp: () => void;
@@ -48,11 +46,11 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
   const [onboardingStep, setOnboardingStep] = useState(1);
 
   const navLinks = [
-    { id: 'chat', label: isAr ? 'المحادثة الذكية' : 'Agentic Chat' },
-    { id: 'knowledge', label: isAr ? 'قاعدة المعرفة' : 'Knowledge Base' },
-    { id: 'mcp', label: isAr ? 'بوابة MCP' : 'MCP Gateway' },
-    { id: 'search', label: isAr ? 'محرك البحث' : 'Retrieval Engine' },
-    { id: 'security', label: isAr ? 'مركز الأمان' : 'Security' },
+    { id: 'chat', label: tr(lang, 'landing.agenticChat') },
+    { id: 'knowledge', label: tr(lang, 'landing.knowledgeBase') },
+    { id: 'mcp', label: tr(lang, 'landing.mcpGateway') },
+    { id: 'search', label: tr(lang, 'landing.retrievalEngine') },
+    { id: 'security', label: tr(lang, 'landing.security') },
   ];
 
   const content = {
@@ -286,9 +284,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
               </span>
             </h1>
 
-            <p className="text-base sm:text-lg text-slate-300 leading-relaxed mb-8">
-              {t.heroDescription}
-            </p>
+            <p className="text-base sm:text-lg text-slate-300 leading-relaxed mb-8">{t.heroDescription}</p>
 
             <div className="flex flex-wrap items-center justify-center gap-4">
               <button
@@ -319,22 +315,21 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
                 className="px-6 py-3.5 text-sm font-semibold rounded-xl bg-indigo-900/40 border border-indigo-500/30 text-indigo-300 hover:border-indigo-500/50 hover:text-white transition-all flex items-center gap-2"
               >
                 <Sparkles className="w-4 h-4 text-emerald-400" />
-                <span>{isAr ? 'بدء الدليل التفاعلي السريع' : 'Start Quick Setup Guide'}</span>
+                <span>{tr(lang, 'landing.startQuickSetupGuide')}</span>
               </button>
             </div>
           </div>
+        </div>
 
+        {/* Remotion Hero Video / Animation - Full Width */}
+        <div className="mt-12 mb-16 w-full">
+          <div className="w-full">
+            <RemotionHeroPlayer lang={lang} />
           </div>
+        </div>
 
-          {/* Remotion Hero Video / Animation - Full Width */}
-          <div className="mt-12 mb-16 w-full">
-            <div className="w-full">
-              <RemotionHeroPlayer lang={lang} />
-            </div>
-          </div>
-
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-            {/* Key Metrics Grid */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+          {/* Key Metrics Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto mt-12">
             {t.metrics.map((m, idx) => (
               <div
@@ -355,9 +350,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
       <section className="py-16 bg-slate-900/40 border-y border-slate-800/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-2xl mx-auto mb-12">
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">
-              {t.featuresTitle}
-            </h2>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">{t.featuresTitle}</h2>
             <p className="text-sm text-slate-400">{t.featuresSubtitle}</p>
           </div>
 
@@ -385,9 +378,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
       <section className="py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-10">
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">
-              {t.interactiveSectionTitle}
-            </h2>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">{t.interactiveSectionTitle}</h2>
           </div>
 
           <div className="flex justify-center border-b border-slate-800 max-w-2xl mx-auto mb-8">
@@ -411,7 +402,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
               <div className="space-y-4">
                 <div className="flex items-center gap-3 text-indigo-400 font-bold text-sm">
                   <Layers className="w-5 h-5" />
-                  <span>{isAr ? 'مسار الاسترجاع الهجين المتقدم' : 'Hybrid Dense & Sparse Pipeline'}</span>
+                  <span>{tr(lang, 'landing.hybridDenseSparsePipeline')}</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   {isAr
@@ -431,7 +422,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
               <div className="space-y-4">
                 <div className="flex items-center gap-3 text-cyan-400 font-bold text-sm">
                   <Server className="w-5 h-5" />
-                  <span>{isAr ? 'بوابة MCP لربط الأنظمة الخارجية' : 'Model Context Protocol Server Hub'}</span>
+                  <span>{tr(lang, 'landing.modelContextProtocolServerHub')}</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   {isAr
@@ -455,7 +446,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
               <div className="space-y-4">
                 <div className="flex items-center gap-3 text-emerald-400 font-bold text-sm">
                   <ShieldCheck className="w-5 h-5" />
-                  <span>{isAr ? 'حواجز الأمان والحماية الحتمية' : 'Deterministic Security Guardrails'}</span>
+                  <span>{tr(lang, 'landing.deterministicSecurityGuardrails')}</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   {isAr
@@ -479,19 +470,19 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
               <div className="space-y-4">
                 <div className="flex items-center gap-3 text-purple-400 font-bold text-sm">
                   <BarChart2 className="w-5 h-5" />
-                  <span>{isAr ? 'مؤشرات الأداء والقياس' : 'Engine Performance Benchmarks'}</span>
+                  <span>{tr(lang, 'landing.enginePerformanceBenchmarks')}</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                   <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-                    <div className="text-slate-400 text-[11px]">{isAr ? 'زمن الاسترجاع' : 'Retrieval Time'}</div>
+                    <div className="text-slate-400 text-[11px]">{tr(lang, 'landing.retrievalTime')}</div>
                     <div className="text-lg font-mono font-bold text-emerald-400 mt-1">12.4 ms</div>
                   </div>
                   <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-                    <div className="text-slate-400 text-[11px]">{isAr ? 'معدل دقة الإسناد' : 'Citation Rate'}</div>
+                    <div className="text-slate-400 text-[11px]">{tr(lang, 'landing.citationRate')}</div>
                     <div className="text-lg font-mono font-bold text-indigo-400 mt-1">99.8 %</div>
                   </div>
                   <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-                    <div className="text-slate-400 text-[11px]">{isAr ? 'إنتاجية الرموز' : 'Token Throughput'}</div>
+                    <div className="text-slate-400 text-[11px]">{tr(lang, 'landing.tokenThroughput')}</div>
                     <div className="text-lg font-mono font-bold text-purple-400 mt-1">140 t/s</div>
                   </div>
                 </div>
@@ -505,9 +496,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
       <section className="py-16 bg-slate-900/30 border-t border-slate-800/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-2xl mx-auto mb-12">
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">
-              {t.useCasesTitle}
-            </h2>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">{t.useCasesTitle}</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -529,7 +518,7 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
           <div className="mt-16 p-8 rounded-3xl bg-gradient-to-r from-indigo-900/60 via-purple-900/40 to-slate-900 border border-indigo-500/30 text-center relative overflow-hidden">
             <div className="relative z-10">
               <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
-                {isAr ? 'جاهز لبدء تجربة محرك OmniRAG؟' : 'Ready to Experience OmniRAG Platform?'}
+                {tr(lang, 'landing.readyToExperienceOmniragPlatform')}
               </h2>
               <p className="text-xs sm:text-sm text-slate-300 max-w-xl mx-auto mb-6">
                 {isAr
@@ -572,29 +561,34 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
       {showOnboarding && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl p-8 max-w-xl w-full shadow-2xl relative">
-            <button 
+            <button
               onClick={() => setShowOnboarding(false)}
               className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white transition cursor-pointer"
             >
               <XCircle className="w-6 h-6" />
             </button>
-            <h2 className="text-2xl font-bold text-white mb-6">
-              {isAr ? 'إعداد مساحة العمل الخاصة بك' : 'Set Up Your Workspace'}
-            </h2>
-            
+            <h2 className="text-2xl font-bold text-white mb-6">{tr(lang, 'landing.setUpYourWorkspace')}</h2>
+
             <div className="space-y-8">
               {/* Step 1 */}
               <div className={`transition-opacity ${onboardingStep >= 1 ? 'opacity-100' : 'opacity-40'}`}>
                 <div className="flex items-start gap-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 1 ? 'bg-emerald-500 text-white' : onboardingStep === 1 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 1 ? 'bg-emerald-500 text-white' : onboardingStep === 1 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}
+                  >
                     {onboardingStep > 1 ? <CheckCircle2 className="w-5 h-5" /> : '1'}
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-white">{isAr ? 'إنشاء مجموعة معرفية' : 'Create a Knowledge Collection'}</h3>
-                    <p className="text-xs text-slate-400 mt-1">{isAr ? 'قم بتنظيم مستنداتك في مجموعات مخصصة (مثال: مستندات الموارد البشرية، الدعم الفني).' : 'Organize your documents into collections (e.g., HR Docs, Technical Support).'}</p>
+                    <h3 className="text-lg font-bold text-white">{tr(lang, 'landing.createAKnowledgeCollection')}</h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {tr(lang, 'landing.organizeYourDocumentsIntoCollectionsEGHrDocsTechnicalSupport')}
+                    </p>
                     {onboardingStep === 1 && (
-                      <button onClick={() => setOnboardingStep(2)} className="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition cursor-pointer">
-                        {isAr ? 'متابعة' : 'Continue'}
+                      <button
+                        onClick={() => setOnboardingStep(2)}
+                        className="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition cursor-pointer"
+                      >
+                        {tr(lang, 'landing.continue')}
                       </button>
                     )}
                   </div>
@@ -604,15 +598,22 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
               {/* Step 2 */}
               <div className={`transition-opacity ${onboardingStep >= 2 ? 'opacity-100' : 'opacity-40'}`}>
                 <div className="flex items-start gap-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 2 ? 'bg-emerald-500 text-white' : onboardingStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 2 ? 'bg-emerald-500 text-white' : onboardingStep === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}
+                  >
                     {onboardingStep > 2 ? <CheckCircle2 className="w-5 h-5" /> : '2'}
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-white">{isAr ? 'رفع أول مستند' : 'Upload Your First Document'}</h3>
-                    <p className="text-xs text-slate-400 mt-1">{isAr ? 'سيقوم نظام RAG بتجزئة وفهرسة مستندك (PDF/TXT) آلياً.' : 'The RAG system will automatically chunk and index your document (PDF/TXT).'}</p>
+                    <h3 className="text-lg font-bold text-white">{tr(lang, 'landing.uploadYourFirstDocument')}</h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {tr(lang, 'landing.theRagSystemWillAutomaticallyChunkAndIndexYourDocumentPdfTxt')}
+                    </p>
                     {onboardingStep === 2 && (
-                      <button onClick={() => setOnboardingStep(3)} className="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition cursor-pointer">
-                        {isAr ? 'متابعة' : 'Continue'}
+                      <button
+                        onClick={() => setOnboardingStep(3)}
+                        className="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition cursor-pointer"
+                      >
+                        {tr(lang, 'landing.continue')}
                       </button>
                     )}
                   </div>
@@ -622,18 +623,25 @@ export default function LandingPage({ onEnterApp, lang, setLang, onNavigateTab }
               {/* Step 3 */}
               <div className={`transition-opacity ${onboardingStep >= 3 ? 'opacity-100' : 'opacity-40'}`}>
                 <div className="flex items-start gap-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 3 ? 'bg-emerald-500 text-white' : onboardingStep === 3 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${onboardingStep > 3 ? 'bg-emerald-500 text-white' : onboardingStep === 3 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}
+                  >
                     {onboardingStep > 3 ? <CheckCircle2 className="w-5 h-5" /> : '3'}
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-white">{isAr ? 'بدء المحادثة الذكية' : 'Start Agentic Chat'}</h3>
-                    <p className="text-xs text-slate-400 mt-1">{isAr ? 'الآن أنت جاهز لطرح الأسئلة واستخراج المعلومات بأمان.' : 'You are now ready to ask questions and extract information securely.'}</p>
+                    <h3 className="text-lg font-bold text-white">{tr(lang, 'landing.startAgenticChat')}</h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {tr(lang, 'landing.youAreNowReadyToAskQuestionsAndExtractInformationSecurely')}
+                    </p>
                     {onboardingStep === 3 && (
-                      <button onClick={() => {
-                        setShowOnboarding(false);
-                        onEnterApp();
-                      }} className="mt-3 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition shadow-md shadow-emerald-600/20 cursor-pointer">
-                        {isAr ? 'إنهاء والانتقال للمحادثة' : 'Finish & Go to Chat'}
+                      <button
+                        onClick={() => {
+                          setShowOnboarding(false);
+                          onEnterApp();
+                        }}
+                        className="mt-3 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition shadow-md shadow-emerald-600/20 cursor-pointer"
+                      >
+                        {tr(lang, 'landing.finishGoToChat')}
                       </button>
                     )}
                   </div>

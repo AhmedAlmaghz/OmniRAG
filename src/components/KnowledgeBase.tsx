@@ -597,7 +597,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-lg font-extrabold text-slate-950 tracking-tight">
-                  {isRtl ? 'قاعدة المعرفة واستوديو الوثائق الدلالية' : 'Knowledge Base & Semantic Document Studio'}
+                  {t(lang, 'kb.knowledgeBaseSemanticDocumentStudio')}
                 </h1>
                 <span className="text-[10px] font-mono font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200 uppercase">
                   v2.4 QDRANT CLOUD
@@ -619,7 +619,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
           >
             <Activity className="w-4 h-4 text-emerald-600" />
-            <span>{isRtl ? 'فحص الصحة' : 'Health Scan'}</span>
+            <span>{t(lang, 'kb.healthScan')}</span>
           </button>
 
           <button
@@ -627,7 +627,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             className="px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
           >
             <FolderPlus className="w-4 h-4 text-slate-500" />
-            <span>{isRtl ? 'مجموعة جديدة' : 'New Collection'}</span>
+            <span>{t(lang, 'kb.newCollection')}</span>
           </button>
 
           <button
@@ -635,14 +635,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
           >
             <Upload className="w-4 h-4" />
-            <span>{isRtl ? 'رفع واستيعاب مستند' : 'Ingest Document'}</span>
+            <span>{t(lang, 'kb.ingestDocument')}</span>
           </button>
 
           <button
             onClick={() => fetchKnowledgeData()}
             className="p-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition flex items-center justify-center cursor-pointer shadow-3xs"
-            title={isRtl ? 'تحديث البيانات' : 'Refresh Data'}
-            aria-label={isRtl ? 'تحديث البيانات' : 'Refresh Data'}
+            title={t(lang, 'kb.refreshData')}
+            aria-label={t(lang, 'kb.refreshData')}
           >
             <RefreshCw className={`w-4 h-4 text-slate-500 ${isLoading ? 'animate-spin text-indigo-600' : ''}`} />
           </button>
@@ -664,7 +664,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             onClick={() => fetchKnowledgeData()}
             className="shrink-0 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
           >
-            {isRtl ? 'إعادة المحاولة' : 'Retry'}
+            {t(lang, 'kb.retry')}
           </button>
         </div>
       )}
@@ -672,7 +672,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       {/* 2. TAB NAVIGATION BAR — data-driven, accessible (role=tablist). */}
       <div
         role="tablist"
-        aria-label={isRtl ? 'أقسام قاعدة المعرفة' : 'Knowledge base sections'}
+        aria-label={t(lang, 'kb.knowledgeBaseSections')}
         onKeyDown={(e) => {
           // Complete ARIA tabs pattern: roving focus with arrow keys.
           // In RTL the visual order flips, so ArrowLeft/Right are mirrored.
@@ -764,12 +764,12 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-3xs flex items-center justify-between">
                 <div className="space-y-1">
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
-                    {isRtl ? 'إجمالي المستندات المفهرسة' : 'Total Documents'}
+                    {t(lang, 'kb.totalDocuments')}
                   </span>
                   <div className="text-2xl font-black text-slate-950 flex items-baseline gap-2 font-mono">
                     <span>{totalDocsCount}</span>
                     <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-sans">
-                      {indexedDocsCount} {isRtl ? 'جاهز' : 'ready'}
+                      {indexedDocsCount} {t(lang, 'kb.ready')}
                     </span>
                   </div>
                 </div>
@@ -782,12 +782,12 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-3xs flex items-center justify-between">
                 <div className="space-y-1">
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
-                    {isRtl ? 'المقاطع المتجهية (Qdrant)' : 'Vector Chunks (Qdrant)'}
+                    {t(lang, 'kb.vectorChunksQdrant')}
                   </span>
                   <div className="text-2xl font-black text-slate-950 flex items-baseline gap-2 font-mono">
                     <span>{totalChunksCount}</span>
                     <span className="text-[10px] text-slate-400 font-sans">
-                      ~{avgChunksPerDoc} {isRtl ? 'مقطع/ملف' : 'ch/doc'}
+                      ~{avgChunksPerDoc} {t(lang, 'kb.chunksPerDoc')}
                     </span>
                   </div>
                 </div>
@@ -800,12 +800,12 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-3xs flex items-center justify-between">
                 <div className="space-y-1">
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
-                    {isRtl ? 'مؤشر الصحة والجودة' : 'Health & Quality Score'}
+                    {t(lang, 'kb.healthQualityScore')}
                   </span>
                   <div className="text-2xl font-black text-emerald-600 flex items-baseline gap-2 font-mono">
                     <span>{healthPercentage}%</span>
                     <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-sans">
-                      {isRtl ? 'سليم' : 'Optimal'}
+                      {t(lang, 'kb.optimal')}
                     </span>
                   </div>
                 </div>
@@ -818,12 +818,12 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-3xs flex items-center justify-between">
                 <div className="space-y-1">
                   <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">
-                    {isRtl ? 'الموصلات ومصادر المزامنة' : 'Active Connectors'}
+                    {t(lang, 'kb.activeConnectors')}
                   </span>
                   <div className="text-2xl font-black text-slate-950 flex items-baseline gap-2 font-mono">
                     <span>{sources.length}</span>
                     <span className="text-[10px] text-violet-700 font-bold bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200 font-sans">
-                      {healthySourcesCount} {isRtl ? 'متصل' : 'healthy'}
+                      {healthySourcesCount} {t(lang, 'kb.healthy')}
                     </span>
                   </div>
                 </div>
@@ -844,7 +844,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     </div>
                     <div>
                       <h3 className="text-sm font-extrabold text-slate-900">
-                        {isRtl ? 'مهام الاستيعاب وخط المعالجة المباشر' : 'Active Ingestion Jobs & Live Pipeline'}
+                        {t(lang, 'kb.activeIngestionJobsLivePipeline')}
                       </h3>
                       <p className="text-[11px] text-slate-400">
                         {isRtl
@@ -881,28 +881,22 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
                     <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-3xs space-y-1">
                       <span className="text-[10px] font-mono text-slate-400 font-bold">STAGE 1</span>
-                      <h5 className="font-bold text-slate-800 text-[11px]">
-                        {isRtl ? 'التقسيم لـ 50ص' : '50p Slicing'}
-                      </h5>
+                      <h5 className="font-bold text-slate-800 text-[11px]">{t(lang, 'kb.slicing50p')}</h5>
                       <span className="text-[9px] text-emerald-600 block font-bold">✓ Ready</span>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-3xs space-y-1">
                       <span className="text-[10px] font-mono text-slate-400 font-bold">STAGE 2</span>
-                      <h5 className="font-bold text-slate-800 text-[11px]">{isRtl ? 'OCR ميسترال' : 'Mistral OCR'}</h5>
+                      <h5 className="font-bold text-slate-800 text-[11px]">{t(lang, 'kb.mistralOcr')}</h5>
                       <span className="text-[9px] text-emerald-600 block font-bold">✓ High Res</span>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-3xs space-y-1">
                       <span className="text-[10px] font-mono text-slate-400 font-bold">STAGE 3</span>
-                      <h5 className="font-bold text-slate-800 text-[11px]">
-                        {isRtl ? 'تقطيع 512t' : 'Sliding Chunks'}
-                      </h5>
+                      <h5 className="font-bold text-slate-800 text-[11px]">{t(lang, 'kb.slidingChunks')}</h5>
                       <span className="text-[9px] text-emerald-600 block font-bold">✓ Overlap 64t</span>
                     </div>
                     <div className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-3xs space-y-1">
                       <span className="text-[10px] font-mono text-slate-400 font-bold">STAGE 4</span>
-                      <h5 className="font-bold text-slate-800 text-[11px]">
-                        {isRtl ? 'فهرسة Qdrant' : 'Qdrant Embed'}
-                      </h5>
+                      <h5 className="font-bold text-slate-800 text-[11px]">{t(lang, 'kb.qdrantEmbed')}</h5>
                       <span className="text-[9px] text-emerald-600 block font-bold">✓ Cosine 768d</span>
                     </div>
                   </div>
@@ -911,13 +905,13 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 {/* Ingestion & Sync Activity Stream */}
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span>{isRtl ? 'سجل أحداث الفهرسة والمزامنة الأخيرة' : 'Recent Ingestion & Sync Events'}</span>
+                    <span>{t(lang, 'kb.recentIngestionSyncEvents')}</span>
                     <span className="text-[10px] font-mono text-slate-400">{syncLogs.length} events logged</span>
                   </div>
 
                   {syncLogs.length === 0 ? (
                     <div className="py-8 text-center text-slate-400 text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                      {isRtl ? 'لا توجد عمليات مزامنة سابقة.' : 'No sync events recorded yet.'}
+                      {t(lang, 'kb.noSyncEventsRecordedYet')}
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
@@ -940,7 +934,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                                   <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
                                   <span>•</span>
                                   <span className="text-indigo-600 font-bold">
-                                    +{log.itemsProcessed || 0} {isRtl ? 'عناصر' : 'items'}
+                                    +{log.itemsProcessed || 0} {t(lang, 'kb.items')}
                                   </span>
                                 </div>
                               </div>
@@ -972,10 +966,10 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     </div>
                     <div>
                       <h3 className="text-sm font-extrabold text-slate-900">
-                        {isRtl ? 'إحصائيات صحة المستندات' : 'Document Health Statistics'}
+                        {t(lang, 'kb.documentHealthStatistics')}
                       </h3>
                       <p className="text-[11px] text-slate-400">
-                        {isRtl ? 'فحص جاهزية الفهارس وسلامة التضمين' : 'Vector index coverage and semantic readiness'}
+                        {t(lang, 'kb.vectorIndexCoverageAndSemanticReadiness')}
                       </p>
                     </div>
                   </div>
@@ -985,16 +979,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     className="p-1.5 rounded-lg bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 transition cursor-pointer text-[10px] font-bold flex items-center gap-1"
                   >
                     <Activity className="w-3.5 h-3.5" />
-                    <span>{isRtl ? 'فحص شامل' : 'Deep Scan'}</span>
+                    <span>{t(lang, 'kb.deepScan')}</span>
                   </button>
                 </div>
 
                 {/* Health Score Gauge */}
                 <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200/70 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-950">
-                      {isRtl ? 'تغطية الفضاء المتجهي' : 'Vector Index Coverage'}
-                    </span>
+                    <span className="text-xs font-bold text-emerald-950">{t(lang, 'kb.vectorIndexCoverage')}</span>
                     <span className="text-sm font-mono font-black text-emerald-700">{healthPercentage}%</span>
                   </div>
                   {/* Progress Bar */}
@@ -1017,7 +1009,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                     <span className="text-slate-700 flex items-center gap-2 font-medium">
                       <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                      <span>{isRtl ? 'عزل بيانات المستأجر (Multi-Tenant)' : 'Multi-Tenant Isolation'}</span>
+                      <span>{t(lang, 'kb.multiTenantIsolation')}</span>
                     </span>
                     <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-mono">
                       SECURED
@@ -1027,7 +1019,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                     <span className="text-slate-700 flex items-center gap-2 font-medium">
                       <FileCheck className={`w-4 h-4 ${failedDocsCount > 0 ? 'text-rose-600' : 'text-emerald-600'}`} />
-                      <span>{isRtl ? 'مستندات فشلت فهرستها' : 'Documents with failed indexing'}</span>
+                      <span>{t(lang, 'kb.documentsWithFailedIndexing')}</span>
                     </span>
                     <span
                       className={`text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono ${
@@ -1036,7 +1028,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           : 'text-emerald-700 bg-emerald-50 border-emerald-200'
                       }`}
                     >
-                      {failedDocsCount} {isRtl ? 'مكتشف' : 'DETECTED'}
+                      {failedDocsCount} {t(lang, 'kb.detected')}
                     </span>
                   </div>
 
@@ -1045,7 +1037,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                       <Activity
                         className={`w-4 h-4 ${processingDocsCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}
                       />
-                      <span>{isRtl ? 'مستندات قيد المعالجة الآن' : 'Documents processing now'}</span>
+                      <span>{t(lang, 'kb.documentsProcessingNow')}</span>
                     </span>
                     <span
                       className={`text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono ${
@@ -1055,7 +1047,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                       }`}
                     >
                       {processingDocsCount > 0
-                        ? `${processingDocsCount} ${isRtl ? 'نشط' : 'ACTIVE'}`
+                        ? `${processingDocsCount} ${t(lang, 'kb.active')}`
                         : isRtl
                           ? 'لا يوجد'
                           : 'IDLE'}
@@ -1065,7 +1057,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                     <span className="text-slate-700 flex items-center gap-2 font-medium">
                       <Sparkles className="w-4 h-4 text-indigo-600" />
-                      <span>{isRtl ? 'محرك استخراج النصوص (OCR)' : 'OCR Layout Extraction'}</span>
+                      <span>{t(lang, 'kb.ocrLayoutExtraction')}</span>
                     </span>
                     <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 font-mono">
                       {keysStatus?.mistralActive ? 'MISTRAL AI' : 'GEMINI FALLBACK'}
@@ -1075,7 +1067,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                     <span className="text-slate-700 flex items-center gap-2 font-medium">
                       <Database className="w-4 h-4 text-blue-600" />
-                      <span>{isRtl ? 'أبعاد متجهات التضمين' : 'Embedding Vector Dimension'}</span>
+                      <span>{t(lang, 'kb.embeddingVectorDimension')}</span>
                     </span>
                     <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 font-mono">
                       3072 DIM (COSINE)
@@ -1093,9 +1085,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     <FileText className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-extrabold text-slate-900">
-                      {isRtl ? 'أحدث الملفات والمستندات المضافة' : 'Recently Ingested Documents'}
-                    </h3>
+                    <h3 className="text-sm font-extrabold text-slate-900">{t(lang, 'kb.recentlyIngestedDocuments')}</h3>
                     <p className="text-[11px] text-slate-400">
                       {isRtl
                         ? 'معاينة سريعة للوثائق مع إمكانية فحص متجهات المقاطع فوراً'
@@ -1108,7 +1098,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   onClick={() => setActiveTab('documents')}
                   className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 transition"
                 >
-                  <span>{isRtl ? 'عرض كافة المستندات' : 'View all documents'}</span>
+                  <span>{t(lang, 'kb.viewAllDocuments')}</span>
                   <ArrowRight className={`w-3.5 h-3.5 ${isRtl ? 'rotate-180' : ''}`} />
                 </button>
               </div>
@@ -1116,12 +1106,12 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               {recentFiles.length === 0 ? (
                 <div className="py-12 text-center text-slate-400 text-xs space-y-2">
                   <FileText className="w-8 h-8 text-slate-300 mx-auto" />
-                  <p>{isRtl ? 'لا توجد مستندات بعد في قاعدة المعرفة.' : 'No documents added yet.'}</p>
+                  <p>{t(lang, 'kb.noDocumentsAddedYet')}</p>
                   <button
                     onClick={() => setActiveTab('upload')}
                     className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold"
                   >
-                    {isRtl ? 'رفع أول مستند الآن' : 'Ingest First Document'}
+                    {t(lang, 'kb.ingestFirstDocument')}
                   </button>
                 </div>
               ) : (
@@ -1159,7 +1149,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={isRtl ? 'بحث في أسماء ونصوص المستندات...' : 'Search document titles and content...'}
+                    placeholder={t(lang, 'kb.searchDocumentTitlesAndContent')}
                     className={`w-full py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-indigo-500 font-sans ${
                       isRtl ? 'pr-9 pl-3' : 'pl-9 pr-3'
                     }`}
@@ -1167,7 +1157,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery('')}
-                      aria-label={isRtl ? 'مسح البحث' : 'Clear search'}
+                      aria-label={t(lang, 'kb.clearSearch')}
                       className={`absolute top-2 text-slate-400 hover:text-slate-600 text-xs ${isRtl ? 'left-3' : 'right-3'} cursor-pointer`}
                     >
                       ✕
@@ -1184,7 +1174,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                       onChange={(e) => setFilterCollection(e.target.value)}
                       className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
                     >
-                      <option value="all">{isRtl ? 'كافة المجموعات' : 'All Collections'}</option>
+                      <option value="all">{t(lang, 'kb.allCollections')}</option>
                       {collections.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
@@ -1199,7 +1189,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     onChange={(e) => setFilterType(e.target.value)}
                     className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
                   >
-                    <option value="all">{isRtl ? 'كافة الأنواع' : 'All Types'}</option>
+                    <option value="all">{t(lang, 'kb.allTypes')}</option>
                     <option value="pdf">PDF</option>
                     <option value="markdown">Markdown / TXT</option>
                     <option value="web">Web URL</option>
@@ -1213,13 +1203,13 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   <select
                     value={filterHealth}
                     onChange={(e) => setFilterHealth(e.target.value)}
-                    aria-label={isRtl ? 'تصفية حسب حالة الفهرسة' : 'Filter by indexing status'}
+                    aria-label={t(lang, 'kb.filterByIndexingStatus')}
                     className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
                   >
-                    <option value="all">{isRtl ? 'كافة الحالات' : 'All Statuses'}</option>
-                    <option value="indexed">{isRtl ? 'مفهرس' : 'Indexed'}</option>
-                    <option value="processing">{isRtl ? 'قيد المعالجة' : 'Processing'}</option>
-                    <option value="failed">{isRtl ? 'فشل الفهرسة' : 'Failed'}</option>
+                    <option value="all">{t(lang, 'kb.allStatuses')}</option>
+                    <option value="indexed">{t(lang, 'kb.indexed')}</option>
+                    <option value="processing">{t(lang, 'kb.processing')}</option>
+                    <option value="failed">{t(lang, 'kb.failed')}</option>
                   </select>
 
                   {/* Sort selector */}
@@ -1228,10 +1218,10 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     onChange={(e) => setSortBy(e.target.value as any)}
                     className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
                   >
-                    <option value="date">{isRtl ? 'الأحدث أولاً' : 'Newest'}</option>
-                    <option value="name">{isRtl ? 'الاسم' : 'Name'}</option>
-                    <option value="chunks">{isRtl ? 'عدد المقاطع' : 'Chunks Count'}</option>
-                    <option value="size">{isRtl ? 'الحجم' : 'File Size'}</option>
+                    <option value="date">{t(lang, 'kb.newest')}</option>
+                    <option value="name">{t(lang, 'kb.name')}</option>
+                    <option value="chunks">{t(lang, 'kb.chunksCount')}</option>
+                    <option value="size">{t(lang, 'kb.fileSize')}</option>
                   </select>
 
                   {/* View Mode Toggle: Grid vs List */}
@@ -1239,26 +1229,26 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     <button
                       onClick={() => setDocViewMode('grid')}
                       aria-pressed={docViewMode === 'grid'}
-                      aria-label={isRtl ? 'عرض بطاقات شبكية' : 'Grid View'}
+                      aria-label={t(lang, 'kb.gridView')}
                       className={`p-1.5 rounded-lg transition cursor-pointer ${
                         docViewMode === 'grid'
                           ? 'bg-white text-indigo-600 shadow-3xs'
                           : 'text-slate-400 hover:text-slate-700'
                       }`}
-                      title={isRtl ? 'عرض بطاقات شبكية' : 'Grid View'}
+                      title={t(lang, 'kb.gridView')}
                     >
                       <LayoutGrid className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => setDocViewMode('list')}
                       aria-pressed={docViewMode === 'list'}
-                      aria-label={isRtl ? 'عرض قائمة' : 'List View'}
+                      aria-label={t(lang, 'kb.listView')}
                       className={`p-1.5 rounded-lg transition cursor-pointer ${
                         docViewMode === 'list'
                           ? 'bg-white text-indigo-600 shadow-3xs'
                           : 'text-slate-400 hover:text-slate-700'
                       }`}
-                      title={isRtl ? 'عرض قائمة' : 'List View'}
+                      title={t(lang, 'kb.listView')}
                     >
                       <List className="w-3.5 h-3.5" />
                     </button>
@@ -1269,7 +1259,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               {/* Active Filter Chips */}
               <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
                 <span className="font-mono text-[11px]">
-                  {filteredDocuments.length} {isRtl ? 'مستند متطابق' : 'matching documents'}
+                  {filteredDocuments.length} {t(lang, 'kb.matchingDocuments')}
                 </span>
 
                 {(searchQuery || filterCollection !== 'all' || filterType !== 'all' || filterHealth !== 'all') && (
@@ -1282,7 +1272,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     }}
                     className="text-indigo-600 hover:underline text-[11px] font-bold"
                   >
-                    {isRtl ? 'إعادة ضبط الفلاتر' : 'Reset Filters'}
+                    {t(lang, 'kb.resetFilters')}
                   </button>
                 )}
               </div>
@@ -1310,7 +1300,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div className="bg-white rounded-3xl p-16 text-center border border-slate-200/80 shadow-3xs space-y-3">
                 <Search className="w-10 h-10 text-slate-300 mx-auto" />
                 <h4 className="text-sm font-extrabold text-slate-800">
-                  {isRtl ? 'لم يتم العثور على أي مستندات تطابق معايير البحث' : 'No documents matching your criteria'}
+                  {t(lang, 'kb.noDocumentsMatchingYourCriteria')}
                 </h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
                   {isRtl
@@ -1322,7 +1312,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
                 >
                   <Upload className="w-4 h-4" />
-                  <span>{isRtl ? 'رفع مستند جديد' : 'Ingest New Document'}</span>
+                  <span>{t(lang, 'kb.ingestNewDocument')}</span>
                 </button>
               </div>
             ) : docViewMode === 'grid' ? (
@@ -1374,7 +1364,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                             </div>
                             <div className="flex items-center gap-3 text-[10px] text-slate-400 font-mono mt-0.5">
                               <span className="text-indigo-600 font-bold">
-                                {doc.chunkCount || 0} {isRtl ? 'مقطع' : 'chunks'}
+                                {doc.chunkCount || 0} {t(lang, 'kb.chunks')}
                               </span>
                               <span>~{estimatedTokens} tok</span>
                               <span>{new Date(doc.createdAt).toLocaleDateString()}</span>
@@ -1386,29 +1376,29 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           <button
                             onClick={() => setVersionHistoryDoc(doc)}
                             className="px-2.5 py-1 bg-slate-100 hover:bg-violet-50 text-slate-700 hover:text-violet-700 rounded-lg text-xs font-bold transition flex items-center gap-1 border border-slate-200"
-                            title={isRtl ? 'سجل وتاريخ الإصدارات والتراجع' : 'Version History'}
+                            title={t(lang, 'kb.versionHistory')}
                           >
                             <History className="w-3.5 h-3.5 text-violet-600" />
-                            <span>{isRtl ? 'الإصدارات' : 'History'}</span>
+                            <span>{t(lang, 'kb.history')}</span>
                           </button>
                           <button
                             onClick={() => setInspectingDoc(doc)}
                             className="px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-xs font-bold transition flex items-center gap-1 border border-slate-200"
                           >
                             <Layers className="w-3.5 h-3.5" />
-                            <span>{isRtl ? 'المقاطع' : 'Chunks'}</span>
+                            <span>{t(lang, 'kb.chunks2')}</span>
                           </button>
                           <button
                             onClick={() => setPreviewingDoc(doc)}
                             className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition flex items-center gap-1 border border-slate-200"
                           >
                             <Eye className="w-3.5 h-3.5" />
-                            <span>{isRtl ? 'معاينة' : 'Preview'}</span>
+                            <span>{t(lang, 'kb.preview')}</span>
                           </button>
                           <button
                             onClick={() => setPendingDeleteDoc(doc)}
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                            aria-label={isRtl ? `حذف المستند ${doc.title}` : `Delete document ${doc.title}`}
+                            aria-label={t(lang, 'kb.deleteDocumentAria', { name: doc.title })}
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1429,7 +1419,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                   <Folder className="w-4 h-4 text-indigo-600" />
-                  <span>{isRtl ? 'المجموعات المعرفية المعزولة' : 'Isolated Knowledge Collections'}</span>
+                  <span>{t(lang, 'kb.isolatedKnowledgeCollections')}</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {isRtl
@@ -1443,16 +1433,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
               >
                 <FolderPlus className="w-4 h-4" />
-                <span>{isRtl ? 'إنشاء مجموعة جديدة' : 'New Collection'}</span>
+                <span>{t(lang, 'kb.createNewCollection')}</span>
               </button>
             </div>
 
             {collections.length === 0 ? (
               <div className="bg-white rounded-3xl p-16 text-center border border-slate-200/80 shadow-3xs space-y-3">
                 <Folder className="w-10 h-10 text-slate-300 mx-auto" />
-                <h4 className="text-sm font-extrabold text-slate-800">
-                  {isRtl ? 'لا توجد مجموعات معرفية حالياً' : 'No collections created yet'}
-                </h4>
+                <h4 className="text-sm font-extrabold text-slate-800">{t(lang, 'kb.noCollectionsCreatedYet')}</h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
                   {isRtl
                     ? 'أنشئ مجموعات لتنظيم مستنداتك حسب الأقسام أو المشاريع المعرفية.'
@@ -1463,7 +1451,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
                 >
                   <FolderPlus className="w-4 h-4" />
-                  <span>{isRtl ? 'إنشاء أول مجموعة' : 'Create First Collection'}</span>
+                  <span>{t(lang, 'kb.createFirstCollection')}</span>
                 </button>
               </div>
             ) : (
@@ -1491,16 +1479,16 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
 
                         <h4 className="text-sm font-extrabold text-slate-900 pt-1">{col.name}</h4>
                         <p className="text-xs text-slate-500 line-clamp-2">
-                          {col.description || (isRtl ? 'مجموعة معرفية مخصصة' : 'Custom knowledge collection')}
+                          {col.description || t(lang, 'kb.customKnowledgeCollection')}
                         </p>
                       </div>
 
                       <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-mono">
                         <span className="font-bold text-indigo-700">
-                          {colDocs.length} {isRtl ? 'مستندات' : 'documents'}
+                          {colDocs.length} {t(lang, 'kb.documents')}
                         </span>
                         <span>
-                          {colChunks} {isRtl ? 'مقطع' : 'chunks'}
+                          {colChunks} {t(lang, 'kb.chunks')}
                         </span>
                       </div>
                     </div>
@@ -1565,7 +1553,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>{isRtl ? 'تحديث الإحصائيات' : 'Refresh Stats'}</span>
+                  <span>{t(lang, 'kb.refreshStats')}</span>
                 </button>
 
                 <button
@@ -1574,7 +1562,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  <span>{isRtl ? 'مسح كل الذاكرة' : 'Clear Cache'}</span>
+                  <span>{t(lang, 'kb.clearCache')}</span>
                 </button>
               </div>
             </div>
@@ -1583,17 +1571,17 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-3xs space-y-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
-                  {isRtl ? 'المستندات المخزنة' : 'Cached Documents'}
+                  {t(lang, 'kb.cachedDocuments')}
                 </span>
                 <div className="text-xl font-extrabold text-slate-900 font-mono">{ocrCacheStats.count}</div>
                 <span className="text-[10px] text-slate-500 font-medium">
-                  {ocrCacheStats.totalPages} {isRtl ? 'صفحات محفوظة' : 'pages total'}
+                  {ocrCacheStats.totalPages} {t(lang, 'kb.pagesTotal')}
                 </span>
               </div>
 
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-3xs space-y-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
-                  {isRtl ? 'مرات استدعاء الكاش (Hits)' : 'Total Cache Hits'}
+                  {t(lang, 'kb.totalCacheHits')}
                 </span>
                 <div className="text-xl font-extrabold text-emerald-600 font-mono flex items-center gap-1.5">
                   <span>{ocrCacheStats.totalHits}</span>
@@ -1601,14 +1589,12 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     ⚡ 0ms latency
                   </span>
                 </div>
-                <span className="text-[10px] text-slate-500 font-medium">
-                  {isRtl ? 'طلب API تم توفيره' : 'API requests saved'}
-                </span>
+                <span className="text-[10px] text-slate-500 font-medium">{t(lang, 'kb.apiRequestsSaved')}</span>
               </div>
 
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-3xs space-y-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
-                  {isRtl ? 'الرموز الموفرة (Tokens)' : 'Tokens Saved'}
+                  {t(lang, 'kb.tokensSaved')}
                 </span>
                 <div className="text-xl font-extrabold text-indigo-600 font-mono">
                   ~{ocrCacheStats.savedTokens.toLocaleString()}
@@ -1618,11 +1604,11 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
 
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-3xs space-y-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
-                  {isRtl ? 'الحجم الإجمالي' : 'Cache Memory Size'}
+                  {t(lang, 'kb.cacheMemorySize')}
                 </span>
                 <div className="text-xl font-extrabold text-slate-900 font-mono">{ocrCacheStats.sizeKb} KB</div>
                 <span className="text-[10px] text-slate-500 font-medium">
-                  {(ocrCacheStats.savedBytes / (1024 * 1024)).toFixed(1)} MB {isRtl ? 'ملفات معالجة' : 'files cached'}
+                  {(ocrCacheStats.savedBytes / (1024 * 1024)).toFixed(1)} MB {t(lang, 'kb.filesCached')}
                 </span>
               </div>
             </div>
@@ -1632,19 +1618,17 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div className="p-4 bg-slate-50/70 border-b border-slate-200/80 flex items-center justify-between text-xs font-bold text-slate-700">
                 <span className="flex items-center gap-2">
                   <FileText className="w-4 h-4 text-indigo-600" />
-                  <span>{isRtl ? 'قائمة المستندات المسجلة بالذاكرة المؤقتة' : 'Cached OCR Documents Registry'}</span>
+                  <span>{t(lang, 'kb.cachedOcrDocumentsRegistry')}</span>
                 </span>
                 <span className="font-mono text-[11px] text-slate-400">
-                  {ocrCacheEntries.length} {isRtl ? 'عناصر' : 'entries'}
+                  {ocrCacheEntries.length} {t(lang, 'kb.entries')}
                 </span>
               </div>
 
               {ocrCacheEntries.length === 0 ? (
                 <div className="p-12 text-center space-y-3">
                   <Zap className="w-10 h-10 text-slate-300 mx-auto" />
-                  <h4 className="text-sm font-extrabold text-slate-800">
-                    {isRtl ? 'لا توجد نتائج OCR مخزنة حالياً' : 'No OCR cache entries found'}
-                  </h4>
+                  <h4 className="text-sm font-extrabold text-slate-800">{t(lang, 'kb.noOcrCacheEntriesFound')}</h4>
                   <p className="text-xs text-slate-500 max-w-sm mx-auto">
                     {isRtl
                       ? 'عند استخدام استوديو الرفع لاستخراج النصوص عبر Mistral OCR، سيتم حفظ النتائج هنا تلقائياً لمنع طلبات API المكررة.'
@@ -1655,7 +1639,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <Upload className="w-3.5 h-3.5" />
-                    <span>{isRtl ? 'انتقل إلى استوديو الرفع' : 'Go to Ingestion Studio'}</span>
+                    <span>{t(lang, 'kb.goToIngestionStudio')}</span>
                   </button>
                 </div>
               ) : (
@@ -1682,7 +1666,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                                 {entry.engineUsed}
                               </span>
                               <span className="text-[10px] font-mono bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200 font-bold flex items-center gap-1">
-                                ⚡ {entry.hits} {isRtl ? 'مرات كاش' : 'hits'}
+                                ⚡ {entry.hits} {t(lang, 'kb.hits')}
                               </span>
                             </div>
 
@@ -1702,10 +1686,10 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           <button
                             onClick={() => setPreviewOcrEntry(entry)}
                             className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                            title={isRtl ? 'معاينة النص المخزن' : 'Preview Extracted Text'}
+                            title={t(lang, 'kb.previewExtractedText')}
                           >
                             <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                            <span>{isRtl ? 'معاينة' : 'Preview'}</span>
+                            <span>{t(lang, 'kb.preview')}</span>
                           </button>
 
                           <button
@@ -1723,8 +1707,8 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                               });
                             }}
                             className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition cursor-pointer"
-                            title={isRtl ? 'نسخ النص' : 'Copy Text'}
-                            aria-label={isRtl ? 'نسخ النص' : 'Copy Text'}
+                            title={t(lang, 'kb.copyText')}
+                            aria-label={t(lang, 'kb.copyText')}
                           >
                             <Copy className="w-3.5 h-3.5 text-slate-600" />
                           </button>
@@ -1735,8 +1719,8 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                               refreshOcrCache();
                             }}
                             className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition cursor-pointer"
-                            title={isRtl ? 'حذف من الكاش' : 'Delete from cache'}
-                            aria-label={isRtl ? 'حذف من الكاش' : 'Delete from cache'}
+                            title={t(lang, 'kb.deleteFromCache')}
+                            aria-label={t(lang, 'kb.deleteFromCache')}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1757,7 +1741,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                   <Database className="w-4 h-4 text-indigo-600" />
-                  <span>{isRtl ? 'موصلات البيانات ومصادر المزامنة' : 'Automated Data Connectors'}</span>
+                  <span>{t(lang, 'kb.automatedDataConnectors')}</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {isRtl
@@ -1773,7 +1757,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin' : ''}`} />
-                  <span>{isRtl ? 'مزامنة الكل' : 'Sync All'}</span>
+                  <span>{t(lang, 'kb.syncAll')}</span>
                 </button>
 
                 <button
@@ -1781,7 +1765,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>{isRtl ? 'إضافة موصل جديد' : 'Add Connector'}</span>
+                  <span>{t(lang, 'kb.addConnector')}</span>
                 </button>
               </div>
             </div>
@@ -1789,9 +1773,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             {sources.length === 0 ? (
               <div className="bg-white rounded-3xl p-16 text-center border border-slate-200/80 shadow-3xs space-y-3">
                 <Database className="w-10 h-10 text-slate-300 mx-auto" />
-                <h4 className="text-sm font-extrabold text-slate-800">
-                  {isRtl ? 'لا توجد موصلات نشطة حالياً' : 'No connectors configured'}
-                </h4>
+                <h4 className="text-sm font-extrabold text-slate-800">{t(lang, 'kb.noConnectorsConfigured')}</h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
                   {isRtl
                     ? 'أضف موصلات لسحب البيانات تلقائياً من المواقع أو GitHub أو Google Drive.'
@@ -1802,7 +1784,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>{isRtl ? 'إضافة أول موصل' : 'Add First Connector'}</span>
+                  <span>{t(lang, 'kb.addFirstConnector')}</span>
                 </button>
               </div>
             ) : (
@@ -1840,31 +1822,29 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                         <RefreshCw
                           className={`w-3 h-3 ${syncingSourceId === src.id ? 'animate-spin text-indigo-600' : ''}`}
                         />
-                        <span>
-                          {syncingSourceId === src.id ? (isRtl ? 'يزامن...' : 'Syncing...') : isRtl ? 'مزامنة' : 'Sync'}
-                        </span>
+                        <span>{syncingSourceId === src.id ? t(lang, 'kb.syncing') : t(lang, 'kb.sync')}</span>
                       </button>
 
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => setViewingLogsSource(src)}
                           className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-                          title={isRtl ? 'عرض السجلات' : 'View Logs'}
+                          title={t(lang, 'kb.viewLogs')}
                         >
                           <Clock className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => setEditingSource(src)}
                           className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-                          title={isRtl ? 'تعديل الإعدادات' : 'Edit Settings'}
+                          title={t(lang, 'kb.editSettings')}
                         >
                           <Settings className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => setPendingDeleteSource(src)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                          title={isRtl ? 'حذف' : 'Delete'}
-                          aria-label={isRtl ? `حذف الموصل ${src.name}` : `Delete connector ${src.name}`}
+                          title={t(lang, 'kb.delete')}
+                          aria-label={t(lang, 'kb.deleteConnectorAria', { name: src.name })}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1883,9 +1863,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             <div>
               <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                 <Key className="w-4 h-4 text-indigo-600" />
-                <span>
-                  {isRtl ? 'حالة ربط الخدمات الخارجية ومفاتيح الـ AI' : 'External Services & API Key Configurations'}
-                </span>
+                <span>{t(lang, 'kb.externalServicesApiKeyConfigurations')}</span>
               </h3>
               <p className="text-xs text-slate-500 mt-1">
                 {isRtl
@@ -1923,7 +1901,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           : 'bg-amber-50 text-amber-700 border border-amber-200'
                       }`}
                     >
-                      {keysStatus?.geminiActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : isRtl ? 'معلق ⚠' : 'Missing ⚠'}
+                      {keysStatus?.geminiActive ? t(lang, 'kb.active2') : t(lang, 'kb.missing')}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500">
@@ -1976,7 +1954,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                           : 'bg-amber-50 text-amber-700 border border-amber-200'
                       }`}
                     >
-                      {keysStatus?.mistralActive ? (isRtl ? 'نشط ✓' : 'Active ✓') : isRtl ? 'اختياري ⚠' : 'Optional ⚠'}
+                      {keysStatus?.mistralActive ? t(lang, 'kb.active2') : t(lang, 'kb.optional')}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500">
@@ -2027,9 +2005,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             <div className="border-b border-slate-100 pb-3">
               <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                 <Zap className="w-5 h-5 text-amber-500" />
-                <span>
-                  {isRtl ? 'موارد بروتوكول سياق النموذج (MCP Resources Inspector)' : 'MCP Context Resources Inspector'}
-                </span>
+                <span>{t(lang, 'kb.mcpContextResourcesInspector')}</span>
               </h2>
               <p className="text-xs text-slate-500 mt-1">
                 {isRtl
@@ -2039,9 +2015,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             </div>
 
             {mcpResources.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 text-xs">
-                {isRtl ? 'لم يتم العثور على موارد MCP نشطة حالياً.' : 'No active MCP resources found.'}
-              </div>
+              <div className="py-12 text-center text-slate-400 text-xs">{t(lang, 'kb.noActiveMcpResourcesFound')}</div>
             ) : (
               <div className="space-y-3">
                 {mcpResources.map((res) => (
@@ -2183,7 +2157,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 </div>
               </div>
 
-              <ModalCloseButton onClose={() => setPreviewOcrEntry(null)} label={isRtl ? 'إغلاق' : 'Close'} />
+              <ModalCloseButton onClose={() => setPreviewOcrEntry(null)} label={t(lang, 'kb.close')} />
             </div>
 
             <div className="p-5 overflow-y-auto flex-1 min-h-0 font-mono text-xs text-slate-800 whitespace-pre-wrap leading-relaxed bg-slate-950/5 select-text">
@@ -2211,14 +2185,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   className="px-3 py-1.5 bg-indigo-600 text-white font-bold rounded-xl text-xs hover:bg-indigo-700 transition flex items-center gap-1.5 cursor-pointer"
                 >
                   <Copy className="w-3.5 h-3.5" />
-                  <span>{isRtl ? 'نسخ النص' : 'Copy Text'}</span>
+                  <span>{t(lang, 'kb.copyText')}</span>
                 </button>
 
                 <button
                   onClick={() => setPreviewOcrEntry(null)}
                   className="px-3 py-1.5 bg-slate-200 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-300 transition cursor-pointer"
                 >
-                  {isRtl ? 'إغلاق' : 'Close'}
+                  {t(lang, 'kb.close')}
                 </button>
               </div>
             </div>
@@ -2229,14 +2203,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
       {/* Confirmation dialogs (accessible replacements for native confirm()) */}
       <ConfirmDialog
         open={!!pendingDeleteDoc}
-        title={isRtl ? 'حذف المستند نهائياً' : 'Permanently delete document'}
+        title={t(lang, 'kb.permanentlyDeleteDocument')}
         message={
           isRtl
             ? `هل تود حذف "${pendingDeleteDoc?.title}" ومتجهاته نهائياً من Qdrant؟ لا يمكن التراجع عن هذا الإجراء.`
             : `Permanently delete "${pendingDeleteDoc?.title}" and its Qdrant vectors? This cannot be undone.`
         }
-        confirmLabel={isRtl ? 'حذف نهائي' : 'Delete permanently'}
-        cancelLabel={isRtl ? 'إلغاء' : 'Cancel'}
+        confirmLabel={t(lang, 'kb.deletePermanently')}
+        cancelLabel={t(lang, 'kb.cancel')}
         variant="danger"
         loading={isDeleting}
         onConfirm={confirmDeleteDocument}
@@ -2245,14 +2219,14 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
 
       <ConfirmDialog
         open={!!pendingDeleteSource}
-        title={isRtl ? 'حذف الموصل' : 'Delete connector'}
+        title={t(lang, 'kb.deleteConnector')}
         message={
           isRtl
             ? `هل أنت متأكد من حذف الموصل "${pendingDeleteSource?.name}" وإلغاء فهرسة مستنداته؟`
             : `Are you sure you want to delete the "${pendingDeleteSource?.name}" connector and de-index its documents?`
         }
-        confirmLabel={isRtl ? 'حذف' : 'Delete'}
-        cancelLabel={isRtl ? 'إلغاء' : 'Cancel'}
+        confirmLabel={t(lang, 'kb.delete')}
+        cancelLabel={t(lang, 'kb.cancel')}
         variant="danger"
         loading={isDeleting}
         onConfirm={confirmDeleteSource}
@@ -2261,20 +2235,20 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
 
       <ConfirmDialog
         open={isClearCacheConfirmOpen}
-        title={isRtl ? 'مسح ذاكرة OCR المؤقتة' : 'Clear OCR cache'}
+        title={t(lang, 'kb.clearOcrCache')}
         message={
           isRtl
             ? 'هل تريد مسح جميع نتائج الـ OCR المخزنة في الذاكرة المؤقتة؟ سيُعاد استخراج النصوص عند رفع نفس الملفات مجدداً.'
             : 'Clear all cached Mistral OCR results? Text will be re-extracted if you upload the same files again.'
         }
-        confirmLabel={isRtl ? 'مسح الكل' : 'Clear all'}
-        cancelLabel={isRtl ? 'إلغاء' : 'Cancel'}
+        confirmLabel={t(lang, 'kb.clearAll')}
+        cancelLabel={t(lang, 'kb.cancel')}
         variant="warning"
         onConfirm={() => {
           clearAllOcrCache();
           refreshOcrCache();
           setIsClearCacheConfirmOpen(false);
-          toast({ title: isRtl ? 'تم مسح ذاكرة OCR' : 'OCR cache cleared', variant: 'success' });
+          toast({ title: t(lang, 'kb.ocrCacheCleared'), variant: 'success' });
         }}
         onCancel={() => setIsClearCacheConfirmOpen(false)}
       />
