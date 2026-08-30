@@ -1,6 +1,7 @@
 'use client';
 
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
+import { useQuery } from '@tanstack/react-query';
 import React, { useState, useEffect, useMemo } from 'react';
 import ChunksDistributionChart from './analytics/ChunksDistributionChart';
 import SystemHealthPanel from './analytics/SystemHealthPanel';
@@ -55,30 +56,48 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
   const [actionSearch, setActionSearch] = useState('');
   const [visibleRows, setVisibleRows] = useState(AUDIT_PAGE_STEP);
 
-  const fetchAnalytics = async () => {
-    setIsAnalyticsLoading(true);
-    setAnalyticsError(null);
-    try {
+  // TanStack Query: cached across route navigations (returning to /analytics
+  // shows the previous data instantly instead of an empty flicker).
+  const {
+    data: analyticsData,
+    isPending: analyticsIsPending,
+    error: analyticsQueryError,
+    refetch: refetchAnalytics,
+  } = useQuery({
+    queryKey: ['analytics', tenantId],
+    queryFn: async () => {
       const res = await fetchWithAuth(`/api/v1/analytics?tenantId=${tenantId}`);
       const data = await res.json();
       if (!res.ok || data.error) {
         throw new Error(data.error || t(lang, 'analytics.loadFailed'));
       }
-      setStats(data.stats ?? null);
-      setAuditLogs(Array.isArray(data.auditLogs) ? data.auditLogs : []);
-      setAuditLogsTotal(typeof data.auditLogsTotal === 'number' ? data.auditLogsTotal : null);
-      setConversationsCount(typeof data.conversationsCount === 'number' ? data.conversationsCount : null);
-    } catch (e: any) {
-      console.error(e);
-      setAnalyticsError(e?.message || t(lang, 'analytics.unexpectedError'));
-    } finally {
-      setIsAnalyticsLoading(false);
-    }
-  };
+      return {
+        stats: (data.stats ?? null) as AnalyticsStats | null,
+        auditLogs: (Array.isArray(data.auditLogs) ? data.auditLogs : []) as AuditLogEntry[],
+        auditLogsTotal: typeof data.auditLogsTotal === 'number' ? data.auditLogsTotal : null,
+        conversationsCount: typeof data.conversationsCount === 'number' ? data.conversationsCount : null,
+      };
+    },
+    staleTime: 15_000,
+    retry: 1,
+  });
+
+  // Server data → local state (single direction).
+  useEffect(() => {
+    if (!analyticsData) return;
+    setStats(analyticsData.stats);
+    setAuditLogs(analyticsData.auditLogs);
+    setAuditLogsTotal(analyticsData.auditLogsTotal);
+    setConversationsCount(analyticsData.conversationsCount);
+  }, [analyticsData]);
 
   useEffect(() => {
-    fetchAnalytics();
-  }, [tenantId]);
+    setIsAnalyticsLoading(analyticsIsPending);
+  }, [analyticsIsPending]);
+
+  useEffect(() => {
+    setAnalyticsError(analyticsQueryError ? (analyticsQueryError as Error).message : null);
+  }, [analyticsQueryError]);
 
   const filteredAuditLogs = useMemo(() => {
     const needle = actionSearch.trim().toLowerCase();
@@ -248,7 +267,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
             {analyticsError && (
               <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium flex items-center justify-between">
                 <span>{analyticsError}</span>
-                <button onClick={fetchAnalytics} className="underline cursor-pointer font-bold">
+                <button onClick={() => refetchAnalytics()} className="underline cursor-pointer font-bold">
                   {t(lang, 'analytics.retry')}
                 </button>
               </div>
@@ -397,7 +416,7 @@ export default function AnalyticsCenter({ tenantId, lang }: AnalyticsCenterProps
                   </span>
                 </h3>
                 <button
-                  onClick={fetchAnalytics}
+                  onClick={() => refetchAnalytics()}
                   disabled={isAnalyticsLoading}
                   className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition flex items-center gap-1 text-xs cursor-pointer select-none"
                 >
