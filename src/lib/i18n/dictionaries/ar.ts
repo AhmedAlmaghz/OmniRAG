@@ -557,6 +557,7 @@ export const ar: Dictionary = {
     jumpToBottom: 'الانتقال إلى الأسفل',
     questionN: 'سؤال {n}',
     questionAria: 'سؤال {n}: {preview}',
+    emptyQuestion: '(بدون نص)',
   },
   ingest: {
     valNoFile: 'لم يتم اختيار أي ملف.',

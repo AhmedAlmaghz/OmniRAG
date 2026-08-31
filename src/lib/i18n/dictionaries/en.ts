@@ -555,7 +555,8 @@ export const en = {
     jumpToTop: 'Jump to top',
     jumpToBottom: 'Jump to bottom',
     questionN: 'Question {n}',
-    questionAria: 'Question {n}',
+    questionAria: 'Question {n}: {preview}',
+    emptyQuestion: '(no text)',
   },
   ingest: {
     valNoFile: 'No file selected.',
