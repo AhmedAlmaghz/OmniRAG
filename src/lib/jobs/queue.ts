@@ -52,6 +52,18 @@ export function getJobQueue(): Promise<PgBoss | null> {
         });
         boss.on('error', (err: Error) => console.error('[JobQueue] pg-boss error:', err));
         await boss.start();
+        // pg-boss v12+ requires explicit queue creation before send/schedule/
+        // work — the pre-v12 auto-create no longer exists. Without this, every
+        // first cold start on Vercel failed with SQL 23503 ("Queue
+        // connector.sync does not exist" / schedule_name_fkey violation)
+        // until something happened to create it. CreateQueue is idempotent.
+        try {
+          await boss.createQueue(CONNECTOR_SYNC_QUEUE);
+          await boss.createQueue(DOCUMENT_REINDEX_QUEUE);
+          console.log('[JobQueue] queues ensured:', CONNECTOR_SYNC_QUEUE, DOCUMENT_REINDEX_QUEUE);
+        } catch (createErr) {
+          console.error('[JobQueue] createQueue failed — jobs will fail until created:', createErr);
+        }
         console.log('[JobQueue] pg-boss started — background jobs enabled.');
         return boss;
       } catch (err) {
