@@ -23,7 +23,7 @@ import {
 } from '@/lib/rag/engine';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { createPIIStreamRedactor } from '@/lib/security/piiStreamRedactor';
-import { parseModelConfigFromRequest, getAiModel } from '@/lib/config/aiModels';
+import { parseModelConfigFromRequest, getAiModel, getFallbackModels } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 import { buildTenantMcpTools } from '@/lib/mcp/aiSdkTools';
 import { generateTextResilient } from '@/lib/ai/resilientGenerate';
@@ -341,53 +341,109 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             });
           }
 
-          const result = streamText({
-            model: await resolveLanguageModel(modelAlias),
-            system: buildAgenticSystemInstruction(modelAlias, mode, toolsToOffer),
-            messages: [...historyMessages, { role: 'user', content: userContent }],
-            ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),
-            stopWhen: stepCountIs(5),
-            temperature: 0.2,
-            // Abort generation at GENERATION_TIMEOUT_MS (55s), UNDER the 60s
-            // Vercel Hobby function ceiling. Two failure modes this prevents:
-            //  1. The SDK's retry backoff on an exhausted free-tier quota can
-            //     run for MINUTES — the user stared at an endless "thinking"
-            //     indicator; the abort converts that into an immediate,
-            //     classified in-stream error.
-            //  2. A slow provider hitting the PLATFORM limit got the whole
-            //     SSE connection hard-killed (raw network drop → generic
-            //     "connection error"); aborting ourselves 5s earlier keeps
-            //     the error inside the stream protocol.
-            timeout: GENERATION_TIMEOUT_MS,
-            abortSignal: AbortSignal.timeout(GENERATION_TIMEOUT_MS),
-          });
-
-          // Provider error translation: the SDK's UIMessageStreamOptions.onError
-          // REPLACES the default "An error occurred." error part with whatever
-          // this returns — the official v7 way to surface real causes (e.g.
-          // Gemini free-tier 429 RESOURCE_EXHAUSTED) instead of a generic text.
-          const providerErrorMessage = (error: unknown): string => {
-            const raw = String((error as any)?.data?.error?.message || (error as any)?.message || error || '');
-            console.error('[chat/stream] provider error:', raw.slice(0, 300));
-            const isQuota = /quota|RESOURCE_EXHAUSTED|exceeded your current quota|429/i.test(raw);
-            if (isQuota) quotaHitRef.value = true;
-            const isTimeout = /timeout|timed out|TimeoutError|AbortError|aborted/i.test(raw);
-            if (isQuota) {
-              return 'استُهلكت حصة مزوّد الذكاء الاصطناعي مؤقتًا (429 RESOURCE_EXHAUSTED) — انتظر دقيقة أو اضبط مفتاحًا مدفوعًا/نموذجًا آخر من الإعدادات (AI provider quota exhausted — configure a paid key or another model).';
-            }
-            if (isTimeout) {
-              return 'تجاوز التوليد المهلة المسموحة (55 ثانية) دون اكتمال — قد يكون المزود بطيئًا أو الحصة مستنزفة؛ أعد المحاولة أو اختر نموذجًا آخر (Generation timed out — retry or pick another model).';
-            }
-            return `تعذّر التوليد من مزوّد النموذج: ${raw.slice(0, 200) || 'unknown provider error'}`;
+          // ── Cross-provider streaming with fallback ────────────────────────
+          // streamText takes ONE model; when that provider is down (e.g. the
+          // recurring global "high demand" on free-tier Gemini) the whole
+          // turn failed. Walk a fallback chain: try the primary; if it fails
+          // BEFORE streaming a single character (nothing delivered yet), retry
+          // the next configured model. Models whose provider has no API key
+          // are skipped via isModelRefConfigured — the chain degrades to
+          // primary-only when no other provider is set up.
+          const buildFallbackChain = (): string[] => {
+            const chain = [modelAlias, ...getFallbackModels()].filter((m, i, arr) => m && arr.indexOf(m) === i);
+            return chain;
           };
 
-          // Stream model output through the PII redactor, then merge. The
-          // onError option is what rewrites the error part text.
-          const { transformed, done } = redactPiiChunks(
-            result.toUIMessageStream({ onError: providerErrorMessage }) as ReadableStream<UIMessageChunk>,
-          );
-          writer.merge(transformed);
-          await done;
+          const attemptStream = async (aliasToTry: string) => {
+            const result = streamText({
+              model: await resolveLanguageModel(aliasToTry),
+              system: buildAgenticSystemInstruction(aliasToTry, mode, toolsToOffer),
+              messages: [...historyMessages, { role: 'user', content: userContent }],
+              ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),
+              stopWhen: stepCountIs(5),
+              temperature: 0.2,
+              // Abort generation at GENERATION_TIMEOUT_MS (55s), UNDER the 60s
+              // Vercel Hobby ceiling: keeps failures inside the stream protocol
+              // instead of the platform hard-killing the SSE connection.
+              timeout: GENERATION_TIMEOUT_MS,
+              abortSignal: AbortSignal.timeout(GENERATION_TIMEOUT_MS),
+            });
+            // Await the FIRST element to know whether this provider can serve
+            // us at all; a failure here means nothing was streamed yet and we
+            // can safely fall through to the next model.
+            const first = await result.textStream[Symbol.asyncIterator]().next();
+            return { result, first };
+          };
+
+          let result!: Awaited<ReturnType<typeof attemptStream>>['result'];
+          let firstChunk: Awaited<ReturnType<typeof attemptStream>>['first'];
+          let usedModel = modelAlias;
+          const chain = buildFallbackChain();
+          let lastFailReason = '';
+          let delivered = false;
+
+          for (let i = 0; i < chain.length; i++) {
+            const aliasToTry = chain[i];
+            if (!(await isModelRefConfigured(aliasToTry))) continue; // no key → skip
+            try {
+              const attempt = await attemptStream(aliasToTry);
+              result = attempt.result;
+              firstChunk = attempt.first;
+              if (!firstChunk.done) {
+                usedModel = aliasToTry;
+                delivered = true;
+                if (aliasToTry !== modelAlias) {
+                  console.log(`[chat/stream] primary "${modelAlias}" unavailable — serving via "${aliasToTry}".`);
+                }
+                break;
+              }
+              // Empty stream completed without content — treat as a failure.
+              lastFailReason = `${aliasToTry}: empty response`;
+            } catch (err: any) {
+              lastFailReason = `${aliasToTry}: ${(err?.data?.error?.message || err?.message || err || '').toString().slice(0, 200)}`;
+              console.error(`[chat/stream] model "${aliasToTry}" failed:`, lastFailReason);
+            }
+          }
+
+          // Every configured model failed → emit the classified error.
+          if (!delivered) {
+            const raw = lastFailReason;
+            console.error('[chat/stream] all models failed:', raw);
+            const isQuota = /quota|RESOURCE_EXHAUSTED|exceeded your current quota|429/i.test(raw);
+            const isTimeout = /timeout|timed out|TimeoutError|AbortError|aborted/i.test(raw);
+            const message = isQuota
+              ? 'استُهلكت حصة مزوّد الذكاء الاصطناعي مؤقتًا (429 RESOURCE_EXHAUSTED) — انتظر دقيقة أو اضبط مفتاحًا مدفوعًا/نموذجًا آخر من الإعدادات (AI provider quota exhausted — configure a paid key or another model).'
+              : isTimeout
+                ? 'تجاوز التوليد المهلة المسموحة (55 ثانية) دون اكتمال — قد يكون المزود بطيئًا أو الحصة مستنزفة؛ أعد المحاولة أو اختر نموذجًا آخر (Generation timed out — retry or pick another model).'
+                : `تعذّر التوليد من مزوّد النموذج: ${raw.slice(0, 200) || 'unknown provider error'}`;
+            if (isQuota) quotaHitRef.value = true;
+            writer.write({ type: 'error', errorText: message });
+            return;
+          }
+
+          // We have a working provider with the first text element in hand —
+          // stream the remainder DIRECTLY through the outer writer (the same
+          // pattern blockedStreamResponse uses successfully). Synthesizing a
+          // chunk stream + writer.merge tripped the SDK's stream protocol
+          // ("حدث خطأ أثناء البث") because merge expects a full well-formed
+          // UIMessage stream; writing parts directly avoids that entirely.
+          // PII redaction still applies via the buffered redactor per delta.
+          {
+            const redactor = createPIIStreamRedactor();
+            writer.write({ type: 'text-start', id: 'txt' });
+            const firstText = String(firstChunk!.value || '');
+            if (firstText) {
+              const safeFirst = redactor.push(firstText);
+              if (safeFirst) writer.write({ type: 'text-delta', id: 'txt', delta: safeFirst });
+            }
+            for await (const delta of result.textStream) {
+              const safe = redactor.push(String(delta || ''));
+              if (safe) writer.write({ type: 'text-delta', id: 'txt', delta: safe });
+            }
+            const tail = redactor.end();
+            if (tail) writer.write({ type: 'text-delta', id: 'txt', delta: tail });
+            writer.write({ type: 'text-end', id: 'txt' });
+          }
 
           // Trailing structured parts (consumed by ChatStudio's mapper).
           if (pendingApprovalRef.value) {
@@ -422,7 +478,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
 
           writer.write({
             type: 'data-meta',
-            data: { modelUsed: modelAlias, tokensUsed, configured: true },
+            data: { modelUsed: usedModel, tokensUsed, configured: true },
           });
 
           // Audit parity with /chat/completions (H9 post-inference over full text).

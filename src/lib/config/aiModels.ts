@@ -13,12 +13,16 @@ export interface AIModelConfig {
 
 /**
  * Resilience fallback chain applied when a primary model call fails with a
- * transient error. Single source of truth for every Gemini call site that
- * opts into model fallback — no route hardcodes its own chain anymore.
+ * transient error. CROSS-PROVIDER by design: an all-Gemini chain shared one
+ * provider's outage (its free tier hit "high demand" globally and every
+ * fallback failed with it). Groq and Mistral refs only resolve when their
+ * API keys are configured (isModelRefConfigured), so this chain degrades
+ * safely to Gemini-only when no other provider is set up.
  */
 export const DEFAULT_FALLBACK_MODELS: string[] = [
   'gemini-3.1-flash-lite',
-  'gemini-flash-latest',
+  'groq/llama-3.3-70b-versatile',
+  'mistral/mistral-small-latest',
   'gemini-3.1-pro-preview',
 ];
 
