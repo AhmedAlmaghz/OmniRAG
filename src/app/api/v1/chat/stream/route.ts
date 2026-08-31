@@ -334,6 +334,14 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),
             stopWhen: stepCountIs(5),
             temperature: 0.2,
+            // Abort the whole generation call after 90s. On an exhausted
+            // free-tier quota the SDK's retry backoff alone can run for
+            // MINUTES before surfacing the error — the user stares at an
+            // endless "thinking" indicator. 90s is enough for real answers
+            // (first token normally lands in seconds) while capping the
+            // failure wait; the abort surfaces through onError immediately.
+            timeout: 90_000,
+            abortSignal: AbortSignal.timeout(90_000),
           });
 
           // Provider error translation: the SDK's UIMessageStreamOptions.onError
@@ -345,9 +353,14 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             console.error('[chat/stream] provider error:', raw.slice(0, 300));
             const isQuota = /quota|RESOURCE_EXHAUSTED|exceeded your current quota|429/i.test(raw);
             if (isQuota) quotaHitRef.value = true;
-            return isQuota
-              ? 'استُهلكت حصة مزوّد الذكاء الاصطناعي مؤقتًا (429 RESOURCE_EXHAUSTED) — انتظر دقيقة أو اضبط مفتاحًا مدفوعًا/نموذجًا آخر من الإعدادات (AI provider quota exhausted — configure a paid key or another model).'
-              : `تعذّر التوليد من مزوّد النموذج: ${raw.slice(0, 200) || 'unknown provider error'}`;
+            const isTimeout = /timeout|timed out|TimeoutError|AbortError|aborted/i.test(raw);
+            if (isQuota) {
+              return 'استُهلكت حصة مزوّد الذكاء الاصطناعي مؤقتًا (429 RESOURCE_EXHAUSTED) — انتظر دقيقة أو اضبط مفتاحًا مدفوعًا/نموذجًا آخر من الإعدادات (AI provider quota exhausted — configure a paid key or another model).';
+            }
+            if (isTimeout) {
+              return 'تجاوز التوليد المهلة المسموحة (90 ثانية) دون اكتمال — قد يكون المزود بطيئًا أو الحصة مستنزفة؛ أعد المحاولة أو اختر نموذجًا آخر (Generation timed out — retry or pick another model).';
+            }
+            return `تعذّر التوليد من مزوّد النموذج: ${raw.slice(0, 200) || 'unknown provider error'}`;
           };
 
           // Stream model output through the PII redactor, then merge. The

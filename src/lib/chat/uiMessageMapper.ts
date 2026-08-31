@@ -81,6 +81,18 @@ export function getExecutedToolCalls(ui: UIMessage): MCPToolCall[] | undefined {
   return Array.isArray(raw) ? (raw as MCPToolCall[]) : undefined;
 }
 
+/**
+ * Provider failure text carried by the stream's error part. The stream route
+ * rewrites these via UIMessageStreamOptions.onError (quota, provider errors);
+ * without surfacing it, a failed generation rendered as an EMPTY bubble while
+ * the user waited through minutes of retry backoff.
+ */
+export function getErrorText(ui: UIMessage): string | undefined {
+  const part = ui.parts.find((p) => p.type === 'error') as { type: 'error'; errorText?: string } | undefined;
+  const text = part?.errorText;
+  return typeof text === 'string' && text.trim() ? text.trim() : undefined;
+}
+
 /** Concatenated plain text of a UI message. */
 export function extractText(ui: UIMessage): string {
   return ui.parts
@@ -159,6 +171,15 @@ export function mapUiMessageToLegacy(ui: UIMessage, ctx: LegacyMapContext): Mess
   };
 
   if (ui.role === 'assistant') {
+    // Provider failures arrive as an error part with NO text part: surface
+    // them as the message content so the bubble explains itself instead of
+    // rendering empty after a long retry wait.
+    const errorText = getErrorText(ui);
+    if (errorText && !content) {
+      content = `⚠️ ${errorText}`;
+      message.content = content;
+    }
+
     // Deterministic artifact injection: append any skill snippet the model
     // did not embed verbatim so charts/images/files always render.
     for (const snippet of collectArtifactSnippets(ui)) {
