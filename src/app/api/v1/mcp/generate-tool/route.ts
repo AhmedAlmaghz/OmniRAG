@@ -11,6 +11,11 @@ import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
+// Vercel Hobby execution ceiling — without this the platform default
+// (~10s for unspecified routes) kills the function before slow provider
+// calls finish, surfacing as raw connection errors.
+export const maxDuration = 60;
+
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   // Load client-supplied dynamic environment keys from headers into process.env
   // / global store — required before constructing the Gemini client below,

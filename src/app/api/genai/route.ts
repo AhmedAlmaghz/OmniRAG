@@ -6,6 +6,11 @@ import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 
 export const dynamic = 'force-dynamic';
 
+// Vercel Hobby execution ceiling — without this the platform default
+// (~10s for unspecified routes) kills the function before slow provider
+// calls finish, surfacing as raw connection errors.
+export const maxDuration = 60;
+
 export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props) => {
   // Bind the client's configured models to this request so getAiModel/getFallbackModels
   // downstream resolve the user's choices instead of DEFAULT_AI_MODELS.

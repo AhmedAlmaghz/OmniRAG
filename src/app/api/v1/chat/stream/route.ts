@@ -33,6 +33,20 @@ import type { MCPToolCall } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
+// Vercel Hobby caps function execution at 60s. Without an explicit
+// maxDuration this route fell into the platform DEFAULT (~10s for
+// unspecified routes), which HARD-KILLED the SSE connection mid-stream —
+// the browser saw a raw network drop, useChat's onError received an
+// opaque network error, and the user got the generic "connection error"
+// banner while the answer bubble stayed empty. Declaring 60s (the Hobby
+// ceiling) and aborting generation internally at 55s keeps the error
+// path INSIDE the stream protocol.
+export const maxDuration = 60;
+
+/** Internal generation budget — must stay BELOW maxDuration so a slow/failed
+ *  provider surfaces as a clean in-stream error before the platform kills us. */
+const GENERATION_TIMEOUT_MS = 55_000;
+
 /**
  * Agentic RAG streaming endpoint (Phase 4).
  *
@@ -334,14 +348,18 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             ...(aiTools && Object.keys(aiTools).length > 0 ? { tools: aiTools, toolChoice: 'auto' as const } : {}),
             stopWhen: stepCountIs(5),
             temperature: 0.2,
-            // Abort the whole generation call after 90s. On an exhausted
-            // free-tier quota the SDK's retry backoff alone can run for
-            // MINUTES before surfacing the error — the user stares at an
-            // endless "thinking" indicator. 90s is enough for real answers
-            // (first token normally lands in seconds) while capping the
-            // failure wait; the abort surfaces through onError immediately.
-            timeout: 90_000,
-            abortSignal: AbortSignal.timeout(90_000),
+            // Abort generation at GENERATION_TIMEOUT_MS (55s), UNDER the 60s
+            // Vercel Hobby function ceiling. Two failure modes this prevents:
+            //  1. The SDK's retry backoff on an exhausted free-tier quota can
+            //     run for MINUTES — the user stared at an endless "thinking"
+            //     indicator; the abort converts that into an immediate,
+            //     classified in-stream error.
+            //  2. A slow provider hitting the PLATFORM limit got the whole
+            //     SSE connection hard-killed (raw network drop → generic
+            //     "connection error"); aborting ourselves 5s earlier keeps
+            //     the error inside the stream protocol.
+            timeout: GENERATION_TIMEOUT_MS,
+            abortSignal: AbortSignal.timeout(GENERATION_TIMEOUT_MS),
           });
 
           // Provider error translation: the SDK's UIMessageStreamOptions.onError
@@ -358,7 +376,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
               return 'استُهلكت حصة مزوّد الذكاء الاصطناعي مؤقتًا (429 RESOURCE_EXHAUSTED) — انتظر دقيقة أو اضبط مفتاحًا مدفوعًا/نموذجًا آخر من الإعدادات (AI provider quota exhausted — configure a paid key or another model).';
             }
             if (isTimeout) {
-              return 'تجاوز التوليد المهلة المسموحة (90 ثانية) دون اكتمال — قد يكون المزود بطيئًا أو الحصة مستنزفة؛ أعد المحاولة أو اختر نموذجًا آخر (Generation timed out — retry or pick another model).';
+              return 'تجاوز التوليد المهلة المسموحة (55 ثانية) دون اكتمال — قد يكون المزود بطيئًا أو الحصة مستنزفة؛ أعد المحاولة أو اختر نموذجًا آخر (Generation timed out — retry or pick another model).';
             }
             return `تعذّر التوليد من مزوّد النموذج: ${raw.slice(0, 200) || 'unknown provider error'}`;
           };

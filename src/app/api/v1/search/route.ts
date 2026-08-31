@@ -11,6 +11,11 @@ import { guardPermission } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
+// Vercel Hobby execution ceiling — without this the platform default
+// (~10s for unspecified routes) kills the function before slow provider
+// calls finish, surfacing as raw connection errors.
+export const maxDuration = 60;
+
 /**
  * Search request validation. The body was previously cast straight to
  * SearchQuery, letting a client set `scoreThreshold: 0` (flooding results),
