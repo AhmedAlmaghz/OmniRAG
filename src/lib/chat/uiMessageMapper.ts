@@ -82,13 +82,19 @@ export function getExecutedToolCalls(ui: UIMessage): MCPToolCall[] | undefined {
 }
 
 /**
- * Provider failure text carried by the stream's error part. The stream route
- * rewrites these via UIMessageStreamOptions.onError (quota, provider errors);
- * without surfacing it, a failed generation rendered as an EMPTY bubble while
- * the user waited through minutes of retry backoff.
+ * Provider failure text carried by the stream, if the runtime materialized it
+ * onto the message. AI SDK v7's UIMessagePart union does not include an
+ * 'error' member (the error chunk surfaces through onError instead), but some
+ * transports/versions append `{ type: 'error', errorText }` — so this scans
+ * defensively at runtime while staying type-safe for the compiler.
+ *
+ * ChatStudio's onError handler is the primary path that renders provider
+ * failures; this mapper hook is the belt-and-braces for runtimes that DO
+ * attach error parts, so a failed generation never renders as an empty bubble.
  */
 export function getErrorText(ui: UIMessage): string | undefined {
-  const part = ui.parts.find((p) => p.type === 'error') as { type: 'error'; errorText?: string } | undefined;
+  const part = ui.parts.find((p) => (p as { type?: string }).type === 'error') as
+    { type: 'error'; errorText?: string } | undefined;
   const text = part?.errorText;
   return typeof text === 'string' && text.trim() ? text.trim() : undefined;
 }

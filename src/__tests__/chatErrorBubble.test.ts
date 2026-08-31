@@ -4,17 +4,26 @@ import { describe, it, expect } from 'vitest';
  * Empty-bubble regression guard.
  *
  * Symptom this pins: when the provider fails (quota, timeout, provider error),
- * the stream emits an ERROR part with no text part — mapUiMessageToLegacy
+ * the turn may carry an error marker with NO text part — mapUiMessageToLegacy
  * previously concatenated only text parts, producing an empty assistant
- * bubble after minutes of retry backoff. The mapper must surface the error
- * text as the message content.
+ * bubble after minutes of retry backoff.
+ *
+ * Type note: AI SDK v7's UIMessagePart union has no 'error' member (the error
+ * chunk surfaces via onError), but runtimes may append `{ type: 'error',
+ * errorText }` parts — getErrorText() scans defensively for exactly that
+ * shape, so the tests build parts through the same runtime cast.
  */
 
-import { mapUiMessagesToLegacy, getErrorText, type LegacyMapContext } from '../lib/chat/uiMessageMapper';
+import { mapUiMessagesToLegacy, getErrorText, extractText, type LegacyMapContext } from '../lib/chat/uiMessageMapper';
 import type { UIMessage } from 'ai';
 
-function ctx(): LegacyMapContext & { timestamps: LegacyMapContext['timestamps'] } {
+function ctx(): LegacyMapContext {
   return { tenantId: 't1', conversationId: 'c1', timestamps: new Map() };
+}
+
+/** Runtime-cast builder — mirrors how an error part appears at runtime. */
+function errorPart(errorText: string): UIMessage['parts'][number] {
+  return { type: 'error', errorText } as unknown as UIMessage['parts'][number];
 }
 
 function ui(role: 'user' | 'assistant', parts: UIMessage['parts'], id = 'm1'): UIMessage {
@@ -22,8 +31,8 @@ function ui(role: 'user' | 'assistant', parts: UIMessage['parts'], id = 'm1'): U
 }
 
 describe('getErrorText', () => {
-  it('extracts the error part text', () => {
-    const msg = ui('assistant', [{ type: 'error', errorText: 'استُهلكت حصة المزود' }]);
+  it('extracts the runtime error part text', () => {
+    const msg = ui('assistant', [errorPart('استُهلكت حصة المزود')]);
     expect(getErrorText(msg)).toBe('استُهلكت حصة المزود');
   });
 
@@ -33,7 +42,7 @@ describe('getErrorText', () => {
   });
 
   it('ignores blank error text', () => {
-    const msg = ui('assistant', [{ type: 'error', errorText: '   ' }]);
+    const msg = ui('assistant', [errorPart('   ')]);
     expect(getErrorText(msg)).toBeUndefined();
   });
 });
@@ -41,7 +50,7 @@ describe('getErrorText', () => {
 describe('mapUiMessagesToLegacy — provider failure must not render an empty bubble', () => {
   it('error-only message maps to visible error content', () => {
     const [mapped] = mapUiMessagesToLegacy(
-      [ui('assistant', [{ type: 'error', errorText: 'استُهلكت حصة مزوّد الذكاء الاصطناعي مؤقتًا' }])],
+      [ui('assistant', [errorPart('استُهلكت حصة مزوّد الذكاء الاصطناعي')])],
       ctx(),
     );
     expect(mapped).toBeTruthy();
@@ -56,15 +65,8 @@ describe('mapUiMessagesToLegacy — provider failure must not render an empty bu
   });
 
   it('partial answer + error keeps the streamed text first', () => {
-    const [mapped] = mapUiMessagesToLegacy(
-      [
-        ui('assistant', [
-          { type: 'text', text: 'إجابة جزئية وصلت قبل الفشل' },
-          { type: 'error', errorText: 'انقطع التوليد' },
-        ]),
-      ],
-      ctx(),
-    );
+    const msg = ui('assistant', [{ type: 'text', text: 'إجابة جزئية وصلت قبل الفشل' }, errorPart('انقطع التوليد')]);
+    const [mapped] = mapUiMessagesToLegacy([msg], ctx());
     // Existing text wins — the error must not replace delivered content.
     expect(mapped!.content).toBe('إجابة جزئية وصلت قبل الفشل');
   });
@@ -73,5 +75,12 @@ describe('mapUiMessagesToLegacy — provider failure must not render an empty bu
     const [mapped] = mapUiMessagesToLegacy([ui('user', [{ type: 'text', text: 'سؤالي' }])], ctx());
     expect(mapped!.content).toBe('سؤالي');
     expect(mapped!.role).toBe('user');
+  });
+});
+
+describe('extractText — the pre-fix behavior baseline', () => {
+  it('error-only message yields EMPTY text (why the mapper hook exists)', () => {
+    const msg = ui('assistant', [errorPart('خطأ ما')]);
+    expect(extractText(msg)).toBe('');
   });
 });

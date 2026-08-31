@@ -247,7 +247,34 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
       // Anything else (network aborts included) stays a connection error.
       const text = String((error as Error)?.message || (error as any)?.errorText || '');
       const isQuota = /RESOURCE_EXHAUSTED|exceeded your current quota|حصة مزوّد|AI provider quota/i.test(text);
+      const isTimeout = /تجاوز التوليد المهلة|timed out|TimeoutError|aborted/i.test(text);
       setSecurityNotice(isQuota ? t(lang, 'chat.providerQuota') : t(lang, 'chat.connectionError'));
+      // The failed assistant turn stays EMPTY in the UI-message list (the SDK
+      // drops the error part — verified: parts=[] after an error chunk), so a
+      // blank bubble would linger forever. Replace the last assistant turn's
+      // content with the visible reason so the conversation explains itself.
+      const reason = isQuota
+        ? t(lang, 'chat.providerQuota')
+        : isTimeout
+          ? t(lang, 'chat.generationTimeout')
+          : text || t(lang, 'chat.connectionError');
+      setUiMessages((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].role === 'assistant') {
+            const parts = next[i].parts || [];
+            const hasText = parts.some((p) => p.type === 'text' && String((p as { text?: string }).text || '').trim());
+            if (!hasText) {
+              // Preserve data parts (citations etc.), prepend the error text.
+              const withError = next[i] as { parts: typeof parts };
+              withError.parts = [{ type: 'text', text: `⚠️ ${reason}` }, ...parts];
+              next[i] = withError as (typeof next)[number];
+            }
+            break;
+          }
+        }
+        return next;
+      });
     },
     onData: (part) => {
       const data = part.data as unknown;
