@@ -28,6 +28,14 @@ export interface TenantSettings {
   dataRetentionDays: number;
   enablePiiRedaction: boolean;
   enablePromptSanitizer: boolean;
+  /**
+   * The embedding model the tenant's CURRENT chunk vectors were built with.
+   * Embeddings from different models live in incomparable vector spaces, so
+   * whenever the active embeddingModel differs from this value the corpus
+   * must be re-embedded (the settings save path schedules that automatically).
+   * Absent on legacy tenants → treated as "unknown, needs re-embed check".
+   */
+  indexedEmbeddingModel?: string;
 }
 
 export type ChatMode = 'private' | 'hybrid' | 'general' | 'analysis';

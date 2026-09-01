@@ -21,7 +21,7 @@ import {
 } from '../types/omnirag';
 import { randomUUID } from 'crypto';
 import { chunkDocumentWithPages, estimateTokenCount } from '../rag/chunker';
-import { DEFAULT_AI_MODELS } from '../config/aiModels';
+import { DEFAULT_AI_MODELS, getAiModel } from '../config/aiModels';
 import {
   ensurePostgresTables,
   getPostgresDocuments,
@@ -1976,6 +1976,20 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       if (vectorOk) {
         result.indexed = points.length;
         result.failed = embedFailed;
+        // Stamp the embedding model these vectors were built with so the
+        // stale-detection (reembedService) knows the corpus's provenance.
+        // Different embedding models produce incomparable vectors — this
+        // tracking is what makes "model changed → must re-embed" detectable.
+        try {
+          const activeEmbeddingModel = getAiModel('embeddingModel');
+          const tenant = await this.getTenant(chunks[0].tenantId);
+          if (tenant && tenant.settings.indexedEmbeddingModel !== activeEmbeddingModel) {
+            await this.updateTenantSettings(chunks[0].tenantId, { indexedEmbeddingModel: activeEmbeddingModel });
+          }
+        } catch {
+          // Tracking is best-effort — a settings write failure must not flip
+          // an otherwise-successful indexing batch to failed.
+        }
       } else {
         // Vector store unreachable or rejected the batch: nothing is
         // semantically searchable yet. Report the whole batch as failed so the

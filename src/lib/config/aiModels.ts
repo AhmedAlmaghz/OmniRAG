@@ -32,7 +32,12 @@ export const DEFAULT_AI_MODELS: AIModelConfig = {
   hydeModel: 'gemini-3.7-flash',
   documentParseModel: 'gemini-3.7-flash',
   chatStreamModel: 'gemini-3.7-flash',
-  embeddingModel: 'text-embedding-004',
+  // REQUIRED default embedding model. Any change to this value (via settings)
+  // MUST be followed by a full re-embed of every indexed chunk — vectors from
+  // different embedding models live in incomparable spaces. The settings save
+  // path (POST /api/v1/settings/models) enforces this by scheduling a
+  // tenant-wide reindex automatically when embeddingModel changes.
+  embeddingModel: 'gemini-embedding-2',
   whisperModel: 'whisper-large-v3',
   ocrModel: 'mistral-ocr-latest',
   fallbackModels: [...DEFAULT_FALLBACK_MODELS],
