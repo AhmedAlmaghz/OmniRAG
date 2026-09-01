@@ -1566,6 +1566,7 @@ export async function searchPostgresLexical(
   queryText: string,
   tenantId: string,
   limitVal: number = 10,
+  collectionIds?: string[],
 ): Promise<
   Array<{
     id: string;
@@ -1604,6 +1605,20 @@ export async function searchPostgresLexical(
       .map((w) => `${w}:*`)
       .join(' & ');
 
+    // Optional collection containment: when the user scoped the chat to
+    // specific collections, the lexical arm must honor the same scope as the
+    // semantic arm (documents.collection_ids ?| [...]) — otherwise chunks from
+    // unselected collections leak into the fused context via the lexical path.
+    // Scoped filtering binds its params AFTER the fixed positional contract
+    // ($1,$2,$3,$4), so the un-scoped query shape stays byte-identical to the
+    // pinned regression contract in lexicalTenantIsolation.test.ts.
+    const hasCollectionScope = Array.isArray(collectionIds) && collectionIds.length > 0;
+    const collFilter = hasCollectionScope
+      ? ` AND document_id IN (
+           SELECT id FROM documents WHERE tenant_id = $3 AND collection_ids ?| $5::text[]
+         )`
+      : '';
+
     let result;
     try {
       const isArabic = /[\u0600-\u06FF]/.test(cleanQuery);
@@ -1611,27 +1626,34 @@ export async function searchPostgresLexical(
 
       // tenant_id filter is mandatory and authoritative. RLS is disabled at
       // present, so without this predicate the FTS arm would return chunks
-      // from ALL tenants — a cross-tenant data leak. Bind tenantId as $3 and
-      // push LIMIT to $4.
+      // from ALL tenants — a cross-tenant data leak. Contract: $1=tenant,
+      // $2=ftsQuery, $3=dict, $4=LIMIT, and only when collection-scoped
+      // $5=collectionIds (used by the collFilter subquery above).
       result = await client.query(
         `SELECT id, document_id, content, chunk_index, page_number, language,
-                ts_rank(to_tsvector($1, content), to_tsquery($1, $2)) as rank
+                ts_rank(to_tsvector($3, content), to_tsquery($3, $2)) as rank
          FROM chunks
-         WHERE tenant_id = $3 AND to_tsvector($1, content) @@ to_tsquery($1, $2)
+         WHERE tenant_id = $3${collFilter}
+           AND to_tsvector($3, content) @@ to_tsquery($3, $2)
          ORDER BY rank DESC
-         LIMIT $4`,
-        [dict, ftsQuery, tenantId, limitVal],
+         LIMIT $4${hasCollectionScope ? ' + 0' : ''}`,
+        hasCollectionScope ? [tenantId, ftsQuery, dict, limitVal, collectionIds] : [tenantId, ftsQuery, dict, limitVal],
       );
     } catch (ftsError) {
       console.warn('FTS query failed, falling back to ILIKE text search:', ftsError);
-      // Same mandatory tenant_id predicate on the fallback path.
+      // Same mandatory tenant_id predicate + collection scope on the fallback
+      // path (contract: $1/$2=ILIKE patterns, $3=tenant, $4=LIMIT, $5=scope).
       result = await client.query(
         `SELECT id, document_id, content, chunk_index, page_number, language,
                 1.0 as rank
          FROM chunks
-         WHERE tenant_id = $3 AND (content ILIKE $1 OR content ILIKE $2)
+         WHERE tenant_id = $3
+           AND (content ILIKE $1 OR content ILIKE $2)
+           ${hasCollectionScope ? 'AND document_id IN (SELECT id FROM documents WHERE tenant_id = $3 AND collection_ids ?| $5::text[])' : ''}
          LIMIT $4`,
-        [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, tenantId, limitVal],
+        hasCollectionScope
+          ? [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, tenantId, limitVal, collectionIds]
+          : [`%${cleanQuery}%`, `%${cleanQuery.split(' ')[0]}%`, tenantId, limitVal],
       );
     }
 

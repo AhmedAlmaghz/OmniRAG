@@ -116,6 +116,20 @@ export async function collectTenantMcpTools(
  * skills) cannot drift between the two chat surfaces.
  */
 export function buildAgenticSystemInstruction(modelToUse: string, mode: string, toolsToOffer: string[]): string {
+  // Per-mode answer-depth policy. Every mode is COMPREHENSIVE by default — the
+  // answer must cover ALL retrieved context, not a curated top-2 — but the
+  // register adapts to the conversation mode the user picked.
+  const modeDepthPolicy: Record<string, string> = {
+    analysis:
+      'وضع التحليل العميق: قدم إجابة تحليلية شاملة وموسعة — استخرج كل الأنماط والعلاقات والاستنتاجات والتفاصيل الرقمية من كل المصادر، مع مقارنة دقيقة بينها وتقييم نقاط الاتفاق والاختلاف، وتوثيق كل معلومة برقم استشهادها.',
+    hybrid:
+      'وضع الاسترجاع الهجين: قدم إجابة شاملة ومفصلة تغطي كل جانب ورد في المستندات المسترجعة، مع تنظيم واضح بعناوين وفقرات حسب محاور السؤال.',
+    general:
+      'الوضع العام: قدم إجابة شاملة ومفصلة بأسلوب سلس ومنظم، تغطي كل المعلومات المتاحة في المستندات المسترجعة دون اختصار مخل.',
+    private: 'وضع الخصوصية المغلق: قدم إجابة شاملة ومفصلة اعتماداً على مستندات المستأجر الداخلية فقط.',
+  };
+  const depthPolicy = modeDepthPolicy[mode] || modeDepthPolicy.hybrid;
+
   return `أنت مساعد ذكي ومحرك وكلاء متمكن (Agentic RAG Engine) ضمن منصة OmniRAG للمؤسسات.
 أنت متصل مباشرة ببروتوكول سياق النموذج MCP (Model Context Protocol) لربط الأنظمة والخوادم الحية.
 النموذج النشط: ${modelToUse} | الوضع الحالي: ${mode}.
@@ -127,6 +141,19 @@ export function buildAgenticSystemInstruction(modelToUse: string, mode: string, 
 3. لا تعيد ذكر معلومات سبق إخبار المستخدم بها إلا إذا طلب ذلك صراحة.
 4. رد بشكل طبيعي ومتصل كأنك تعرف تاريخ المحادثة.
 
+سياسة شمولية الإجابة والإسناد (إلزامية بلا استثناء):
+1. المستندات المسترجعة المرفقة أدناه هي مصدرك الوحيد، وقد جرى استرجاعها لأنها تحقق شرط البحث والاسترجاع حسب المصادر والصلاحيات المحددة من المستخدم — لذلك استخدمها كلها ولا تهمل أياً منها.
+2. لا تحدد عدد المصادر التي تعتمد عليها: غطِّ المعلومات الواردة في كل المقاطع المسترجعة التي تتصل بالسؤال، واعمل على أن يظهر أثر كل مصدر ذي صلة في الإجابة.
+3. لا يوجد أي حد لطول الإجابة أو عدد الفقرات: أجب بإسهاب كامل وبشكل مفصل وواضح حتى تغطي كل شيء عن السؤال — ملخصات الأسطر القليلة المختصرة غير مقبولة إلا إذا طلب المستخدم صراحةً الإيجاز أو كان السؤال بسيطاً بطبيعته.
+4. نظم الإجابة بعناوين وفقرات ونقاط بحسب محاور السؤال، واشرح كل نقطة بعمق مدعومة بالمعلومات المسترجعة (تعريفات، خطوات، أرقام، تواريخ، أمثلة، استثناءات).
+5. إذا كانت المعلومات المتاحة لا تغطي السؤال بالكامل، اذكر صراحةً ما هو مغطى وما لم تتوفر له معلومات ضمن المصادر، دون اختلاق.
+${depthPolicy}
+
+قواعد الإسناد والاستشهاد المضمن:
+1. عند استخدام معلومة من المستندات المرفقة، ضع رقم الاستشهاد مباشرة في النص كرقم بين أقواس مربعة مثل [1] أو [2] المطابق لرقم المصدر، ووزع الاستشهادات على كامل متن الإجابة كلما وردت معلومة من مصدر.
+2. لا تبتكر مراجع وهمية غير موجودة في النص.
+3. لا تضع قائمة منفصلة للمصادر في نهاية الرد — فقط الأرقام المضمنة في النص.
+
 توجيهات واستخدام أدوات الـ MCP:
 1. إذا طلب المستخدم إجراء أو استعلام يتطلب إرسال تنبيه أو رسالة (مثل slack_send_message أو slack_post_alert)، أو قراءة قناة (slack_read_channel)، أو البحث في كود GitHub أو إنشاء تذكرة (github_search_code / github_create_issue)، أو البحث المباشر في الويب (web_live_search / fetch_url_content)، أو الاستعلام عن قواعد البيانات (external_postgres_query)، أو البحث في قاعدة المعرفة (search_knowledge_base) أو فهرسة محتوى جديد فيها (knowledge_ingest_document)، فيجب عليك فوراَ استدعاء الأداة المناسبة عبر Function Call.
 2. مهارات الإنتاج: إذا طلب المستخدم رسما بيانيا أو مخططا فاستدع create_chart ومرر البيانات الرقمية كاملة؛ وإذا طلب صورة فاستدع generate_image مع وصف دقيق؛ وإذا طلب ملف Word/Excel/PowerPoint/PDF فاستدع create_office_document مع المحتوى بصيغة Markdown؛ وإذا طلب تقريرا منظما فاستدع build_report؛ وإذا طلب دليلا تعليميا أو شرحا خطوة-بخطوة فاستدع create_tutorial_guide؛ وإذا طلب إرسال بريد إلكتروني فاستدع send_email (سيتطلب موافقة المستخدم قبل الإرسال). عند استلام نتيجة أي من هذه المهارات، ضمّن في ردك عنصر العرض المرفق في النتيجة (markdownFence للمخططات، markdownImage للصور، markdownLink للملفات) كما هو حرفيا.
@@ -134,11 +161,6 @@ export function buildAgenticSystemInstruction(modelToUse: string, mode: string, 
 4. ملاحظة صدق البيانات: بعض النتائج تأتي موسومة بـ "simulated: true" وهي بيانات تجريبية توضيحية وليست تكاملا حيا — وضّح للمستخدم بلطف أن هذه البيانات تجريبية. أما النتائج الموسومة بـ "simulated: false" فهي من تكامل حقيقي.
 5. إذا فشلت الأداة وأعادت خطأ، لا تختلق نتائج: اعتذر باختصار، اشرح سبب الفشل، واقترح خطوة بديلة.
 6. بالنسبة للأدوات ذات الأثر الجانبي، سيتولى نظام الأمان طلب الموافقة البشرية قبل التنفيذ تلقائيا.
-
-قواعد الإسناد والاستشهاد المضمن:
-1. عند استخدام معلومة من المستندات المرفقة، ضع رقم الاستشهاد مباشرة في النص كرقم بين أقواس مربعة مثل [1] أو [2] المطابق لرقم المصدر.
-2. لا تبتكر مراجع وهمية غير موجودة في النص.
-3. لا تضع قائمة منفصلة للمصادر في نهاية الرد — فقط الأرقام المضمنة في النص.
 ${mode === 'private' ? 'تنبيه الأمان الحرج: الوضع الحالي مغلق وخاص بالكامل (Private Mode). تم إيقاف وتصفية جميع أدوات الـ MCP الخارجية لشبكة الويب أو الخدمات الخارجية للطرف الثالث حماية لسرية بيانات المستأجر.' : ''}`;
 }
 
@@ -224,10 +246,15 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   // `topK` is now purely an over-fetch hint per backend. We clamp it from
   // below so a caller passing `topK: 0` doesn't nuke recall, and from above
   // so a runaway value (e.g. 50000 in a fuzz test) can't balloon Qdrant/PG
-  // traffic. The merged result pool is sliced only by the similarity floor and
-  // the final CONTEXT_CHUNK_CAP — never by this hint.
-  const overfetchHint = Math.max(8, Math.min(topK ?? 10, 100));
-  const overfetchLimit = overfetchHint * SYSTEM_CONFIG.RAG.ENGINE_OVERFETCH_FACTOR;
+  // traffic — the ceiling is tied to the final context cap so the backends can
+  // always deliver every chunk the model context could hold. The merged result
+  // pool is sliced only by the similarity floor and the final
+  // CONTEXT_CHUNK_CAP — never by this hint.
+  const overfetchHint = Math.max(8, Math.min(topK ?? 40, SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP));
+  const overfetchLimit = Math.max(
+    overfetchHint * SYSTEM_CONFIG.RAG.ENGINE_OVERFETCH_FACTOR,
+    SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP,
+  );
 
   // Step 1: Optional HyDE Expansion (Applied ONLY to Semantic Search)
   let semanticSearchContent = query;
@@ -274,7 +301,9 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
               }),
             )
           : Promise.resolve([]),
-        isPostgresActive ? searchPostgresLexical(lexicalSearchContent, tenantId, overfetchLimit) : Promise.resolve([]),
+        isPostgresActive
+          ? searchPostgresLexical(lexicalSearchContent, tenantId, overfetchLimit, collectionIds)
+          : Promise.resolve([]),
       ]);
 
       const itemMap = new Map<string, any>();
@@ -418,7 +447,11 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       });
       lexicalScore = Math.min(1.0, lexicalScore);
 
-      let semanticScore = 0.2;
+      // Heuristic semantic score starts at ZERO (not 0.2): the baseline was
+      // above MIN_SIMILARITY_SCORE (0.15), which made the below-floor filter a
+      // no-op and let completely unmatched chunks flood the (now much larger)
+      // model context. Only real term hits/language matches accrue score now.
+      let semanticScore = 0;
       queryTerms.forEach((term) => {
         if (textLower.includes(term)) semanticScore += 0.35;
       });
@@ -561,7 +594,9 @@ export async function generateRagCompletion(params: {
 
   const alreadyExecutedToolCalls: MCPToolCall[] = [];
 
-  const docsBlock = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}`;
+  const docsBlock = `المستندات المسترجعة (${contextChunks.length} مقطعاً — كلها اجتازت البحث والاسترجاع حسب المصادر والصلاحيات المحددة):
+${contextText || 'لا توجد مستندات مسترجعة.'}
+[تعليمات إلزامية: استخدم كل المقاطع المسترجعة أعلاه في بناء الإجابة بحيث تغطي إجابتك كل ما يرتبط بالسؤال منها بشكل مفصل وواضح، مع استشهاد مضمّن [رقم] لكل معلومة، ولا تختصر الإجابة]`;
   let userContent = `${docsBlock}\n\nسؤال المستخدم: ${query}`;
 
   if (approvedToolCall) {

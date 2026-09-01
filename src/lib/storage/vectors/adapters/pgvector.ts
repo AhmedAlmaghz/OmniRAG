@@ -208,7 +208,9 @@ export const pgvectorStore: IVectorStore = {
         values.push(params.collectionIds);
         conditions.push(`collection_ids ?| $${values.length}::text[]`);
       }
-      const limit = Math.max(1, Math.min(params.limit || 10, 200));
+      // Allow the full above-floor pool to come back in one round-trip; the
+      // engine applies the single defensive CONTEXT_CHUNK_CAP after fusion.
+      const limit = Math.max(1, Math.min(params.limit || 10, 1200));
 
       const res = await pool.query(
         `SELECT id, document_id, document_title, content, chunk_index, page_number, language,

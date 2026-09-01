@@ -25,7 +25,7 @@ const searchQuerySchema = z.object({
   query: z.string().trim().min(1, 'نص البحث مطلوب').max(4000, 'استعلام البحث طويل جدا'),
   language: z.enum(['ar', 'en', 'auto']).optional(),
   collectionIds: z.array(z.string().min(1)).max(50).optional(),
-  topK: z.number().int().min(1).max(100).optional(),
+  topK: z.number().int().min(1).max(400).optional(),
   scoreThreshold: z.number().min(0.01).max(1).optional(),
   semanticWeight: z.number().min(0).max(1).optional(),
   lexicalWeight: z.number().min(0).max(1).optional(),

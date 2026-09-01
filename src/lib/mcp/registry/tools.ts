@@ -880,7 +880,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'سؤال أو نص الاستعلام البحثي' },
-        topK: { type: 'number', description: 'عدد النظائر والقطع المراد إرجاعها (افتراضي: 4)' },
+        topK: { type: 'number', description: 'عدد النظائر والقطع المراد إرجاعها (افتراضي: 40، وسقف أقصى 200)' },
         collectionIds: {
           type: 'string',
           description: 'معرفات مجموعات المعرفة مفصولة بفواصل لتضييق نطاق البحث (اختياري)',
@@ -889,7 +889,10 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['query'],
     },
     execute: async (args, ctx) => {
-      const { query, topK = 4 } = args;
+      // The knowledge tool shares the engine's no-fixed-cap recall policy:
+      // default generously and clamp only to the defensive context ceiling.
+      const topK = Math.max(1, Math.min(Number(args.topK) || 40, 200));
+      const query = String(args.query || '');
       const collectionIds = String(args.collectionIds || '')
         .split(',')
         .map((s) => s.trim())

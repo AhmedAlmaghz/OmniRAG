@@ -18,23 +18,25 @@ export const SYSTEM_CONFIG = {
   // Search and RAG Configuration
   RAG: {
     // Retrieval merges ALL chunks above the similarity floor; there is no
-    // fixed topK cap. ENGINE_OVERFETCH_FETCH_FACTOR controls how many
-    // candidates each backend returns before fusion/reranking — 3x keeps the
-    // recall high while bounding the Qdrant/Postgres round-trip cost.
-    ENGINE_OVERFETCH_FACTOR: 3,
+    // fixed topK cap. ENGINE_OVERFETCH_FACTOR controls how many candidates
+    // each backend returns before fusion/reranking — 6x keeps the recall
+    // maximal so every qualifying chunk reaches the model context.
+    ENGINE_OVERFETCH_FACTOR: 6,
     RRF_CONSTANT_K: 60, // Reciprocal Rank Fusion constant
     HYBRID_WEIGHTS: {
       SEMANTIC: 0.7,
       LEXICAL: 0.3,
     },
     MIN_SIMILARITY_SCORE: 0.15,
-    // Defensive soft cap before assembling the model context. Sized for
-    // ~8k-token chunks; raise per-tenant if long documents dominate.
-    CONTEXT_CHUNK_CAP: 30,
+    // Defensive soft cap before assembling the model context. Sized generously
+    // (200 chunks ≈ 100k tokens at 500 chars/chunk) so effectively ALL
+    // qualifying retrieved chunks are used in the answer. Raise per-tenant if
+    // long documents dominate.
+    CONTEXT_CHUNK_CAP: 200,
     // LLM cross-encoder reranking: how many candidates are scored per prompt,
     // and how much weight the LLM score gets when blended with the RRF score.
     RERANK: {
-      LLM_BUDGET: 20,
+      LLM_BUDGET: 100,
       LLM_WEIGHT: 0.7,
     },
   },

@@ -32,8 +32,10 @@ export async function rerankChunks(query: string, chunks: DocumentChunk[]): Prom
 
   const chunksText = chunksToRerank
     .map((c, i) => {
-      // Take a snippet to save tokens
-      const snippet = c.content.substring(0, 400).replace(/\n/g, ' ');
+      // Take a snippet long enough to judge true relevance (the platform
+      // default chunk size is 500 chars — truncating at 400 hid the tail of
+      // nearly every chunk from the cross-encoder).
+      const snippet = c.content.substring(0, 900).replace(/\n/g, ' ');
       return `[ID: ${i}] Document Title: ${c.documentTitle || 'N/A'}\nSnippet: ${snippet}`;
     })
     .join('\n\n');

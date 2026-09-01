@@ -43,9 +43,13 @@ export const dynamic = 'force-dynamic';
 // path INSIDE the stream protocol.
 export const maxDuration = 60;
 
-/** Internal generation budget — must stay BELOW maxDuration so a slow/failed
- *  provider surfaces as a clean in-stream error before the platform kills us. */
-const GENERATION_TIMEOUT_MS = 55_000;
+/** Internal generation budget — must stay BELOW maxDuration when running on
+ *  Vercel so a slow/failed provider surfaces as a clean in-stream error before
+ *  the platform kills us. Self-hosted deployments have no platform ceiling, so
+ *  the budget extends (default: 5 minutes) letting long comprehensive answers
+ *  finish instead of being clipped mid-stream. Override with
+ *  CHAT_GENERATION_TIMEOUT_MS (milliseconds) on any deployment. */
+const GENERATION_TIMEOUT_MS = Number(process.env.CHAT_GENERATION_TIMEOUT_MS) || (process.env.VERCEL ? 55_000 : 300_000);
 
 /**
  * Agentic RAG streaming endpoint (Phase 4).
@@ -218,7 +222,13 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
     }
 
     return await runWithModelConfig(modelConfig, async () => {
-      const searchResult = await performHybridSearch({ query: prompt, tenantId, collectionIds });
+      const searchResult = await performHybridSearch({
+        query: prompt,
+        tenantId,
+        collectionIds,
+        // Parity with /chat/completions: auto-rerank in analysis mode.
+        rerank: mode === 'analysis',
+      });
 
       // Stage 2b: Pre-Generation — indirect prompt injection scan over chunks.
       const preGenCheck = await HookHarness.run('pre_generation', {
@@ -274,7 +284,9 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             }
           }
 
-          const docsBlock = `المستندات المسترجعة:\n${contextText || 'لا توجد مستندات مسترجعة.'}`;
+          const docsBlock = `المستندات المسترجعة (${searchResult.chunks.length} مقطعاً — كلها اجتازت البحث والاسترجاع حسب المصادر والصلاحيات المحددة):
+${contextText || 'لا توجد مستندات مسترجعة.'}
+[تعليمات إلزامية: استخدم كل المقاطع المسترجعة أعلاه في بناء الإجابة بحيث تغطي إجابتك كل ما يرتبط بالسؤال منها بشكل مفصل وواضح، مع استشهاد مضمّن [رقم] لكل معلومة، ولا تختصر الإجابة]`;
           let userContent = `${docsBlock}\n\nسؤال المستخدم: ${prompt}`;
 
           const alreadyExecutedToolCalls: MCPToolCall[] = [];
