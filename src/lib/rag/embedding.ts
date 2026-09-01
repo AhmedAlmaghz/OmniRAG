@@ -2,6 +2,7 @@ import { embed } from 'ai';
 import { getAiModel } from '../config/aiModels';
 import { resolveEmbeddingModel, isModelRefConfigured } from '../ai/registry/resolve';
 import { parseModelRef, LEGACY_DEFAULT_PROVIDER } from '../ai/registry/modelRef';
+import { normalizeArabicForSearch } from '../storage/postgres';
 
 // In-Memory LRU Cache for Embeddings
 const cacheMap = new Map<string, number[]>();
@@ -30,10 +31,28 @@ function setCachedEmbedding(key: string, vector: number[]): void {
 export const PLATFORM_EMBEDDING_DIMENSIONS = 3072;
 
 /**
+ * Arabic normalization applied to EVERY text before embedding — index-side
+ * (chunk ingestion) and query-side (search views, HyDE) share this EXACT
+ * function, so a query written "الأسئله/مُستند" embeds identically to content
+ * written "الأسئلة/مستند". Without this, diacritic/hamza variants landed in
+ * DIFFERENT points of the vector space and silently missed each other even
+ * at high similarity. The function is a no-op for non-Arabic text, so English
+ * and mixed corpora pass through unchanged.
+ */
+function normalizeForEmbedding(text: string): string {
+  return normalizeArabicForSearch(text).trim();
+}
+
+/**
  * Generates a vector embedding for the given text using the Vercel AI SDK v7,
  * resolving the configured embedding model through the multi-provider registry
  * (any provider with an embedding capability — Google, OpenAI, Mistral,
  * Ollama, …). LRU caching and a deterministic no-key fallback are preserved.
+ *
+ * IMPORTANT: the same Arabic normalization runs here for BOTH the stored
+ * chunk text and the search query — any change to it requires re-embedding
+ * the corpus (same contract as changing the embedding model; see
+ * reembedService).
  *
  * Fallback policy: for the legacy Google provider we walk a chain of known
  * Gemini embedding models so a renamed/deprecated model doesn't break
@@ -42,7 +61,7 @@ export const PLATFORM_EMBEDDING_DIMENSIONS = 3072;
  * vectors live in different similarity spaces.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const normalizedText = text.trim();
+  const normalizedText = normalizeForEmbedding(text);
   if (!normalizedText) {
     return new Array(PLATFORM_EMBEDDING_DIMENSIONS).fill(0);
   }

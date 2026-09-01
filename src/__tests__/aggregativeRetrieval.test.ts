@@ -35,6 +35,21 @@ describe('isAggregativeQuery — aggregative question detection', () => {
     expect(isAggregativeQuery('أريد فهرس محتويات الكتاب')).toBe(true);
   });
 
+  it('detects the v0.12.3 user-reported EXACT phrasing (no ال, واو عطف, ماهي fused)', () => {
+    // This is the regression the lexicon rebuild fixes: the v0.12.2 phrase
+    // detector required "الدروس/الوحدات" with the definite article and missed
+    // this question entirely, so no coverage machinery ran at all.
+    expect(isAggregativeQuery('ماهي وحدات ودروس كتاب الفيزياء ثالث ثانوي اليمن بالتفصيل الممل')).toBe(true);
+    expect(isAggregativeQuery('ماهي وحدات كتاب الفيزياء؟')).toBe(true);
+    expect(isAggregativeQuery('دروس ومحاور كتاب الرياضيات')).toBe(true);
+    expect(isAggregativeQuery('عناوين الأقسام في المرجع')).toBe(true);
+  });
+
+  it('exhaustiveness markers alone trigger aggregative mode', () => {
+    expect(isAggregativeQuery('اشرح لي هذا الموضوع بشكل شامل من كل الجوانب')).toBe(true);
+    expect(isAggregativeQuery('أريد كل شيء عن الموضوع')).toBe(true);
+  });
+
   it('matches with Arabic orthography variants (hamza/alef/taa-marbuta)', () => {
     // The detector normalizes via normalizeArabicForSearch before matching.
     expect(isAggregativeQuery('ماهى الوحدات الموجوده في الكتاب؟')).toBe(true);

@@ -148,6 +148,7 @@ export function buildAgenticSystemInstruction(modelToUse: string, mode: string, 
 4. نظم الإجابة بعناوين وفقرات ونقاط بحسب محاور السؤال، واشرح كل نقطة بعمق مدعومة بالمعلومات المسترجعة (تعريفات، خطوات، أرقام، تواريخ، أمثلة، استثناءات).
 5. إذا كانت المعلومات المتاحة لا تغطي السؤال بالكامل، اذكر صراحةً ما هو مغطى وما لم تتوفر له معلومات ضمن المصادر، دون اختلاق.
 6. إذا كان السؤال تجميعياً/شاملاً عن محتوى مستند كامل أو هيكله (مثل: ما هي الدروس/الفصول/الوحدات/المحتويات في الكتاب؟ أو عدّد كل الأقسام)، فهذا يتطلب استعراض كامل المستند: اجمع المعلومات من جميع المقاطع المسترجعة عبر كامل نطاق المستند من أوله إلى آخره (استعن بخريطة ترتيب المستند المرفقة إن وجدت)، ورتّبها حسب تسلسلها الطبيعي، ولا تجب أبداً من مقطع واحد أو فصل واحد مهما بدا أقرب للسؤال.
+7. إذا ذكر المستخدم في سؤاله مصدراً/مرجعاً/كتاباً معيناً بالاسم، فقد جرى تجهيز المقاطع المسترجعة لتغطية ذلك المصدر تحديداً عبر كامله — فاجب من كامل مقاطعه المرفقة بترتيبها في المصدر، من المقدمة والفصل الأول حتى الفصل الأخير والخاتمة، واستشهد بكل مقطع ذي صلة. لا يجوز الاكتفاء بجزء من المصدر مهما بدا أكثر صلة بالسؤال.
 ${depthPolicy}
 
 قواعد الإسناد والاستشهاد المضمن:
@@ -187,21 +188,191 @@ export function selectSmartModel(query: string, mode: string): string {
  * gravitates to one section (typically the tail) and the model answers from
  * it. The engine routes these through multi-query + full-coverage retrieval
  * instead (see performHybridSearch).
+ *
+ * LEXICAL detection (not regex phrases): the earlier phrase-based detector
+ * required exact collocations like "الدروس/الفصول..." with the definite
+ * article — real users write "ماهي وحدات ودروس كتاب الفيزياء ثالث ثانوي
+ * اليمن بالتفصيل الممل" (no ال, واو عطف, ماهي fused) and the detector
+ * missed it entirely, so none of the coverage machinery ever ran. Word-level
+ * matching over the ARABIC-NORMALIZED query is robust to every such variant.
  */
+/** Content-enumeration nouns — any mention signals an aggregative intent. */
+const AGGREGATIVE_NOUNS_AR = [
+  // lesson / unit / chapter / section / topic family (definite, indefinite,
+  // dual, plural — the normalizer already folds hamza/alef/taa-marbuta)
+  'دروس',
+  'درس',
+  'وحدات',
+  'وحده',
+  'فصول',
+  'فصل',
+  'موضوعات',
+  'موضوع',
+  'محاور',
+  'محور',
+  'اقسام',
+  'قسم',
+  'عناوين',
+  'عنوان',
+  'اجزاء',
+  'جزء',
+  'محتويات',
+  'محتوى',
+  'فهرس',
+  'منهج',
+  'فهرسات',
+  'توبيك',
+];
+/** Verbs/asks that signal enumeration intent even without an aggregative noun. */
+const AGGREGATIVE_LEXICON_EN = [
+  'lessons',
+  'chapters',
+  'units',
+  'sections',
+  'topics',
+  'contents',
+  'curriculum',
+  'outline',
+  'syllabus',
+  'table of contents',
+];
+/** Verbs that amplify the enumerative signal when combined with a noun. */
+const ENUMERATION_VERBS_AR = ['اذكر', 'اسرد', 'عدد', 'استعرض', 'اعرض', 'لخص', 'اجمع', 'احصر', 'استقصي', 'حصر'];
+/** Exhaustiveness modifiers that alone can trigger aggregative mode. */
+const EXHAUSTIVE_MARKERS_AR = [
+  'بالتفصيل الممل',
+  'بشكل شامل',
+  'بشكل كامل',
+  'كل شيء',
+  'تغطية كاملة',
+  'بجميع تفاصيله',
+  'من اوله الى اخرة',
+  'بالكامل',
+];
+
 export function isAggregativeQuery(query: string): boolean {
   const q = normalizeArabicForSearch(query.toLowerCase());
-  const AGGREGATIVE_PATTERNS: RegExp[] = [
-    // Arabic: enumerate / list / what are all the X in Y
-    /ما\s*(هي|هى)?\s*(كل|جميع|جمبع)?\s*(الدروس|الفصول|الوحدات|الموضوعات|المواضيع|الأجزاء|الاجزاء|العناوين|الأقسام|الاقسام|المحتويات|الفهرس)/,
-    /(اذكر|اذكر|اسرد|اسرد|عدد|أعد|اعد)\s+(كل\s+)?(الدروس|الفصول|الوحدات|الموضوعات|المواضيع|الأجزاء|الاجزاء|العناوين|الأقسام|الاقسام|المحتويات)/,
-    /(استعرض|اعرض|لخص|لخص|اذكر لي|اذكر لي)\s+(كل\s+)?(محتويات|الدروس|الفصول|الوحدات|محتوى)\s*(الكتاب|الكتاب|المستند|الملف|المنهج)?/,
-    /فهرس|جدول\s*المحتويات|محتويات\s*(الكتاب|المستند|الملف)/,
-    // English equivalents
-    /\b(list|enumerate|summarize|outline)\s+(all\s+)?(the\s+)?(lessons?|chapters?|units?|sections?|topics?|contents?|table of contents)\b/,
-    /\bwhat\s+(are|is)\s+(all\s+)?(the\s+)?(lessons?|chapters?|units?|sections?|topics?|contents?)\b/i,
-    /\btable of contents\b/i,
-  ];
-  return AGGREGATIVE_PATTERNS.some((re) => re.test(q));
+  const tokens = new Set(q.split(/[\s،,؛;؟?!.\u060C]+/).filter(Boolean));
+
+  // 1) Any aggregative noun (word-level, works with/without ال and واو العطف)
+  const hasNoun = AGGREGATIVE_NOUNS_AR.some(
+    (w) => tokens.has(w) || tokens.has(`ال${w}`) || tokens.has(`و${w}`) || tokens.has(`بال${w}`),
+  );
+  // 2) Exhaustiveness markers alone are a strong enough signal
+  const hasExhaustiveMarker = EXHAUSTIVE_MARKERS_AR.some((m) => q.includes(m));
+  // 3) English enumeration lexicon
+  const hasEnglish = AGGREGATIVE_LEXICON_EN.some((w) => q.includes(w));
+  // 4) TOC-style "محتويات/فهرس" anywhere
+  const hasToc = /فهرس|محتويات|جدول المحتويات/.test(q) || /table of contents/.test(q);
+
+  return hasNoun || hasExhaustiveMarker || hasEnglish || hasToc;
+}
+
+/**
+ * Detects whether the query names a specific source/document ("كتاب
+ * الفيزياء ثالث ثانوي اليمن") — a strong signal that the user wants the
+ * answer built from THAT document, comprehensively. Used to anchor retrieval
+ * on the named document's chunks instead of leaving the pool to drift toward
+ * whatever nearest neighbors dominate.
+ *
+ * Word overlap is computed over ARABIC-NORMALIZED text (same folding as
+ * search) with Arabic stopwords excluded, so "الفيزياء" matches a document
+ * titled "كتاب الفيزياء" regardless of hamza/diacritic/definite-article
+ * differences.
+ */
+const AR_STOPWORDS = new Set([
+  'في',
+  'من',
+  'على',
+  'عن',
+  'الى',
+  'إلى',
+  'ما',
+  'ماهي',
+  'ماهى',
+  'هي',
+  'هو',
+  'ماذا',
+  'من',
+  'و',
+  'أو',
+  'او',
+  'ثم',
+  'التي',
+  'الذي',
+  'هذا',
+  'هذه',
+  'ذلك',
+  'تلك',
+  'الذي',
+  'مع',
+  'كل',
+  'الذي',
+  'التي',
+  'بالتفصيل',
+  'الممل',
+  'الرئيسية',
+  'الموجودة',
+  'الموجود',
+  'اليمن',
+  'الصف',
+  'ثالث',
+  'ثانوي',
+  'اذكر',
+  'اسرد',
+  'عدد',
+  'استعرض',
+  'اعرض',
+  'لخص',
+  'بين',
+  'وضح',
+  'اشرح',
+  'قلي',
+  'اخبرني',
+  'اريد',
+  'اريد',
+]);
+
+/** Tokenizes an Arabic/English string into normalized search tokens. */
+function toNormalizedTokens(input: string, extraStop: Set<string> = new Set()): string[] {
+  return normalizeArabicForSearch(input.toLowerCase())
+    .split(/[\s،,؛;؟?!.:\-()\[\]«»"']+/)
+    .map((t) => t.replace(/^(?:بال|وال|فال|كال|لل)/, '').replace(/^ال/, ''))
+    .filter((t) => t.length > 2 && !AR_STOPWORDS.has(t) && !extraStop.has(t));
+}
+
+export interface NamedDocumentMatch {
+  documentId: string;
+  title: string;
+  /** 0..1 — share of QUERY content-words found in the document title. */
+  overlap: number;
+}
+
+/**
+ * Finds the document whose title best matches the query's content words.
+ * Returns undefined when no document's title shares at least MIN_TITLE_OVERLAP
+ * of the query's content vocabulary (i.e. the query names no known source).
+ */
+export async function findNamedDocumentInQuery(
+  query: string,
+  tenantId: string,
+): Promise<NamedDocumentMatch | undefined> {
+  const queryTokens = toNormalizedTokens(query);
+  if (queryTokens.length === 0) return undefined;
+
+  const docs = await db.getDocuments(tenantId);
+  let best: NamedDocumentMatch | undefined;
+
+  for (const doc of docs) {
+    const titleTokens = new Set(toNormalizedTokens(doc.title || ''));
+    if (titleTokens.size === 0) continue;
+    const hits = queryTokens.filter((t) => titleTokens.has(t)).length;
+    const overlap = hits / queryTokens.length;
+    if (overlap >= 0.2 && (!best || overlap > best.overlap)) {
+      best = { documentId: doc.id, title: doc.title, overlap };
+    }
+  }
+  return best;
 }
 
 /**
@@ -212,15 +383,18 @@ export function isAggregativeQuery(query: string): boolean {
  *   - the original question (user intent preserved),
  *   - a structure view ("الفهرس/الفصول/العناوين…"),
  *   - a content view ("عناوين الدروس + أسماء الوحدات + المحاور").
+ * When the query names a specific document, the title words are injected into
+ * the views so embeddings anchor on the RIGHT book.
  * Each view is embedded and searched, then the per-view results are fused
  * with RRF — a query that mentions "الدروس والوحدات" now ALSO matches the
  * chapter-title fragments that never resembled the full question embedding.
  */
-function buildAggregativeQueryViews(query: string): string[] {
+function buildAggregativeQueryViews(query: string, namedDocTitle?: string): string[] {
   const views = new Set<string>([query]);
   const coreSubject = query.replace(/[?؟!.]/g, '').trim();
-  views.add(`فهرس ومحتويات وعناوين: ${coreSubject}`);
-  views.add(`الفصول والوحدات والدروس وعناوين الأقسام الرئيسية: ${coreSubject}`);
+  const titleHint = namedDocTitle ? ` في ${namedDocTitle}` : '';
+  views.add(`فهرس ومحتويات وعناوين${titleHint}: ${coreSubject}`);
+  views.add(`الفصول والوحدات والدروس وعناوين الأقسام الرئيسية${titleHint}: ${coreSubject}`);
   return Array.from(views).slice(0, 3);
 }
 
@@ -311,7 +485,13 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   // to one section for them, so we expand the query into multiple retrieval
   // views and fuse them — full-coverage retrieval instead of top-k locality.
   const aggregative = isAggregativeQuery(query);
-  const searchViews = aggregative ? buildAggregativeQueryViews(query) : [query];
+
+  // NAMED-DOCUMENT anchoring: when the query names a specific source
+  // ("كتاب الفيزياء ثالث ثانوي اليمن"), the user's intent is comprehensive
+  // coverage of THAT book. Detect the best title match and (for aggregative
+  // queries) ensure the pool is anchored on the named document's chunks.
+  const namedDoc = aggregative ? await findNamedDocumentInQuery(query, tenantId) : undefined;
+  const searchViews = aggregative ? buildAggregativeQueryViews(query, namedDoc?.title) : [query];
 
   // Step 1: Optional HyDE Expansion (Applied ONLY to Semantic Search)
   let semanticSearchContent = searchViews[0];
@@ -602,6 +782,57 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
     console.log(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
   }
 
+  // NAMED-DOCUMENT SPAN COVERAGE (the core fix for "answer from the WHOLE
+  // named book"). For an aggregative query that names a specific document,
+  // retrieval-similarity alone still gravitates toward the sections that
+  // resemble the question — the user's book may have 300 chunks while only
+  // 40 surface above the similarity floor. Since the user explicitly asked
+  // about THAT book comprehensively, load the named document's FULL chunk
+  // grid and merge it into the pool:
+  //   - chunks already retrieved keep their fused scores,
+  //   - named-document chunks missing from the pool enter with a floor-level
+  //     score so they participate but never outrank genuinely-matched chunks,
+  //   - the whole-book grid is capped at the context budget (the named book
+  //     legitimately may consume it — that is what the user asked for).
+  if (namedDoc) {
+    try {
+      // Page through the whole grid up to the context budget: the DB layer
+      // caps each page at 500 rows, so books longer than that need multiple
+      // fetches. `chunk_index ASC` ordering keeps pages monotonic.
+      const budget = SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP;
+      const collected: DocumentChunk[] = [];
+      let offset = 0;
+      while (collected.length < budget) {
+        const page = await db.getChunksByDocument(tenantId, namedDoc.documentId, {
+          limit: Math.min(500, budget - collected.length),
+          offset,
+        });
+        collected.push(...page.chunks);
+        if (page.chunks.length === 0 || collected.length >= page.total) break;
+        offset += page.chunks.length;
+      }
+
+      const existingIds = new Set(resultChunks.map((c) => c.id));
+      const missingChunks = collected
+        .filter((c) => !existingIds.has(c.id))
+        .map((c) => ({
+          ...c,
+          score: Number((scoreThreshold * 0.9).toFixed(4)),
+          semanticScore: scoreThreshold,
+          lexicalScore: 0,
+          semanticRank: null,
+          lexicalRank: null,
+          fromNamedDocumentCoverage: true,
+        }));
+      resultChunks = [...resultChunks, ...missingChunks];
+      console.log(
+        `[Hybrid Search] Named-document coverage: "${namedDoc.title}" (match ${Math.round(namedDoc.overlap * 100)}%) — pool ${existingIds.size} retrieved + ${missingChunks.length} span-coverage chunks`,
+      );
+    } catch (coverageErr) {
+      console.warn('[Hybrid Search] Named-document span coverage failed:', (coverageErr as Error)?.message);
+    }
+  }
+
   // Document-coverage balancing (relevant when the pool must be capped).
   // Nearest-neighbor retrieval over a large corpus is notoriously clustered:
   // one long document can fill the entire pool while other equally-relevant
@@ -609,39 +840,78 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   // When capping, distribute slots round-robin across documents first, then
   // fill remaining slots globally by score — every document in the pool gets
   // represented, and within one document the chunks keep their score order.
+  // EXCEPTION: with a named-document aggregative query the user explicitly
+  // asked for THAT book — the named document legitimately dominates the cap,
+  // so plain score order is used and other documents fill only the slack.
   const contextChunkCap = SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP;
   const preCapCount = resultChunks.length;
   if (resultChunks.length > contextChunkCap) {
-    const byDoc = new Map<string, any[]>();
-    for (const chunk of resultChunks) {
-      const key = chunk.documentId || '_none_';
-      const list = byDoc.get(key);
-      if (list) list.push(chunk);
-      else byDoc.set(key, [chunk]);
-    }
-    const docOrder = Array.from(byDoc.entries())
-      .sort((a, b) => b[1].length - a[1].length)
-      .map(([id]) => id);
-    const balanced: any[] = [];
-    const perDocCursors = new Map<string, number>(docOrder.map((id) => [id, 0]));
-    let exhausted = false;
-    while (balanced.length < contextChunkCap && !exhausted) {
-      exhausted = true;
-      for (const docId of docOrder) {
-        if (balanced.length >= contextChunkCap) break;
-        const docChunks = byDoc.get(docId)!;
-        const cursor = perDocCursors.get(docId)!;
-        if (cursor < docChunks.length) {
-          balanced.push(docChunks[cursor]);
-          perDocCursors.set(docId, cursor + 1);
-          exhausted = false;
+    if (namedDoc) {
+      // Named-document mode: the named book's chunks fill the budget first
+      // (in book order), other documents' chunks append by score into the
+      // remaining slack.
+      const namedSet = resultChunks.filter((c) => c.documentId === namedDoc.documentId);
+      const others = resultChunks
+        .filter((c) => c.documentId !== namedDoc.documentId)
+        .sort((a, b) => (b.score || 0) - (a.score || 0));
+      const namedBudget = Math.min(namedSet.length, contextChunkCap);
+      const slack = Math.max(0, contextChunkCap - namedBudget);
+      resultChunks = [...namedSet.slice(0, namedBudget), ...others.slice(0, slack)];
+      console.log(
+        `[Hybrid Search] Defensive context cap applied: ${preCapCount} → ${resultChunks.length} (named "${namedDoc.title}" ${namedBudget} chunks + ${Math.min(others.length, slack)} from other documents)`,
+      );
+    } else {
+      const byDoc = new Map<string, any[]>();
+      for (const chunk of resultChunks) {
+        const key = chunk.documentId || '_none_';
+        const list = byDoc.get(key);
+        if (list) list.push(chunk);
+        else byDoc.set(key, [chunk]);
+      }
+      const docOrder = Array.from(byDoc.entries())
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(([id]) => id);
+      const balanced: any[] = [];
+      const perDocCursors = new Map<string, number>(docOrder.map((id) => [id, 0]));
+      let exhausted = false;
+      while (balanced.length < contextChunkCap && !exhausted) {
+        exhausted = true;
+        for (const docId of docOrder) {
+          if (balanced.length >= contextChunkCap) break;
+          const docChunks = byDoc.get(docId)!;
+          const cursor = perDocCursors.get(docId)!;
+          if (cursor < docChunks.length) {
+            balanced.push(docChunks[cursor]);
+            perDocCursors.set(docId, cursor + 1);
+            exhausted = false;
+          }
         }
       }
+      resultChunks = balanced;
+      console.log(
+        `[Hybrid Search] Defensive context cap applied: ${preCapCount} above-floor chunks → ${resultChunks.length} (cap=${contextChunkCap}), balanced across ${docOrder.length} document(s)`,
+      );
     }
-    resultChunks = balanced;
-    console.log(
-      `[Hybrid Search] Defensive context cap applied: ${preCapCount} above-floor chunks → ${resultChunks.length} (cap=${contextChunkCap}), balanced across ${docOrder.length} document(s)`,
-    );
+  }
+
+  // FINAL BOOK-ORDER ARRANGEMENT for named-document pools: the model reads
+  // the context in the order presented, and for an "enumerate the book"
+  // question the fragments must arrive in the book's natural sequence
+  // (page/chunkIndex), not in similarity order — this alone prevents the
+  // model from latching onto the highest-ranked fragment (previously the
+  // last chapter's exercises) and answering only from it. Multi-document
+  // pools keep score order.
+  if (namedDoc && resultChunks.length > 1) {
+    resultChunks.sort((a: any, b: any) => {
+      const aNamed = a.documentId === namedDoc.documentId ? 0 : 1;
+      const bNamed = b.documentId === namedDoc.documentId ? 0 : 1;
+      if (aNamed !== bNamed) return aNamed - bNamed;
+      if (aNamed === 0) {
+        // Both from the named book → book order.
+        return (a.pageNumber || 1) - (b.pageNumber || 1) || (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0);
+      }
+      return (b.score || 0) - (a.score || 0);
+    });
   }
 
   // Strip the multi-view fusion helper field — internal only, never leaks
@@ -768,7 +1038,7 @@ export async function generateRagCompletion(params: {
 
   const docsBlock = `المستندات المسترجعة (${contextChunks.length} مقطعاً — كلها اجتازت البحث والاسترجاع حسب المصادر والصلاحيات المحددة):
 ${contextText || 'لا توجد مستندات مسترجعة.'}
-[تعليمات إلزامية: استخدم كل المقاطع المسترجعة أعلاه في بناء الإجابة بحيث تغطي إجابتك كل ما يرتبط بالسؤال منها بشكل مفصل وواضح، مع استشهاد مضمّن [رقم] لكل معلومة، ولا تختصر الإجابة]`;
+[تعليمات إلزامية: استخدم كل المقاطع المسترجعة أعلاه في بناء الإجابة بحيث تغطي إجابتك كل ما يرتبط بالسؤال منها بشكل مفصل وواضح، مع استشهاد مضمّن [رقم] لكل معلومة، ولا تختصر الإجابة. وإذا ذُكر في السؤال مصدر/كتاب محدد بالاسم فهذه المقاطع تغطي ذلك المصدر عبر كامله وقد رُتّبت بترتيبها الطبيعي فيه — استعرضها من أولها إلى آخرها عند السؤال عن محتواه أو هيكله]`;
   let userContent = `${docsBlock}\n\nسؤال المستخدم: ${query}`;
 
   if (approvedToolCall) {
