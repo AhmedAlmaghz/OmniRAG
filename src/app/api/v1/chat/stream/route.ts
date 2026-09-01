@@ -18,6 +18,7 @@ import {
   performHybridSearch,
   runToolSafely,
   buildCitations,
+  buildContextBlock,
   collectTenantMcpTools,
   buildAgenticSystemInstruction,
 } from '@/lib/rag/engine';
@@ -242,9 +243,8 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       }
 
       const citations = buildCitations(searchResult.chunks);
-      const contextText = searchResult.chunks
-        .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle} (صفحة ${c.pageNumber || 1})]:\n${c.content}`)
-        .join('\n\n');
+      // Shared builder (single-document reading-order map included).
+      const contextText = buildContextBlock(searchResult.chunks);
 
       const modelAlias = targetModel || getAiModel('chatStreamModel');
       const providerConfigured = await isModelRefConfigured(modelAlias);

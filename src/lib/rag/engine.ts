@@ -147,6 +147,7 @@ export function buildAgenticSystemInstruction(modelToUse: string, mode: string, 
 3. لا يوجد أي حد لطول الإجابة أو عدد الفقرات: أجب بإسهاب كامل وبشكل مفصل وواضح حتى تغطي كل شيء عن السؤال — ملخصات الأسطر القليلة المختصرة غير مقبولة إلا إذا طلب المستخدم صراحةً الإيجاز أو كان السؤال بسيطاً بطبيعته.
 4. نظم الإجابة بعناوين وفقرات ونقاط بحسب محاور السؤال، واشرح كل نقطة بعمق مدعومة بالمعلومات المسترجعة (تعريفات، خطوات، أرقام، تواريخ، أمثلة، استثناءات).
 5. إذا كانت المعلومات المتاحة لا تغطي السؤال بالكامل، اذكر صراحةً ما هو مغطى وما لم تتوفر له معلومات ضمن المصادر، دون اختلاق.
+6. إذا كان السؤال تجميعياً/شاملاً عن محتوى مستند كامل أو هيكله (مثل: ما هي الدروس/الفصول/الوحدات/المحتويات في الكتاب؟ أو عدّد كل الأقسام)، فهذا يتطلب استعراض كامل المستند: اجمع المعلومات من جميع المقاطع المسترجعة عبر كامل نطاق المستند من أوله إلى آخره (استعن بخريطة ترتيب المستند المرفقة إن وجدت)، ورتّبها حسب تسلسلها الطبيعي، ولا تجب أبداً من مقطع واحد أو فصل واحد مهما بدا أقرب للسؤال.
 ${depthPolicy}
 
 قواعد الإسناد والاستشهاد المضمن:
@@ -172,6 +173,55 @@ export function selectSmartModel(query: string, mode: string): string {
     return getAiModel('analysisModel');
   }
   return getAiModel('chatModel');
+}
+
+/**
+ * Detects AGGREGATIVE queries — questions that ask for a comprehensive
+ * enumeration over a document/collection ("ما هي الدروس/الفصول/الوحدات…",
+ * "list all chapters", "أعطني ملخص كل جزء"). These are fundamentally
+ * different from point queries: the answer is spread across the WHOLE
+ * corpus, not concentrated in the top-k nearest neighbors.
+ *
+ * For such queries plain semantic top-k retrieval systematically fails —
+ * the query embedding resembles a table-of-contents fragment, so retrieval
+ * gravitates to one section (typically the tail) and the model answers from
+ * it. The engine routes these through multi-query + full-coverage retrieval
+ * instead (see performHybridSearch).
+ */
+export function isAggregativeQuery(query: string): boolean {
+  const q = normalizeArabicForSearch(query.toLowerCase());
+  const AGGREGATIVE_PATTERNS: RegExp[] = [
+    // Arabic: enumerate / list / what are all the X in Y
+    /ما\s*(هي|هى)?\s*(كل|جميع|جمبع)?\s*(الدروس|الفصول|الوحدات|الموضوعات|المواضيع|الأجزاء|الاجزاء|العناوين|الأقسام|الاقسام|المحتويات|الفهرس)/,
+    /(اذكر|اذكر|اسرد|اسرد|عدد|أعد|اعد)\s+(كل\s+)?(الدروس|الفصول|الوحدات|الموضوعات|المواضيع|الأجزاء|الاجزاء|العناوين|الأقسام|الاقسام|المحتويات)/,
+    /(استعرض|اعرض|لخص|لخص|اذكر لي|اذكر لي)\s+(كل\s+)?(محتويات|الدروس|الفصول|الوحدات|محتوى)\s*(الكتاب|الكتاب|المستند|الملف|المنهج)?/,
+    /فهرس|جدول\s*المحتويات|محتويات\s*(الكتاب|المستند|الملف)/,
+    // English equivalents
+    /\b(list|enumerate|summarize|outline)\s+(all\s+)?(the\s+)?(lessons?|chapters?|units?|sections?|topics?|contents?|table of contents)\b/,
+    /\bwhat\s+(are|is)\s+(all\s+)?(the\s+)?(lessons?|chapters?|units?|sections?|topics?|contents?)\b/i,
+    /\btable of contents\b/i,
+  ];
+  return AGGREGATIVE_PATTERNS.some((re) => re.test(q));
+}
+
+/**
+ * Multi-query expansion for aggregative searches (Multi-Query Retrieval, as
+ * pioneered by LangChain/LlamaIndex RAG pipelines): transform the user's
+ * question into 2-3 diverse retrieval views so no single embedding can
+ * dominate the neighbor pool:
+ *   - the original question (user intent preserved),
+ *   - a structure view ("الفهرس/الفصول/العناوين…"),
+ *   - a content view ("عناوين الدروس + أسماء الوحدات + المحاور").
+ * Each view is embedded and searched, then the per-view results are fused
+ * with RRF — a query that mentions "الدروس والوحدات" now ALSO matches the
+ * chapter-title fragments that never resembled the full question embedding.
+ */
+function buildAggregativeQueryViews(query: string): string[] {
+  const views = new Set<string>([query]);
+  const coreSubject = query.replace(/[?؟!.]/g, '').trim();
+  views.add(`فهرس ومحتويات وعناوين: ${coreSubject}`);
+  views.add(`الفصول والوحدات والدروس وعناوين الأقسام الرئيسية: ${coreSubject}`);
+  return Array.from(views).slice(0, 3);
 }
 
 /**
@@ -256,12 +306,19 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
     SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP,
   );
 
+  // Aggregative questions ("ما هي الدروس في الكتاب؟") enumerate content
+  // spread over the WHOLE corpus. Plain nearest-neighbor retrieval anchors
+  // to one section for them, so we expand the query into multiple retrieval
+  // views and fuse them — full-coverage retrieval instead of top-k locality.
+  const aggregative = isAggregativeQuery(query);
+  const searchViews = aggregative ? buildAggregativeQueryViews(query) : [query];
+
   // Step 1: Optional HyDE Expansion (Applied ONLY to Semantic Search)
-  let semanticSearchContent = query;
+  let semanticSearchContent = searchViews[0];
   let hydePrompt: string | undefined;
   if (useHyde) {
     hydePrompt = await generateHydeDocument(query);
-    semanticSearchContent = `${query} ${hydePrompt}`;
+    semanticSearchContent = `${semanticSearchContent} ${hydePrompt}`;
   }
 
   // Lexical search uses the clean original query
@@ -289,18 +346,57 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       // — vector stores pre-filter below the floor server-side, so fused RRF
       // ranks over genuinely-relevant chunks instead of arbitrary rank
       // truncation.
-      const [semanticResults, lexicalResults] = await Promise.all([
-        isVectorActive
-          ? generateEmbedding(semanticSearchContent).then((vector) =>
-              vectorStore.search({
+      //
+      // AGGREGATIVE queries additionally run EVERY retrieval view and fuse
+      // the views with RRF (multi-query retrieval): each view contributes
+      // its own neighbor ranks, so chapter-title fragments that never
+      // resemble the full question embedding still surface.
+      const semanticArm = async (): Promise<any[]> => {
+        if (!isVectorActive) return [];
+        if (aggregative && searchViews.length > 1) {
+          // Multi-view semantic search: embed each view, search, then RRF-
+          // fuse across views. Rank r in ANY view contributes 1/(k+r)/views.
+          const perViewResults = await Promise.all(
+            searchViews.map(async (view) => {
+              const vector = await generateEmbedding(view);
+              return vectorStore.search({
                 vector,
                 tenantId,
                 collectionIds,
                 limit: overfetchLimit,
                 scoreThreshold,
-              }),
-            )
-          : Promise.resolve([]),
+              });
+            }),
+          );
+          const fused = new Map<string, any>();
+          for (const viewResults of perViewResults) {
+            viewResults.forEach((item, idx) => {
+              const existing = fused.get(item.id);
+              const viewRankScore = 1 / (SYSTEM_CONFIG.RAG.RRF_CONSTANT_K + idx + 1);
+              if (existing) {
+                existing.__viewScore = (existing.__viewScore || 0) + viewRankScore;
+                if ((item.semanticScore || 0) > (existing.semanticScore || 0)) {
+                  existing.semanticScore = item.semanticScore;
+                }
+              } else {
+                fused.set(item.id, { ...item, __viewScore: viewRankScore });
+              }
+            });
+          }
+          return Array.from(fused.values()).sort((a, b) => (b.__viewScore || 0) - (a.__viewScore || 0));
+        }
+        const vector = await generateEmbedding(semanticSearchContent);
+        return vectorStore.search({
+          vector,
+          tenantId,
+          collectionIds,
+          limit: overfetchLimit,
+          scoreThreshold,
+        });
+      };
+
+      const [semanticResults, lexicalResults] = await Promise.all([
+        semanticArm(),
         isPostgresActive
           ? searchPostgresLexical(lexicalSearchContent, tenantId, overfetchLimit, collectionIds)
           : Promise.resolve([]),
@@ -494,26 +590,64 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   // cross-encoder scores are computed against every viable candidate rather
   // than an arbitrary top-N. The defensive CONTEXT_CHUNK_CAP is applied
   // AFTER reranking, once, as the single downward bound on assembled context.
-  if (searchQuery.rerank && resultChunks.length > 1) {
+  //
+  // AGGREGATIVE queries skip the cross-encoder: its criterion ("which chunk
+  // directly answers the query") actively penalizes structural fragments
+  // (chapter titles/TOC) that an enumeration question needs — precisely the
+  // bias that previously collapsed the answer onto one chapter. Multi-view
+  // fusion already orders the pool for them.
+  if (searchQuery.rerank && !aggregative && resultChunks.length > 1) {
     const preRerankTime = Date.now();
     resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[]);
     console.log(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
   }
 
-  // Defensive soft cap. Up to this point we have NOT truncated the answer
-  // pool by a fixed count — every chunk above the semantic floor (or with an
-  // exact lexical hit) is in `resultChunks`. We apply CONTEXT_CHUNK_CAP once
-  // here, AFTER reranking, so the model context is bounded (~30 chunks for
-  // the default 500-char chunk size) while preserving all relevance-ranked
-  // pieces above the floor. Callers that genuinely need more can raise the
-  // cap via SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP.
+  // Document-coverage balancing (relevant when the pool must be capped).
+  // Nearest-neighbor retrieval over a large corpus is notoriously clustered:
+  // one long document can fill the entire pool while other equally-relevant
+  // documents (or distant sections of the SAME document) never make the cut.
+  // When capping, distribute slots round-robin across documents first, then
+  // fill remaining slots globally by score — every document in the pool gets
+  // represented, and within one document the chunks keep their score order.
   const contextChunkCap = SYSTEM_CONFIG.RAG.CONTEXT_CHUNK_CAP;
   const preCapCount = resultChunks.length;
   if (resultChunks.length > contextChunkCap) {
-    resultChunks = resultChunks.slice(0, contextChunkCap);
+    const byDoc = new Map<string, any[]>();
+    for (const chunk of resultChunks) {
+      const key = chunk.documentId || '_none_';
+      const list = byDoc.get(key);
+      if (list) list.push(chunk);
+      else byDoc.set(key, [chunk]);
+    }
+    const docOrder = Array.from(byDoc.entries())
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([id]) => id);
+    const balanced: any[] = [];
+    const perDocCursors = new Map<string, number>(docOrder.map((id) => [id, 0]));
+    let exhausted = false;
+    while (balanced.length < contextChunkCap && !exhausted) {
+      exhausted = true;
+      for (const docId of docOrder) {
+        if (balanced.length >= contextChunkCap) break;
+        const docChunks = byDoc.get(docId)!;
+        const cursor = perDocCursors.get(docId)!;
+        if (cursor < docChunks.length) {
+          balanced.push(docChunks[cursor]);
+          perDocCursors.set(docId, cursor + 1);
+          exhausted = false;
+        }
+      }
+    }
+    resultChunks = balanced;
     console.log(
-      `[Hybrid Search] Defensive context cap applied: ${preCapCount} above-floor chunks → ${resultChunks.length} (cap=${contextChunkCap})`,
+      `[Hybrid Search] Defensive context cap applied: ${preCapCount} above-floor chunks → ${resultChunks.length} (cap=${contextChunkCap}), balanced across ${docOrder.length} document(s)`,
     );
+  }
+
+  // Strip the multi-view fusion helper field — internal only, never leaks
+  // into citations or model context payloads.
+  for (const chunk of resultChunks) {
+    if (chunk && typeof chunk === 'object' && '__viewScore' in chunk) delete chunk.__viewScore;
   }
 
   return {
@@ -541,6 +675,46 @@ function getCitationSourceUrl(chunk: DocumentChunk): string {
     return metaUrl;
   }
   return `/?tab=knowledge&doc=${encodeURIComponent(chunk.documentId)}`;
+}
+
+/**
+ * Builds the retrieval context block. When ALL chunks come from ONE document
+ * (the "uploaded a book, asked about the book" case), the chunks are ALSO
+ * listed in their natural book order (chunkIndex/pageNumber) under a header
+ * showing the document's coverage span — the model then reads the context as
+ * a coherent sequential document instead of a wall of unordered fragments,
+ * which is what previously made it answer only from the tail of the book.
+ * The numbered citation order (used for [n] citations) stays the retrieval
+ * order in both cases.
+ */
+export function buildContextBlock(contextChunks: DocumentChunk[]): string {
+  if (contextChunks.length === 0) return '';
+
+  const uniqueDocs = new Set(contextChunks.map((c) => c.documentId));
+  const numbered = contextChunks
+    .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle} (صفحة ${c.pageNumber || 1})]:\n${c.content}`)
+    .join('\n\n');
+
+  if (uniqueDocs.size <= 1) {
+    // Single-document pool: append a reading-order map so the model can
+    // walk the whole book rather than gravitating to one fragment.
+    const sortedByPosition = [...contextChunks].sort(
+      (a, b) => (a.pageNumber || 1) - (b.pageNumber || 1) || (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0),
+    );
+    const firstPage = sortedByPosition[0]?.pageNumber || 1;
+    const lastPage = sortedByPosition[sortedByPosition.length - 1]?.pageNumber || 1;
+    const coverageMap = sortedByPosition
+      .map((c) => {
+        const idx = contextChunks.indexOf(c) + 1;
+        return `- المصدر [${idx}]: صفحة ${c.pageNumber || 1}${c.chunkIndex != null ? `، الموضع ${c.chunkIndex + 1}` : ''}`;
+      })
+      .join('\n');
+    const title = contextChunks[0]?.documentTitle || 'المستند';
+    return `${numbered}\n\n[خريطة ترتيب مستند "${title}" — تغطية المقاطع المسترجعة من صفحة ${firstPage} إلى صفحة ${lastPage}، مرتبة حسب موضعها الطبيعي في المستند]:
+${coverageMap}
+[ملاحظة: هذه مقاطع من مستند واحد مرتبة أعلاه بترتيبها في الكتاب — عند السؤال عن محتويات أو هيكل المستند كاملاً، استعرض المعلومات عبر كامل النطاق من أوله إلى آخره ولا تقتصر على مقطع واحد منه]`;
+  }
+  return numbered;
 }
 
 /**
@@ -577,10 +751,8 @@ export async function generateRagCompletion(params: {
   } = params;
   const modelToUse = modelOverride || selectSmartModel(query, mode);
 
-  // Format context block with citations
-  const contextText = contextChunks
-    .map((c, i) => `[المصدر ${i + 1} - ${c.documentTitle} (صفحة ${c.pageNumber || 1})]:\n${c.content}`)
-    .join('\n\n');
+  // Format context block with citations (+ single-document reading-order map)
+  const contextText = buildContextBlock(contextChunks);
 
   // Conversation memory becomes REAL multi-turn messages (last 10), letting
   // the model resolve references like "هذا/ذلك" natively instead of through a

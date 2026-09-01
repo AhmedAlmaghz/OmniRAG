@@ -1600,10 +1600,16 @@ export async function searchPostgresLexical(
       return [];
     }
 
+    // FTS matching strategy: OR between query terms, NOT AND. A long natural
+    // question ("ما هي الدروس والوحدات التي في كتاب الرياضيات") under AND
+    // requires EVERY word to appear in one 1280-char chunk — chapter-title
+    // fragments ("الفصل الثالث: النسب") matched almost nothing and the
+    // lexical arm collapsed to near-zero recall. OR casts a wide net; the
+    // fusion stage (RRF) + optional reranker sort quality afterwards.
     const ftsQuery = cleanQuery
       .split(' ')
       .map((w) => `${w}:*`)
-      .join(' & ');
+      .join(' | ');
 
     // Optional collection containment: when the user scoped the chat to
     // specific collections, the lexical arm must honor the same scope as the
