@@ -65,9 +65,17 @@ describe('searchPostgresLexical tenant isolation (regression)', () => {
 
     const ftsQuery = pgMock.queries.find((q) => /ts_rank/.test(q.text) && !/ILIKE/.test(q.text));
     expect(ftsQuery, 'FTS SELECT must have been issued').toBeDefined();
-    expect(ftsQuery!.text).toContain('tenant_id = $3');
+    expect(ftsQuery!.text).toContain('tenant_id = $1');
     expect(ftsQuery!.params).toContain(tenantId);
-    expect(ftsQuery!.text).toMatch(/LIMIT \$4/);
+
+    // BINDING contract (the v0.12.2 regression this pins): param ORDER must
+    // match the placeholders' MEANING — [$1 tenant, $2 ftsQuery, $3 dict,
+    // $4 limit]. The broken version bound tenant_id to the $3 slot (the
+    // dict), returning zero rows on every lexical search while the SQL TEXT
+    // still looked correct.
+    expect(ftsQuery!.params[0]).toBe(tenantId);
+    expect(ftsQuery!.params[1]).toBe('data:* | security:*');
+    expect(['arabic', 'english']).toContain(ftsQuery!.params[2]);
     expect(ftsQuery!.params[3]).toBe(10);
   });
 
@@ -85,7 +93,30 @@ describe('searchPostgresLexical tenant isolation (regression)', () => {
     expect(ilikeQuery!.text).toContain('tenant_id = $3');
     expect(ilikeQuery!.params).toContain(tenantId);
     expect(ilikeQuery!.text).toMatch(/LIMIT \$4/);
+    // Binding: $3 = tenant (index 2 of params), $4 = limit (index 3).
+    expect(ilikeQuery!.params[2]).toBe(tenantId);
     expect(ilikeQuery!.params[3]).toBe(5);
+  });
+
+  it('binds collection scope on $5 without touching the $1-$4 binding contract', async () => {
+    process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/omnirag_test?sslmode=disable';
+    process.env.PG_TLS_REJECT_UNAUTHORIZED = 'false';
+
+    const { searchPostgresLexical } = await import('../lib/storage/postgres');
+    const tenantId = 'tenant-acme-01';
+    const collections = ['col-1', 'col-2'];
+    await searchPostgresLexical('data security', tenantId, 10, collections);
+
+    const ftsQuery = pgMock.queries.find((q) => /ts_rank/.test(q.text) && !/ILIKE/.test(q.text));
+    expect(ftsQuery, 'FTS SELECT must have been issued').toBeDefined();
+    // Scope subquery binds the tenant at $1 (NOT the dict slot $3) — the exact
+    // second binding bug the v0.12.4 fix repaired. Whitespace/newline-tolerant:
+    // the scoped predicate is `tenant_id = $1` followed by the collFilter
+    // subquery block, then the tsvector match on the NEXT line.
+    expect(ftsQuery!.text).toMatch(/WHERE tenant_id = \$1 AND document_id IN \(/);
+    expect(ftsQuery!.text).toMatch(/AND to_tsvector\(\$3, content\) @@ to_tsquery\(\$3, \$2\)/);
+    expect(ftsQuery!.params[0]).toBe(tenantId);
+    expect(ftsQuery!.params[4]).toEqual(collections);
   });
 
   it('returns [] and issues no lexical query when tenantId is empty', async () => {

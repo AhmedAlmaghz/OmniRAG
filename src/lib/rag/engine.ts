@@ -10,6 +10,7 @@ import { getEnv } from '../env/runtimeEnv';
 import { resolveLanguageModel, isModelRefConfigured } from '../ai/registry/resolve';
 import { generateTextResilient } from '../ai/resilientGenerate';
 import { SYSTEM_CONFIG } from '../config/systemConfig';
+import { isTenantEmbeddingStale, selfHealStaleCorpus } from '../services/reembedService';
 import { buildTenantMcpTools, type CustomToolSchema } from '../mcp/aiSdkTools';
 import { ToolExecutionOutcome, executeMcpToolCall } from '../mcp/dispatcher';
 
@@ -293,7 +294,6 @@ const AR_STOPWORDS = new Set([
   'هي',
   'هو',
   'ماذا',
-  'من',
   'و',
   'أو',
   'او',
@@ -304,20 +304,13 @@ const AR_STOPWORDS = new Set([
   'هذه',
   'ذلك',
   'تلك',
-  'الذي',
   'مع',
   'كل',
-  'الذي',
-  'التي',
   'بالتفصيل',
   'الممل',
   'الرئيسية',
   'الموجودة',
   'الموجود',
-  'اليمن',
-  'الصف',
-  'ثالث',
-  'ثانوي',
   'اذكر',
   'اسرد',
   'عدد',
@@ -330,7 +323,20 @@ const AR_STOPWORDS = new Set([
   'قلي',
   'اخبرني',
   'اريد',
-  'اريد',
+  // Generic container words — "كتاب/مرجع/مصدر" appear in nearly every
+  // knowledge-base title, so keeping them would match EVERYTHING.
+  'كتاب',
+  'كتب',
+  'مرجع',
+  'مراجع',
+  'مصدر',
+  'مصادر',
+  'المنهج',
+  'منهج',
+  // DELIBERATELY NOT stopwords (the v0.12.4 mistake): ثالث/ثانوي/اليمن/
+  // الصف/ابتدائي… — grade/level/region words are PRIMARY discriminators in
+  // textbook titles ("الفيزياء ثالث ثانوي" vs "الفيزياء أول ثانوي");
+  // dropping them collapsed every same-subject book into a 4-way tie.
 ]);
 
 /** Tokenizes an Arabic/English string into normalized search tokens. */
@@ -368,8 +374,20 @@ export async function findNamedDocumentInQuery(
     if (titleTokens.size === 0) continue;
     const hits = queryTokens.filter((t) => titleTokens.has(t)).length;
     const overlap = hits / queryTokens.length;
-    if (overlap >= 0.2 && (!best || overlap > best.overlap)) {
+    if (overlap < 0.2) continue;
+    if (!best || overlap > best.overlap) {
       best = { documentId: doc.id, title: doc.title, overlap };
+    } else if (best && overlap === best.overlap && hits > queryTokens.length * 0.2) {
+      // TIE-BREAKERS (same overlap): prefer the title that covers MORE query
+      // content words absolutely (a longer, more specific match), then the
+      // more recent document — textbooks commonly share subject+grade words
+      // and the newest upload is what the user is most likely asking about.
+      const bestTitleTokens = new Set(toNormalizedTokens(best.title));
+      const bestHits = queryTokens.filter((t) => bestTitleTokens.has(t)).length;
+      const bestCreated = docs.find((d) => d.id === best!.documentId)?.createdAt || '';
+      if (hits > bestHits || (hits === bestHits && (doc.createdAt || '') > bestCreated)) {
+        best = { documentId: doc.id, title: doc.title, overlap };
+      }
     }
   }
   return best;
@@ -513,6 +531,32 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   const { store: vectorStore, explicit: vectorStoreExplicit } = await getVectorStoreSelection(tenantId);
   const isVectorActive = vectorStore.isConfigured() && (vectorStore.id !== 'memory' || vectorStoreExplicit);
 
+  // ── VECTOR PROVENANCE GUARD ─────────────────────────────────────────────
+  // Vectors produced by a different embedding model (or a different
+  // embedding pipeline version) live in an incomparable space — comparing
+  // them against the ACTIVE model's query vectors yields pure noise that
+  // LOOKS like results. This is the exact mechanism that made dev-pro appear
+  // "broken" right after the v0.12.3 default-model switch: the corpus was
+  // still text-embedding-004 while queries became gemini-embedding-2.
+  // On staleness: (a) trigger the background self-heal re-embed once, and
+  // (b) downgrade the semantic arm to a RANK-ONLY signal (no similarity
+  // claims, weight shifted to lexical) so this search still returns useful
+  // lexical results instead of cross-space garbage.
+  let vectorsStale = false;
+  try {
+    vectorsStale = await isTenantEmbeddingStale(tenantId);
+    if (vectorsStale) {
+      console.warn(
+        `[Hybrid Search] Stored vectors use a different embedding model/pipeline than the active one — semantic arm downgraded to rank-only; a background re-embed has been scheduled.`,
+      );
+      void selfHealStaleCorpus(tenantId);
+    }
+  } catch {
+    // Provenance check is best-effort — never block search on it.
+  }
+  const effectiveSemanticWeight = vectorsStale ? 0 : semanticWeight;
+  const effectiveLexicalWeight = vectorsStale ? Math.max(lexicalWeight, 0.7) : lexicalWeight;
+
   let resultChunks: any[] = [];
   let totalCount = 0;
   let semanticMatches = 0;
@@ -653,12 +697,15 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
 
         // Apply Reciprocal Rank Fusion (RRF). k comes from the central config —
         // previously the SYSTEM_CONFIG value was dead because this call relied
-        // on the function default, so tuning the config changed nothing.
+        // on the function default, so tuning the config changed nothing. The
+        // EFFECTIVE weights are the staleness-adjusted ones: with stale
+        // vectors the semantic rank carries no real similarity information
+        // (cross-space noise), so its weight drops to 0.
         const rrf = computeRrfScore(
           item.semanticRank,
           item.lexicalRank,
-          semanticWeight,
-          lexicalWeight,
+          effectiveSemanticWeight,
+          effectiveLexicalWeight,
           SYSTEM_CONFIG.RAG.RRF_CONSTANT_K,
         );
         item.score = Number(rrf.toFixed(4));
@@ -736,8 +783,9 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       }
       semanticScore = Math.min(0.98, semanticScore);
 
-      // Deterministic RRF score for fallback local search
-      const fusedScore = semanticScore * semanticWeight + lexicalScore * lexicalWeight;
+      // Deterministic RRF score for fallback local search (staleness-adjusted
+      // weights: with cross-space vectors the lexical term carries the signal).
+      const fusedScore = semanticScore * effectiveSemanticWeight + lexicalScore * effectiveLexicalWeight;
 
       return {
         ...chunk,

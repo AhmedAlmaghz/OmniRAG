@@ -1621,7 +1621,7 @@ export async function searchPostgresLexical(
     const hasCollectionScope = Array.isArray(collectionIds) && collectionIds.length > 0;
     const collFilter = hasCollectionScope
       ? ` AND document_id IN (
-           SELECT id FROM documents WHERE tenant_id = $3 AND collection_ids ?| $5::text[]
+           SELECT id FROM documents WHERE tenant_id = $1 AND collection_ids ?| $5::text[]
          )`
       : '';
 
@@ -1632,17 +1632,23 @@ export async function searchPostgresLexical(
 
       // tenant_id filter is mandatory and authoritative. RLS is disabled at
       // present, so without this predicate the FTS arm would return chunks
-      // from ALL tenants — a cross-tenant data leak. Contract: $1=tenant,
-      // $2=ftsQuery, $3=dict, $4=LIMIT, and only when collection-scoped
-      // $5=collectionIds (used by the collFilter subquery above).
+      // from ALL tenants — a cross-tenant data leak.
+      //
+      // BINDING CONTRACT (regression-tested in lexicalTenantIsolation.test.ts):
+      //   $1 = tenantId   $2 = ftsQuery   $3 = dict   $4 = LIMIT
+      //   $5 = collectionIds (ONLY when collection-scoped)
+      // The v0.12.2 rework accidentally bound `tenant_id = $3` ($3 was the
+      // DICT) — every lexical query returned zero rows, silently crippling
+      // the lexical arm. A test now asserts the BINDING (params order), not
+      // just the SQL text, so this class of mistake can never pass CI again.
       result = await client.query(
         `SELECT id, document_id, content, chunk_index, page_number, language,
                 ts_rank(to_tsvector($3, content), to_tsquery($3, $2)) as rank
          FROM chunks
-         WHERE tenant_id = $3${collFilter}
+         WHERE tenant_id = $1${collFilter}
            AND to_tsvector($3, content) @@ to_tsquery($3, $2)
          ORDER BY rank DESC
-         LIMIT $4${hasCollectionScope ? ' + 0' : ''}`,
+         LIMIT $4`,
         hasCollectionScope ? [tenantId, ftsQuery, dict, limitVal, collectionIds] : [tenantId, ftsQuery, dict, limitVal],
       );
     } catch (ftsError) {

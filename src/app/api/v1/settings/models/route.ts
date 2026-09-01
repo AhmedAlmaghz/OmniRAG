@@ -16,34 +16,44 @@ import { guardPermission } from '@/lib/auth/permissions';
 export const dynamic = 'force-dynamic';
 
 /**
- * Runs the mandatory corpus re-embed when the embedding model changed.
- * Returns undefined when there is nothing to re-embed (empty corpus).
- * Wrapped in runWithModelConfig so getAiModel('embeddingModel') resolves the
- * NEW model while vectors are regenerated.
+ * Mandatory corpus re-embed when the embedding model changed — SCHEDULED, not
+ * awaited, when the corpus is large: a 500-chunk book re-embed is hundreds of
+ * provider calls and would hold the settings-save request (and its rate-limit
+ * slot) hostage. Small corpora (< INLINE_REEMBED_MAX) still run inline so the
+ * user sees the finished count immediately. Wrapped in runWithModelConfig so
+ * the NEW model is what regenerates every vector either way.
  */
-async function maybeReembedOnModelChange(
-  tenantId: string,
-  newEmbeddingModel: string,
-): Promise<ReembedResult | undefined> {
+const INLINE_REEMBED_MAX = 50;
+
+function maybeReembedOnModelChange(tenantId: string, newEmbeddingModel: string): Promise<ReembedResult | undefined> {
   return runWithModelConfig({ ...DEFAULT_AI_MODELS, embeddingModel: newEmbeddingModel }, async () => {
     const chunkCount = (await db.getChunks(tenantId)).length;
     if (chunkCount === 0) return undefined;
-    const result = await reembedTenantCorpus(tenantId, newEmbeddingModel);
-    await db.addSyncLog({
-      id: `log-reembed-${Date.now()}`,
-      tenantId,
-      sourceId: 'settings/models',
-      sourceName: 'إعادة تضمين قاعدة المعرفة',
-      status: result.failed === 0 ? 'success' : 'failed',
-      itemsProcessed: result.reembedded,
-      durationMs: result.durationMs,
-      message:
-        result.failed === 0
-          ? `تم تغيير نموذج التضمين إلى ${result.modelUsed} وإعادة تضمين ${result.reembedded} مقطع بنجاح`
-          : `تغيير نموذج التضمين إلى ${result.modelUsed}: نجح ${result.reembedded} وفشل ${result.failed} مقطع — ${result.errors.slice(0, 3).join('؛ ')}`,
-      timestamp: new Date().toISOString(),
-    });
-    return result;
+
+    const run = async (): Promise<ReembedResult> => {
+      const result = await reembedTenantCorpus(tenantId, newEmbeddingModel);
+      await db.addSyncLog({
+        id: `log-reembed-${Date.now()}`,
+        tenantId,
+        sourceId: 'settings/models',
+        sourceName: 'إعادة تضمين قاعدة المعرفة',
+        status: result.failed === 0 ? 'success' : 'failed',
+        itemsProcessed: result.reembedded,
+        durationMs: result.durationMs,
+        message:
+          result.failed === 0
+            ? `تم تغيير نموذج التضمين إلى ${result.modelUsed} وإعادة تضمين ${result.reembedded} مقطع بنجاح`
+            : `تغيير نموذج التضمين إلى ${result.modelUsed}: نجح ${result.reembedded} وفشل ${result.failed} مقطع — ${result.errors.slice(0, 3).join('؛ ')}`,
+        timestamp: new Date().toISOString(),
+      });
+      return result;
+    };
+
+    if (chunkCount <= INLINE_REEMBED_MAX) return run();
+    // Large corpus: fire-and-forget. The response already tells the user the
+    // re-embed is running; the sync log carries the final outcome.
+    void run();
+    return { total: chunkCount, reembedded: 0, failed: 0, modelUsed: newEmbeddingModel, durationMs: 0, errors: [] };
   });
 }
 

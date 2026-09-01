@@ -40,9 +40,16 @@ vi.mock('../lib/storage/db', () => ({
   },
 }));
 
-vi.mock('../lib/rag/embedding', () => ({
-  embedBatch: vi.fn(async (texts: string[]) => texts.map((_, i) => [i, i, i])),
-}));
+// Partial mock: embedBatch is faked (no provider calls), everything else —
+// including the REAL embeddingProvenanceId and EMBEDDING_PIPELINE_VERSION —
+// stays genuine so the stamp contract tracks the source of truth.
+vi.mock('../lib/rag/embedding', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/rag/embedding')>();
+  return {
+    ...actual,
+    embedBatch: vi.fn(async (texts: string[]) => texts.map((_, i) => [i, i, i])),
+  };
+});
 
 vi.mock('../lib/storage/vectors/registry', () => ({
   getVectorStoreForTenant: vi.fn(async () => ({
@@ -81,10 +88,15 @@ describe('reembedTenantCorpus', () => {
     expect(firstPoint.payload.content).toContain('محتوى المقطع');
   });
 
-  it('stamps settings.indexedEmbeddingModel with the model actually used', async () => {
+  it('stamps settings.indexedEmbeddingModel with the model + pipeline provenance', async () => {
+    // The stamp is model#vN — the pipeline version is what makes a corpus
+    // self-heal after an embedding-pipeline change even when the model didn't.
     await reembedTenantCorpus('tenant-acme-01', 'google/gemini-embedding-2-preview');
     expect(settingsCalls.length).toBe(1);
-    expect(settingsCalls[0].settings).toEqual({ indexedEmbeddingModel: 'google/gemini-embedding-2-preview' });
+    expect(settingsCalls[0].settings).toEqual({
+      indexedEmbeddingModel: expect.stringMatching(/^google\/gemini-embedding-2-preview#v\d+$/),
+    });
+    expect(settingsCalls[0].settings.indexedEmbeddingModel).toBe('google/gemini-embedding-2-preview#v2');
   });
 
   it('short-circuits cleanly for a tenant with zero chunks (still stamps tracking)', async () => {
@@ -92,7 +104,7 @@ describe('reembedTenantCorpus', () => {
     expect(result.total).toBe(0);
     expect(result.reembedded).toBe(0);
     expect(upsertCalls.length).toBe(0);
-    expect(settingsCalls[0].settings).toEqual({ indexedEmbeddingModel: 'gemini-embedding-2' });
+    expect(settingsCalls[0].settings).toEqual({ indexedEmbeddingModel: 'gemini-embedding-2#v2' });
   });
 
   it('reports failed batches without aborting the rest of the corpus', async () => {
@@ -146,10 +158,22 @@ describe('isTenantEmbeddingStale', () => {
     expect(await isTenantEmbeddingStale('t1')).toBe(true);
   });
 
-  it('reports consistency when the indexed model matches the active model', async () => {
+  it('flags a pipeline-version mismatch even with the SAME model (the v0.12.4 normalization upgrade)', async () => {
+    const { db } = await import('../lib/storage/db');
+    // Corpus embedded with v1 pipeline (raw text) under the SAME model that
+    // is active now — still stale because v2 normalizes Arabic before
+    // embedding, which changes every vector.
+    (db.getTenant as any).mockResolvedValue({
+      settings: { indexedEmbeddingModel: 'gemini-embedding-2#v1' },
+    });
+    (db.getChunks as any).mockResolvedValue([{ id: 'c1' }]);
+    expect(await isTenantEmbeddingStale('t1')).toBe(true);
+  });
+
+  it('reports consistency when the indexed provenance matches the active model+pipeline', async () => {
     const { db } = await import('../lib/storage/db');
     (db.getTenant as any).mockResolvedValue({
-      settings: { indexedEmbeddingModel: 'gemini-embedding-2' },
+      settings: { indexedEmbeddingModel: 'gemini-embedding-2#v2' },
     });
     (db.getChunks as any).mockResolvedValue([{ id: 'c1' }]);
     expect(await isTenantEmbeddingStale('t1')).toBe(false);

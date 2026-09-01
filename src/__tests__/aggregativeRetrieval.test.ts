@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { isAggregativeQuery, buildContextBlock, buildCitations } from '../lib/rag/engine';
+import { describe, it, expect, vi } from 'vitest';
+import { isAggregativeQuery, buildContextBlock, buildCitations, findNamedDocumentInQuery } from '../lib/rag/engine';
 import { DocumentChunk } from '../lib/types/omnirag';
 
 /**
@@ -11,6 +11,29 @@ import { DocumentChunk } from '../lib/types/omnirag';
  * and routed through multi-view retrieval, and a single-document pool must
  * carry a reading-order map so the model walks the WHOLE document.
  */
+
+// Named-document matching needs db.getDocuments — mock at module level.
+vi.mock('../lib/storage/db', () => ({
+  db: {
+    getDocuments: vi.fn(async () => [
+      {
+        id: 'doc-physics-3rd',
+        title: 'كتاب الفيزياء ثالث ثانوي اليمن',
+        createdAt: '2026-08-20T00:00:00Z',
+      },
+      {
+        id: 'doc-physics-1st',
+        title: 'كتاب الفيزياء أول ثانوي اليمن',
+        createdAt: '2026-08-01T00:00:00Z',
+      },
+      {
+        id: 'doc-math-3rd',
+        title: 'كتاب الرياضيات ثالث ثانوي اليمن',
+        createdAt: '2026-08-25T00:00:00Z',
+      },
+    ]),
+  },
+}));
 
 function fakeChunk(overrides: Partial<DocumentChunk>): DocumentChunk {
   return {
@@ -120,5 +143,40 @@ describe('citation integrity after the context changes', () => {
     expect(citations[0].chunkId).toBe('c1');
     expect(citations[1].index).toBe(2);
     expect(citations[1].chunkId).toBe('c2');
+  });
+});
+
+describe('findNamedDocumentInQuery — named-source anchoring', () => {
+  // Mocked corpus: physics 3rd-secondary Yemen, physics 1st-secondary Yemen,
+  // math 3rd-secondary Yemen (grade words are DISCRIMINATORS, not stopwords).
+  it('finds the EXACT book when grade/region words are present (not stopworded)', async () => {
+    const match = await findNamedDocumentInQuery(
+      'ماهي وحدات ودروس كتاب الفيزياء ثالث ثانوي اليمن بالتفصيل الممل',
+      'tenant-acme-01',
+    );
+    // ثالث/ثانوي/اليمن distinguish the 3rd-secondary physics book from the
+    // 1st-secondary one — the v0.12.4 stopword mistake removed them and left
+    // every same-subject book tied.
+    expect(match?.documentId).toBe('doc-physics-3rd');
+    expect(match?.overlap).toBeGreaterThan(0.3);
+  });
+
+  it('distinguishes same-grade books by SUBJECT word (فيزياء vs رياضيات)', async () => {
+    const match = await findNamedDocumentInQuery('ماهي وحدات كتاب الرياضيات ثالث ثانوي اليمن', 'tenant-acme-01');
+    expect(match?.documentId).toBe('doc-math-3rd');
+  });
+
+  it('breaks subject ties toward the newest document when the query omits the grade', async () => {
+    // "وحدات كتاب الفيزياء" matches BOTH physics books; overlap ties at the
+    // subject word — the tie-breaker (more absolute content hits, then newer)
+    // must pick deterministically, not return the wrong physics book.
+    const match = await findNamedDocumentInQuery('وحدات كتاب الفيزياء', 'tenant-acme-01');
+    expect(match).toBeDefined();
+    expect(match?.documentId).toBe('doc-physics-3rd');
+  });
+
+  it('returns undefined when no document title shares the query vocabulary', async () => {
+    const match = await findNamedDocumentInQuery('ماهي وحدات الكيمياء العضوية', 'tenant-acme-01');
+    expect(match).toBeUndefined();
   });
 });

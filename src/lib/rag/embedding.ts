@@ -44,6 +44,29 @@ function normalizeForEmbedding(text: string): string {
 }
 
 /**
+ * EMBEDDING PIPELINE VERSION — bumped whenever anything that changes the
+ * vector space of generated embeddings changes:
+ *   v1: raw text as written (pre-v0.12.4),
+ *   v2: Arabic-normalized text (diacritics/hamza/alef folding) — v0.12.4.
+ * Vectors produced under different PIPELINE versions (or different models)
+ * are incomparable; `embeddingProvenanceId` below encodes BOTH so the
+ * staleness detection and the re-embed service can detect a mismatch without
+ * inspecting any vector.
+ */
+export const EMBEDDING_PIPELINE_VERSION = 2;
+
+/**
+ * Canonical provenance identifier for a vector: model + pipeline version.
+ * Stored in TenantSettings.indexedEmbeddingModel and compared against the
+ * ACTIVE id on every search — a mismatch means the stored corpus lives in a
+ * different vector space and must be re-embedded before semantic results are
+ * meaningful (the engine degrades to lexical-only until then).
+ */
+export function embeddingProvenanceId(modelRef?: string): string {
+  return `${modelRef || getAiModel('embeddingModel')}#v${EMBEDDING_PIPELINE_VERSION}`;
+}
+
+/**
  * Generates a vector embedding for the given text using the Vercel AI SDK v7,
  * resolving the configured embedding model through the multi-provider registry
  * (any provider with an embedding capability — Google, OpenAI, Mistral,

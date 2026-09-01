@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { parseModelConfigFromRequest } from '@/lib/config/aiModels';
 import { runWithModelConfig } from '@/lib/config/aiModelsServer';
 import { reembedTenantCorpus, isTenantEmbeddingStale } from '@/lib/services/reembedService';
+import { isModelRefConfigured } from '@/lib/ai/registry/resolve';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { guardPermission } from '@/lib/auth/permissions';
 import { serverErrorResponse } from '@/lib/api/safeError';
@@ -48,6 +49,19 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       if (url.searchParams.get('check') === '1') {
         const stale = await isTenantEmbeddingStale(tenantId);
         return NextResponse.json({ success: true, stale, activeModel: modelConfig.embeddingModel });
+      }
+
+      // CONFIGURATION GUARD: a re-embed with an unconfigured model would
+      // "succeed" by writing hash-fallback vectors over the real corpus —
+      // silently destroying semantic search. Fail loudly instead.
+      if (!(await isModelRefConfigured(modelConfig.embeddingModel))) {
+        return NextResponse.json(
+          {
+            error: `نموذج التضمين "${modelConfig.embeddingModel}" غير مهيأ (لا يوجد مفتاح مزود) — عيّن مفتاح المزود أولاً وإلا ستُستبدل المتجهات بقيم احتياطية غير صالحة للبحث الدلالي`,
+            code: 'EMBEDDING_MODEL_NOT_CONFIGURED',
+          },
+          { status: 409 },
+        );
       }
 
       const result = await reembedTenantCorpus(tenantId);
