@@ -33,15 +33,13 @@ import type { MCPToolCall } from '@/lib/types/omnirag';
 
 export const dynamic = 'force-dynamic';
 
-// Vercel Hobby caps function execution at 60s. Without an explicit
-// maxDuration this route fell into the platform DEFAULT (~10s for
-// unspecified routes), which HARD-KILLED the SSE connection mid-stream —
-// the browser saw a raw network drop, useChat's onError received an
-// opaque network error, and the user got the generic "connection error"
-// banner while the answer bubble stayed empty. Declaring 60s (the Hobby
-// ceiling) and aborting generation internally at 55s keeps the error
-// path INSIDE the stream protocol.
-export const maxDuration = 60;
+// Route segment configs (maxDuration) must be statically analyzable at build
+// time — Next.js rejects expressions over process.env here, so the export is
+// a plain constant (Vercel enforces its own platform ceiling on top of it:
+// Hobby hard-kills at 60s regardless of this value). The RUNTIME generation
+// budget below is env-driven, which keeps the in-stream abort UNDER the
+// platform ceiling on Vercel and extends freely on self-hosted deployments.
+export const maxDuration = 300;
 
 /** Internal generation budget — must stay BELOW maxDuration when running on
  *  Vercel so a slow/failed provider surfaces as a clean in-stream error before

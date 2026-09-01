@@ -10,11 +10,11 @@ import { db } from '@/lib/storage/db';
 
 export const dynamic = 'force-dynamic';
 
-// Vercel Hobby execution ceiling — without this the platform default
-// (~10s for unspecified routes) kills the function before slow provider
-// calls finish, surfacing as raw connection errors. Self-hosted deployments
-// have no ceiling, so comprehensive multi-source answers get 5 minutes there.
-export const maxDuration = process.env.VERCEL ? 60 : 300;
+// Route segment configs (maxDuration) must be statically analyzable at build
+// time — Next.js rejects expressions over process.env here. Vercel caps at
+// the Hobby ceiling anyway; self-hosted deployments ignore this export, so a
+// constant 300 never truncates them while keeping the Vercel build green.
+export const maxDuration = 300;
 
 export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
   // The wrapper already enforced rate limits and verified auth; authCtx is the
