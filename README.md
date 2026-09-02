@@ -122,11 +122,20 @@ docker compose up -d --build
 
 يعمل التطبيق على `http://localhost:3000` مع قاعدة بيانات ومحرك بحث متجهي داخليين (بيانات دائمة في أحجام Docker). `DATABASE_URL` و`QDRANT_URL` تُعيَّن تلقائياً للخدمات الداخلية وتتجاوز أي قيم في `.env`.
 
-بعد أول تشغيل، أنشئ جداول قاعدة البيانات (من جهازك مباشرة):
+بعد أول تشغيل، أنشئ جداول قاعدة البيانات. مصدر الحقيقة الوحيد للمخطط هو `src/db/schema.ts`، وكل التهجيرات دُمجت في ملف baseline واحد (`drizzle/0000_baseline_unified.sql`):
 
 ```bash
-DATABASE_URL=postgresql://omnirag:omnirag@localhost:5432/omnirag npx drizzle-kit push
+# الطريقة 1 — تطبيق المخطط مباشرة من schema.ts (الأبسط للتطوير)
+DATABASE_URL=postgresql://omnirag:omnirag@localhost:5432/omnirag npm run db:push
+
+# الطريقة 2 — التهجير اليدوي عبر سكريبت SQL موحد (idempotent — آمن الإعادة)
+# يعمل على قاعدة جديدة أو قاعدة موجودة من نسخة سابقة، ولا يحذف أياً من بياناتك
+DATABASE_URL=postgresql://omnirag:omnirag@localhost:5432/omnirag npm run db:migrate:manual
 ```
+
+`scripts/manual-migration.sql` يغطي الـ 25 جدولاً كاملةً (بما فيها فهارس البحث النصي العربية/الإنجليزية GIN وجداول التشغيل `rate_limit_windows` و`usage_counters`)، ويستثني عمداً جداول `pgboss` (ينشئها pg-boss عند الإقلاع) وجداول pgvector الديناميكية (`vector_chunks*` — ينشئها المحوّل حسب بُعد التضمين). عند تعديل `schema.ts`، ولّد تهجيراً جديداً بـ `npm run db:generate` وأبقِ السكريبت اليدوي متزامناً معه.
+
+> **ملاحظة:** التطبيق ينشئ المخطط ويزرع البيانات الأولية تلقائياً عند الإقلاع أيضاً (`migrateAndSeedWithDrizzle`) — السكريبت اليدوي للنشر المسبق أو إصلاح قاعدة موجودة.
 
 ### ملاحظات النشر على المزودين
 

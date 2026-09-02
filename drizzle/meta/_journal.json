@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1787765506807,
-      "tag": "0000_baseline",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1787846400000,
-      "tag": "0001_phase5_teams_sharing",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1787932800000,
-      "tag": "0002_phase6_api_keys",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1787936400000,
-      "tag": "0003_phase6_webhooks",
+      "when": 1788314565970,
+      "tag": "0000_baseline_unified",
       "breakpoints": true
     }
   ]

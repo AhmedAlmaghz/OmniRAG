@@ -6,6 +6,8 @@ CREATE TABLE "api_keys" (
 	"prefix" varchar(30) NOT NULL,
 	"key_hash" varchar(100) NOT NULL,
 	"scopes" jsonb DEFAULT '[]'::jsonb,
+	"rate_limit_per_minute" integer,
+	"mcp_tools" jsonb,
 	"expires_at" varchar(100),
 	"last_used_at" varchar(100),
 	"revoked_at" varchar(100),
@@ -71,6 +73,18 @@ CREATE TABLE "documents" (
 	"collection_ids" jsonb
 );
 --> statement-breakpoint
+CREATE TABLE "invitations" (
+	"id" varchar(100) PRIMARY KEY NOT NULL,
+	"tenant_id" varchar(100) NOT NULL,
+	"email" varchar(255) NOT NULL,
+	"role" varchar(20) DEFAULT 'viewer' NOT NULL,
+	"token" varchar(100) NOT NULL,
+	"invited_by" varchar(100) NOT NULL,
+	"expires_at" varchar(100) NOT NULL,
+	"status" varchar(20) DEFAULT 'pending' NOT NULL,
+	"created_at" varchar(100) NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "mcp_servers" (
 	"id" varchar(100) PRIMARY KEY NOT NULL,
 	"tenant_id" varchar(100) NOT NULL,
@@ -92,6 +106,16 @@ CREATE TABLE "mcp_servers" (
 	"config" jsonb DEFAULT '{}'::jsonb,
 	"custom_tool_schemas" jsonb DEFAULT '{}'::jsonb,
 	"created_at" varchar(100) DEFAULT ''
+);
+--> statement-breakpoint
+CREATE TABLE "memberships" (
+	"id" varchar(100) PRIMARY KEY NOT NULL,
+	"user_id" varchar(100) NOT NULL,
+	"tenant_id" varchar(100) NOT NULL,
+	"role" varchar(20) DEFAULT 'viewer' NOT NULL,
+	"status" varchar(20) DEFAULT 'active' NOT NULL,
+	"invited_by" varchar(100),
+	"created_at" varchar(100) NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "messages" (
@@ -120,6 +144,31 @@ CREATE TABLE "provider_credentials" (
 	"updated_at" varchar(100) NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "rate_limit_windows" (
+	"bucket_id" varchar(300) PRIMARY KEY NOT NULL,
+	"count" integer DEFAULT 1 NOT NULL,
+	"window_start" varchar(100) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "resource_shares" (
+	"id" varchar(100) PRIMARY KEY NOT NULL,
+	"tenant_id" varchar(100) NOT NULL,
+	"resource_type" varchar(50) NOT NULL,
+	"resource_id" varchar(100) NOT NULL,
+	"grantee_type" varchar(20) NOT NULL,
+	"grantee_id" varchar(100) NOT NULL,
+	"permission" varchar(20) DEFAULT 'read' NOT NULL,
+	"link_token" varchar(100),
+	"shared_by" varchar(100) NOT NULL,
+	"expires_at" varchar(100),
+	"created_at" varchar(100) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "schema_meta" (
+	"key" varchar(100) PRIMARY KEY NOT NULL,
+	"value" varchar(200) NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "sessions" (
 	"token" varchar(100) PRIMARY KEY NOT NULL,
 	"user_id" varchar(100) NOT NULL,
@@ -143,6 +192,15 @@ CREATE TABLE "sources" (
 	"collection_ids" jsonb DEFAULT '[]'::jsonb
 );
 --> statement-breakpoint
+CREATE TABLE "sso_flows" (
+	"state" varchar(100) PRIMARY KEY NOT NULL,
+	"tenant_id" varchar(100) NOT NULL,
+	"code_verifier" varchar(200) NOT NULL,
+	"redirect_uri" text NOT NULL,
+	"expires_at" varchar(100) NOT NULL,
+	"created_at" varchar(100) NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "sync_logs" (
 	"id" varchar(100) PRIMARY KEY NOT NULL,
 	"tenant_id" varchar(100) NOT NULL,
@@ -153,6 +211,22 @@ CREATE TABLE "sync_logs" (
 	"duration_ms" integer DEFAULT 0,
 	"message" text,
 	"timestamp" varchar(100) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "team_members" (
+	"id" varchar(100) PRIMARY KEY NOT NULL,
+	"team_id" varchar(100) NOT NULL,
+	"user_id" varchar(100) NOT NULL,
+	"added_by" varchar(100),
+	"created_at" varchar(100) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "teams" (
+	"id" varchar(100) PRIMARY KEY NOT NULL,
+	"tenant_id" varchar(100) NOT NULL,
+	"name" varchar(200) NOT NULL,
+	"description" text,
+	"created_at" varchar(100) NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "tenants" (
@@ -177,6 +251,14 @@ CREATE TABLE "tool_calls" (
 	"timestamp" varchar(100) NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "usage_counters" (
+	"tenant_id" varchar(100) NOT NULL,
+	"period" varchar(7) NOT NULL,
+	"tokens_used" bigint DEFAULT 0 NOT NULL,
+	"updated_at" varchar(100) NOT NULL,
+	CONSTRAINT "usage_counters_tenant_id_period_pk" PRIMARY KEY("tenant_id","period")
+);
+--> statement-breakpoint
 CREATE TABLE "users" (
 	"id" varchar(100) PRIMARY KEY NOT NULL,
 	"email" varchar(255) NOT NULL,
@@ -185,3 +267,40 @@ CREATE TABLE "users" (
 	"created_at" varchar(100) NOT NULL,
 	CONSTRAINT "users_email_unique" UNIQUE("email")
 );
+--> statement-breakpoint
+CREATE TABLE "webhook_endpoints" (
+	"id" varchar(100) PRIMARY KEY NOT NULL,
+	"tenant_id" varchar(100) NOT NULL,
+	"name" varchar(200) NOT NULL,
+	"url" text NOT NULL,
+	"secret" text NOT NULL,
+	"events" jsonb DEFAULT '[]'::jsonb,
+	"enabled" boolean DEFAULT true NOT NULL,
+	"last_delivery_at" varchar(100),
+	"last_delivery_status" varchar(20),
+	"created_at" varchar(100) NOT NULL,
+	"updated_at" varchar(100) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX "api_keys_key_hash_idx" ON "api_keys" USING btree ("key_hash");--> statement-breakpoint
+CREATE INDEX "api_keys_tenant_id_idx" ON "api_keys" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX "chunks_tenant_id_idx" ON "chunks" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX "chunks_document_id_idx" ON "chunks" USING btree ("document_id");--> statement-breakpoint
+CREATE INDEX "chunks_tenant_document_idx" ON "chunks" USING btree ("tenant_id","document_id");--> statement-breakpoint
+CREATE INDEX "chunks_fts_english_gin" ON "chunks" USING gin (to_tsvector('english'::regconfig, content));--> statement-breakpoint
+CREATE INDEX "chunks_fts_arabic_gin" ON "chunks" USING gin (to_tsvector('arabic'::regconfig, content));--> statement-breakpoint
+CREATE INDEX "documents_tenant_id_idx" ON "documents" USING btree ("tenant_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "invitations_token_idx" ON "invitations" USING btree ("token");--> statement-breakpoint
+CREATE INDEX "invitations_tenant_id_idx" ON "invitations" USING btree ("tenant_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "memberships_user_tenant_idx" ON "memberships" USING btree ("user_id","tenant_id");--> statement-breakpoint
+CREATE INDEX "memberships_tenant_id_idx" ON "memberships" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX "messages_tenant_conversation_idx" ON "messages" USING btree ("tenant_id","conversation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "provider_credentials_tenant_provider_idx" ON "provider_credentials" USING btree ("tenant_id","provider_id");--> statement-breakpoint
+CREATE INDEX "rate_limit_windows_window_start_idx" ON "rate_limit_windows" USING btree ("window_start");--> statement-breakpoint
+CREATE UNIQUE INDEX "resource_shares_grant_idx" ON "resource_shares" USING btree ("resource_type","resource_id","grantee_type","grantee_id");--> statement-breakpoint
+CREATE INDEX "resource_shares_tenant_id_idx" ON "resource_shares" USING btree ("tenant_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "resource_shares_link_token_idx" ON "resource_shares" USING btree ("link_token") WHERE link_token IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "team_members_team_user_idx" ON "team_members" USING btree ("team_id","user_id");--> statement-breakpoint
+CREATE INDEX "team_members_user_id_idx" ON "team_members" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "teams_tenant_id_idx" ON "teams" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX "webhook_endpoints_tenant_id_idx" ON "webhook_endpoints" USING btree ("tenant_id");
