@@ -67,7 +67,11 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
       sources = sources.filter((s) => s.status === statusFilter);
     }
 
-    const syncLogs = await db.getSyncLogs(tenantId);
+    // Capped feed (v0.12.11, audit item 7): sync history grows forever — the
+    // unbounded read shipped it all in one response. `?syncLogLimit=` opt-in.
+    const syncLogLimitParam = Number(searchParams.get('syncLogLimit') || '100');
+    const syncLogLimit = Number.isFinite(syncLogLimitParam) ? Math.min(Math.max(syncLogLimitParam, 1), 500) : 100;
+    const syncLogs = await db.getSyncLogs(tenantId, undefined, syncLogLimit);
     const mcpResources = await db.getMcpResources(tenantId);
 
     // Never expose connector secrets in API responses.

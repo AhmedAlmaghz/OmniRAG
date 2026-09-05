@@ -79,8 +79,26 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
       return NextResponse.json({ chunks, total });
     }
 
-    const docs = await db.getDocuments(tenantId);
-    return NextResponse.json({ documents: docs });
+    // Single-document detail (`?id=`): the ONLY endpoint that ships full
+    // content + versions. UI preview/version history fetch this per document.
+    const id = req.nextUrl.searchParams.get('id');
+    if (id) {
+      const doc = await db.getDocumentById(id, tenantId);
+      if (!doc) {
+        return NextResponse.json({ error: 'المستند غير موجود', code: '404_NOT_FOUND' }, { status: 404 });
+      }
+      return NextResponse.json({ document: doc });
+    }
+
+    // List (v0.12.11, audit item 7): summaries with content length + 400-char
+    // preview, paginated — a stolen session can no longer exfiltrate the whole
+    // corpus in one request. Full content requires one fetch per document.
+    const limitParam = Number(req.nextUrl.searchParams.get('limit') || '100');
+    const offsetParam = Number(req.nextUrl.searchParams.get('offset') || '0');
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 500) : 100;
+    const offset = Number.isFinite(offsetParam) ? Math.max(offsetParam, 0) : 0;
+    const { documents, total } = await db.getDocumentSummaries(tenantId, { limit, offset });
+    return NextResponse.json({ documents, total, limit, offset });
   } catch (error: any) {
     log.error('API Error in documents GET:', error);
     return NextResponse.json(

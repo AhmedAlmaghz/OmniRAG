@@ -144,6 +144,19 @@ export interface Document {
   versions?: DocumentVersion[];
 }
 
+/**
+ * List-shaped document (v0.12.11): everything EXCEPT full content and the
+ * versions array. `content` is always '' on summaries while `contentChars` /
+ * `contentPreview` (first 400 chars) stand in for search/sort/estimates.
+ * Full content ships only via the single-document fetch (`?id=`) — the list
+ * endpoint must never become a one-request corpus-exfiltration vector
+ * (audit 2026-08-29 item 7).
+ */
+export type DocumentSummary = Document & {
+  contentChars: number;
+  contentPreview: string;
+};
+
 export interface DocumentChunk {
   id: string;
   tenantId: TenantId;

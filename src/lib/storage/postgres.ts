@@ -8,6 +8,7 @@ import {
   WebhookEventName,
   Document,
   DocumentChunk,
+  DocumentSummary,
   Collection,
   MCPServerConfig,
   AuditLogEntry,
@@ -709,6 +710,67 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
   }
 }
 
+/**
+ * List-shaped document read (v0.12.11, audit item 7): metadata + 400-char
+ * preview + content length — NEVER the full content or versions array. A
+ * stolen session/API key can no longer exfiltrate the whole corpus in one
+ * request; full content requires per-document fetches. Paginated server-side.
+ */
+export async function getPostgresDocumentSummaries(
+  tenantId: string,
+  opts?: { limit?: number; offset?: number },
+): Promise<{ documents: DocumentSummary[]; total: number }> {
+  await ensurePostgresTables();
+  const p = getPostgresPool();
+  if (!p) return { documents: [], total: 0 };
+
+  const client = await p.connect();
+  await setTenantScope(client, tenantId);
+  try {
+    const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500);
+    const offset = Math.max(opts?.offset ?? 0, 0);
+    const listRes = await client.query(
+      `SELECT id, tenant_id, title, source_type, language, status, chunk_count, created_at,
+              length(content) AS content_chars,
+              left(content, 400) AS content_preview,
+              metadata - 'versions' AS metadata,
+              collection_ids
+       FROM documents
+       WHERE tenant_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2::int OFFSET $3::int`,
+      [tenantId, limit, offset],
+    );
+    const totalRes = await client.query(`SELECT count(*)::int AS n FROM documents WHERE tenant_id = $1`, [tenantId]);
+    const documents: DocumentSummary[] = listRes.rows.map((row: any) => {
+      const meta = row.metadata || {};
+      return {
+        id: row.id,
+        tenantId: row.tenant_id,
+        title: row.title,
+        content: '',
+        sourceType: row.source_type,
+        language: row.language,
+        status: row.status,
+        chunkCount: row.chunk_count,
+        createdAt: row.created_at,
+        updatedAt: meta.updatedAt || row.created_at,
+        version: meta.version || 1,
+        metadata: meta,
+        collectionIds: row.collection_ids || [],
+        contentChars: row.content_chars ?? 0,
+        contentPreview: row.content_preview || '',
+      };
+    });
+    return { documents, total: totalRes.rows[0].n };
+  } catch (error) {
+    log.error('Failed to get Postgres document summaries:', error);
+    throw error;
+  } finally {
+    await releaseTenantClient(client);
+  }
+}
+
 export async function getPostgresDocumentById(id: string, tenantId: string): Promise<Document | undefined> {
   await ensurePostgresTables();
   const p = getPostgresPool();
@@ -1135,7 +1197,11 @@ export async function deletePostgresSource(id: string, tenantId: string) {
 }
 
 // Sync Logs
-export async function getPostgresSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
+export async function getPostgresSyncLogs(
+  tenantId: string,
+  sourceId?: string,
+  limit = 100,
+): Promise<SyncLogEntry[]> {
   await ensurePostgresTables();
   const p = getPostgresPool();
   if (!p) return [];
@@ -1144,12 +1210,15 @@ export async function getPostgresSyncLogs(tenantId: string, sourceId?: string): 
   await setTenantScope(client, tenantId);
   try {
     let queryText = 'SELECT * FROM sync_logs WHERE tenant_id = $1';
-    const params = [tenantId];
+    const params: (string | number)[] = [tenantId];
     if (sourceId) {
       queryText += ' AND source_id = $2';
       params.push(sourceId);
     }
-    queryText += ' ORDER BY timestamp DESC';
+    // Cap the feed: sync_logs grows forever and the unbounded read shipped the
+    // whole history in one response (audit 2026-08-29 item 7).
+    queryText += ` ORDER BY timestamp DESC LIMIT $${params.length + 1}::int`;
+    params.push(Math.min(Math.max(limit, 1), 500));
     const res = await client.query(queryText, params);
     return res.rows.map((row: any) => ({
       id: row.id,

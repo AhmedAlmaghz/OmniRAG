@@ -8,6 +8,7 @@ import {
   Document,
   DocumentVersion,
   DocumentChunk,
+  DocumentSummary,
   ChunkIndexResult,
   Collection,
   Conversation,
@@ -28,6 +29,7 @@ import { DEFAULT_AI_MODELS, getAiModel } from '../config/aiModels';
 import {
   ensurePostgresTables,
   getPostgresDocuments,
+  getPostgresDocumentSummaries,
   getPostgresDocumentById,
   insertPostgresDocument,
   deletePostgresDocument,
@@ -227,12 +229,45 @@ export class MemoryDatabase implements IOmniRAGDatabase {
     return { success: false, itemsProcessed: 0, durationMs: 0 };
   }
 
-  async getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
+  async getSyncLogs(tenantId: string, sourceId?: string, limit = 100): Promise<SyncLogEntry[]> {
     let logs = this.syncLogs.filter((l) => l.tenantId === tenantId);
     if (sourceId) {
       logs = logs.filter((l) => l.sourceId === sourceId);
     }
-    return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return logs
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, Math.min(Math.max(limit, 1), 500));
+  }
+
+  /**
+   * Memory twin of the list-shaped read (v0.12.11, audit item 7): no content,
+   * no versions — only length + 400-char preview, paginated.
+   */
+  async getDocumentSummaries(
+    tenantId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{ documents: DocumentSummary[]; total: number }> {
+    // Delegates seeding behavior to getDocuments so dev demo data appears.
+    await this.getDocuments(tenantId);
+    const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500);
+    const offset = Math.max(opts?.offset ?? 0, 0);
+    const all = this.documents
+      .filter((d) => d.tenantId === tenantId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const documents: DocumentSummary[] = all.slice(offset, offset + limit).map((d) => {
+      const meta = { ...d.metadata };
+      delete meta.versions;
+      const summary: DocumentSummary = {
+        ...d,
+        metadata: meta,
+        content: '',
+        contentChars: d.content.length,
+        contentPreview: d.content.slice(0, 400),
+      };
+      delete summary.versions;
+      return summary;
+    });
+    return { documents, total: all.length };
   }
 
   async addSyncLog(log: SyncLogEntry): Promise<void> {
@@ -1253,22 +1288,22 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     }
   }
 
-  // Sync Logs
-  async getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]> {
+  // Sync Logs — capped feed (v0.12.11, audit item 7: unbounded history read).
+  async getSyncLogs(tenantId: string, sourceId?: string, limit = 100): Promise<SyncLogEntry[]> {
     let logsList: SyncLogEntry[] = [];
     if (this.useMemory) {
-      logsList = await memoryDb.getSyncLogs(tenantId, sourceId);
+      logsList = await memoryDb.getSyncLogs(tenantId, sourceId, limit);
     } else {
       try {
         await ensureSeeded();
         if (this.useMemory) {
-          logsList = await memoryDb.getSyncLogs(tenantId, sourceId);
+          logsList = await memoryDb.getSyncLogs(tenantId, sourceId, limit);
         } else {
-          logsList = await getPostgresSyncLogs(tenantId, sourceId);
+          logsList = await getPostgresSyncLogs(tenantId, sourceId, limit);
         }
       } catch (e) {
         this.handleDatabaseError(e, 'getSyncLogs');
-        logsList = await memoryDb.getSyncLogs(tenantId, sourceId);
+        logsList = await memoryDb.getSyncLogs(tenantId, sourceId, limit);
       }
     }
 
@@ -1363,6 +1398,30 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     }
 
     return docsList;
+  }
+
+  /**
+   * List-shaped read (v0.12.11, audit item 7): metadata + content length +
+   * 400-char preview, paginated. Never ships full content or versions —
+   * per-document fetches (getDocumentById) are the only content source.
+   */
+  async getDocumentSummaries(
+    tenantId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{ documents: DocumentSummary[]; total: number }> {
+    if (this.useMemory) {
+      return memoryDb.getDocumentSummaries(tenantId, opts);
+    }
+    try {
+      await ensureSeeded();
+      if (this.useMemory) {
+        return await memoryDb.getDocumentSummaries(tenantId, opts);
+      }
+      return await getPostgresDocumentSummaries(tenantId, opts);
+    } catch (e) {
+      this.handleDatabaseError(e, 'getDocumentSummaries');
+      return memoryDb.getDocumentSummaries(tenantId, opts);
+    }
   }
 
   async getDocumentById(id: string, tenantId: string): Promise<Document | undefined> {

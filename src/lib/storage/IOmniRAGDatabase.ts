@@ -29,6 +29,7 @@ import {
   AuditLogEntry,
   SourceConnector,
   SyncLogEntry,
+  DocumentSummary,
   McpResourceItem,
 } from '../types/omnirag';
 
@@ -45,8 +46,8 @@ export interface IOmniRAGDatabase {
   deleteSource(id: string, tenantId: string, purgeDocs?: boolean): Promise<void>;
   syncSource(id: string, tenantId: string): Promise<{ success: boolean; itemsProcessed: number; durationMs: number }>;
 
-  // Sync logs
-  getSyncLogs(tenantId: string, sourceId?: string): Promise<SyncLogEntry[]>;
+  // Sync logs — capped feed (v0.12.11, audit item 7: unbounded history read).
+  getSyncLogs(tenantId: string, sourceId?: string, limit?: number): Promise<SyncLogEntry[]>;
   addSyncLog(log: SyncLogEntry): Promise<void>;
 
   // MCP
@@ -60,6 +61,15 @@ export interface IOmniRAGDatabase {
 
   // Documents & chunks
   getDocuments(tenantId: string): Promise<Document[]>;
+  /**
+   * List-shaped read (v0.12.11, audit item 7): metadata + content length +
+   * 400-char preview, paginated — never full content or versions. Full
+   * content ships per-document via getDocumentById.
+   */
+  getDocumentSummaries(
+    tenantId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<{ documents: DocumentSummary[]; total: number }>;
   getDocumentById(id: string, tenantId: string): Promise<Document | undefined>;
   addDocument(docObj: Document): Promise<void>;
   updateDocument(id: string, updates: Partial<Document>, tenantId: string): Promise<Document | undefined>;

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDocumentCache } from '@/hooks/useDocumentCache';
 import { OcrCacheEntry } from '@/lib/cache/mistralOcrCache';
-import { SourceConnector, SyncLogEntry, McpResourceItem, Collection, Document } from '@/lib/types/omnirag';
+import { SourceConnector, SyncLogEntry, McpResourceItem, Collection, Document, DocumentSummary } from '@/lib/types/omnirag';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { t } from '@/lib/i18n';
 import { useToast } from './ui/Toast';
@@ -151,7 +151,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [mcpResources, setMcpResources] = useState<McpResourceItem[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [keysStatus, setKeysStatus] = useState<KeysStatus | null>(null);
 
   // Loading and action state
@@ -180,6 +180,22 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   // Modals & Drawers
   const [inspectingDoc, setInspectingDoc] = useState<Document | null>(null);
   const [previewingDoc, setPreviewingDoc] = useState<Document | null>(null);
+  /**
+   * v0.12.11: list rows are summaries (no content) — opening a preview fetches
+   * the full document (`?id=`) and swaps it in; the summary renders instantly.
+   */
+  const openPreview = async (doc: Document) => {
+    setPreviewingDoc(doc);
+    try {
+      const res = await fetchWithAuth(`/api/v1/documents?id=${doc.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.document) setPreviewingDoc(data.document);
+      }
+    } catch {
+      // keep the summary open — the modal shows its "no content" note
+    }
+  };
   const [versionHistoryDoc, setVersionHistoryDoc] = useState<Document | null>(null);
   const [isCreateColModalOpen, setIsCreateColModalOpen] = useState(false);
   const [isHealthModalOpen, setIsHealthModalOpen] = useState(false);
@@ -244,7 +260,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         syncLogs: (sourcesData.syncLogs || []) as SyncLogEntry[],
         mcpResources: (sourcesData.mcpResources || []) as McpResourceItem[],
         collections: (colsData.collections || []) as Collection[],
-        documents: (docsData.documents || []) as Document[],
+        documents: (docsData.documents || []) as DocumentSummary[],
         keysStatus: keysData as KeysStatus | null,
       };
     },
@@ -580,11 +596,12 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   const filteredDocuments = useMemo(() => {
     return documents
       .filter((doc) => {
-        // Search
+        // Search — over title + the 400-char content preview (v0.12.11: the
+        // list no longer ships full content; deep search lives in chat/RAG).
         const matchSearch =
           !searchQuery.trim() ||
           doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (doc.content && doc.content.toLowerCase().includes(searchQuery.toLowerCase()));
+          (doc.contentPreview && doc.contentPreview.toLowerCase().includes(searchQuery.toLowerCase()));
 
         // Collection
         const matchCollection =
@@ -619,7 +636,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         if (sortBy === 'date') return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         if (sortBy === 'name') return a.title.localeCompare(b.title);
         if (sortBy === 'chunks') return (b.chunkCount || 0) - (a.chunkCount || 0);
-        if (sortBy === 'size') return (b.content?.length || 0) - (a.content?.length || 0);
+        if (sortBy === 'size') return (b.contentChars ?? 0) - (a.contentChars ?? 0);
         return 0;
       });
   }, [documents, searchQuery, filterCollection, filterType, filterHealth, sortBy]);
@@ -1173,7 +1190,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                       document={doc}
                       collectionName={getCollectionName(doc.collectionIds?.[0] || doc.metadata?.collectionId)}
                       lang={lang}
-                      onPreview={() => setPreviewingDoc(doc)}
+                      onPreview={() => openPreview(doc)}
                       onInspectChunks={() => setInspectingDoc(doc)}
                       onViewHistory={() => setVersionHistoryDoc(doc)}
                       onReindex={() => handleReindexDocument(doc)}
@@ -1375,7 +1392,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                     document={doc}
                     collectionName={getCollectionName(doc.collectionIds?.[0] || doc.metadata?.collectionId)}
                     lang={lang}
-                    onPreview={() => setPreviewingDoc(doc)}
+                    onPreview={() => openPreview(doc)}
                     onInspectChunks={() => setInspectingDoc(doc)}
                     onViewHistory={() => setVersionHistoryDoc(doc)}
                     onReindex={() => handleReindexDocument(doc)}
@@ -1390,7 +1407,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                 <div className="divide-y divide-slate-150">
                   {filteredDocuments.map((doc) => {
                     const collectionName = getCollectionName(doc.collectionIds?.[0] || doc.metadata?.collectionId);
-                    const estimatedTokens = Math.round((doc.content?.length || 0) / 4);
+                    const estimatedTokens = Math.round((doc.contentChars ?? 0) / 4);
                     return (
                       <div
                         key={doc.id}
@@ -1440,7 +1457,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                             <span>{t(lang, 'kb.chunks2')}</span>
                           </button>
                           <button
-                            onClick={() => setPreviewingDoc(doc)}
+                            onClick={() => openPreview(doc)}
                             className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition flex items-center gap-1 border border-slate-200"
                           >
                             <Eye className="w-3.5 h-3.5" />
@@ -2123,7 +2140,21 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
           lang={lang}
           onClose={() => setVersionHistoryDoc(null)}
           onReverted={(updatedDoc) => {
-            setDocuments((prev) => prev.map((d) => (d.id === updatedDoc.id ? updatedDoc : d)));
+            // Keep the summary shape (no full content) — fetchKnowledgeData()
+            // below refreshes from the summaries endpoint anyway.
+            setDocuments((prev) =>
+              prev.map((d) =>
+                d.id === updatedDoc.id
+                  ? {
+                      ...d,
+                      ...updatedDoc,
+                      content: '',
+                      contentChars: updatedDoc.content?.length || d.contentChars,
+                      contentPreview: updatedDoc.content?.slice(0, 400) || d.contentPreview,
+                    }
+                  : d,
+              ),
+            );
             setVersionHistoryDoc(updatedDoc);
             fetchKnowledgeData();
           }}
