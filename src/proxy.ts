@@ -2,10 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getAllowedOrigins, buildCsp, baseSecurityHeaders } from '@/lib/security/securityHeaders';
 
 /**
- * Edge middleware: CORS handling for /api/* and security headers for every
- * response. Security headers are applied unconditionally — they must not
- * depend on the request carrying a vetted Origin (the previous behavior left
- * non-CORS browser requests with zero hardening).
+ * Edge proxy (Next.js 16 — previously the "middleware" convention): CORS
+ * handling for /api/* and security headers for every response. Security
+ * headers are applied unconditionally — they must not depend on the request
+ * carrying a vetted Origin (the previous behavior left non-CORS browser
+ * requests with zero hardening).
  */
 
 // Edge runtime: node:crypto is unavailable; the global Web Crypto API is.
@@ -22,7 +23,7 @@ function applyCors(response: NextResponse, allowed: string[], origin: string) {
   }
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const isApi = request.nextUrl.pathname.startsWith('/api/');
   const isProd = process.env.NODE_ENV === 'production';
 
