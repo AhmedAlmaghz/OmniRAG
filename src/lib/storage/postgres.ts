@@ -29,8 +29,10 @@ import {
 } from './constants';
 import { migrateAndSeedWithDrizzle, TENANT_RLS_DDL, applyAppRoleLoginPassword } from '../db/migrateAndSeedDrizzle';
 import { resetDrizzle } from '../../db';
-import pg from 'pg';
+import pg, { type Pool as PgPool, type PoolClient as PgPoolClient } from 'pg';
 const { Pool } = pg;
+/** Whatever getEnv accepts as its optional per-request context (NextRequest or undefined). */
+type RequestLike = Parameters<typeof getEnv>[1];
 
 import { createLogger } from '@/lib/logging/logger';
 
@@ -39,8 +41,8 @@ const log = createLogger('PostgresStorage');
 import { getEnv } from '../env/runtimeEnv';
 import { DEFAULT_AI_MODELS } from '../config/aiModels';
 
-let pool: any = null; // runtime pool (least-privilege app role when DATABASE_APP_URL is set)
-let ownerPool: any = null; // migration/DDL pool — always the owner connection
+let pool: PgPool | null = null; // runtime pool (least-privilege app role when DATABASE_APP_URL is set)
+let ownerPool: PgPool | null = null; // migration/DDL pool — always the owner connection
 let initialized = false;
 
 export function resetPostgresPool() {
@@ -60,7 +62,7 @@ export function resetPostgresPool() {
   } catch (e) {}
 }
 
-function buildPool(connectionString: string): any {
+function buildPool(connectionString: string): PgPool {
   const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
   const sslMode = new URL(connectionString).searchParams.get('sslmode');
   const strictTls = process.env.PG_TLS_REJECT_UNAUTHORIZED !== 'false';
@@ -83,7 +85,7 @@ function buildPool(connectionString: string): any {
  * connection and the policies stay dormant (owner bypass) — the documented
  * staged-activation posture. See docs/06-security/overview.md → قسم RLS.
  */
-export function getPostgresPool(req?: any): any {
+export function getPostgresPool(req?: RequestLike): PgPool | null {
   if (typeof window !== 'undefined') return null; // Safe guard for client-side compilation
   const appUrl = getEnv('DATABASE_APP_URL', req);
   if (!appUrl) return getOwnerPool(req);
@@ -103,7 +105,7 @@ export function getPostgresPool(req?: any): any {
  * Row Level Security, so routing runtime traffic here would silently disable
  * the second line of defense.
  */
-export function getOwnerPool(req?: any): any {
+export function getOwnerPool(req?: RequestLike): PgPool | null {
   if (typeof window !== 'undefined') return null;
   if (ownerPool) return ownerPool;
 
@@ -131,12 +133,12 @@ export function getOwnerPool(req?: any): any {
  * connections are RESET so a pooled connection never carries a tenant across
  * requests.
  */
-export async function setTenantScope(client: any, tenantId: string): Promise<void> {
+export async function setTenantScope(client: PgPoolClient, tenantId: string): Promise<void> {
   await client.query(`SELECT set_config('app.current_tenant', $1, 'false')`, [tenantId]);
 }
 
 /** Clear the tenant scope, then return the connection to the pool. */
-export async function releaseTenantClient(client: any): Promise<void> {
+export async function releaseTenantClient(client: PgPoolClient): Promise<void> {
   try {
     await client.query('RESET app.current_tenant');
   } catch {
@@ -151,7 +153,7 @@ export async function releaseTenantClient(client: any): Promise<void> {
  * of going through this file's functions (membershipService, planService):
  * checkout + scope + statement + cleanup as a single unit.
  */
-export async function queryAsTenant(tenantId: string, text: string, params?: unknown[]): Promise<any> {
+export async function queryAsTenant(tenantId: string, text: string, params?: unknown[]): Promise<pg.QueryResult<Record<string, unknown>>> {
   const p = getPostgresPool();
   if (!p) throw new Error('PostgreSQL is not configured');
   const client = await p.connect();
@@ -2159,7 +2161,52 @@ export async function deleteExpiredPostgresSessions(): Promise<void> {
 
 // --- API keys (headless/external access) -----------------------------------
 
-function mapApiKeyRow(row: any): ApiKeyRecord {
+// ── Raw SQL row shapes (v0.12.14, no-explicit-any cleanup) ─────────────────
+// snake_case exactly as Postgres returns it; JSONB columns arrive as
+// parsed JS values whose runtime shape the mappers already guard.
+
+interface ApiKeyRow {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  name: string;
+  prefix: string;
+  key_hash: string;
+  scopes: unknown;
+  rate_limit_per_minute: number | string | null;
+  mcp_tools: unknown;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+interface WebhookEndpointRow {
+  id: string;
+  tenant_id: string;
+  name: string;
+  url: string;
+  secret: string;
+  events: unknown;
+  enabled: boolean | null;
+  last_delivery_at: string | null;
+  last_delivery_status: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ProviderCredentialRow {
+  id: string;
+  tenant_id: string;
+  provider_id: string;
+  credentials: Record<string, string> | null;
+  base_url: string | null;
+  enabled: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapApiKeyRow(row: ApiKeyRow): ApiKeyRecord {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -2292,7 +2339,7 @@ export async function touchPostgresApiKeyLastUsed(id: string, timestamp: string)
 
 // --- Webhook endpoints (Phase 6 — outbound event notifications) -------------
 
-function mapWebhookEndpointRow(row: any): WebhookEndpoint {
+function mapWebhookEndpointRow(row: WebhookEndpointRow): WebhookEndpoint {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -2443,7 +2490,7 @@ export async function deletePostgresWebhookEndpoint(id: string, tenantId: string
 
 // --- Provider credentials (per-tenant AI provider keys, encrypted) ----------
 
-function mapProviderCredentialRow(row: any): ProviderCredentialRecord {
+function mapProviderCredentialRow(row: ProviderCredentialRow): ProviderCredentialRecord {
   return {
     id: row.id,
     tenantId: row.tenant_id,
