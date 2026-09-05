@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback, useRef, memo } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import type { PluggableList } from 'unified';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -58,7 +58,7 @@ function extractText(node: React.ReactNode): string {
   if (node == null || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(extractText).join('');
-  if (React.isValidElement(node)) return extractText((node.props as any)?.children);
+  if (React.isValidElement(node)) return extractText((node.props as { children?: React.ReactNode })?.children);
   return '';
 }
 
@@ -107,7 +107,7 @@ const ALERT_META: Record<
 
 /** Remove a leading `[!TYPE]` marker from the first string child of an element. */
 function stripAlertMarker(el: React.ReactElement): React.ReactElement {
-  const kids = React.Children.toArray((el.props as any).children);
+  const kids = React.Children.toArray((el.props as { children?: React.ReactNode }).children);
   let done = false;
   const next = kids.map((k) => {
     if (!done && typeof k === 'string') {
@@ -142,8 +142,8 @@ const MermaidBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lan
         const id = `mermaid-${Math.random().toString(36).slice(2)}`;
         const { svg } = await mermaid.render(id, code);
         if (!cancelled) setSvg(sanitizeSvg(svg));
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'mermaid render failed');
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'mermaid render failed');
       }
     })();
     return () => {
@@ -195,8 +195,8 @@ const ChartBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lang 
       const raw = JSON.parse(code);
       const spec = normalizeChartSpec(raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {});
       return { option: toEChartsOption(spec), error: null, title: spec.title };
-    } catch (e: any) {
-      return { option: null, error: e?.message || 'chart spec parse failed', title: '' };
+    } catch (e) {
+      return { option: null, error: e instanceof Error ? e.message : String(e) || 'chart spec parse failed', title: '' };
     }
   }, [code]);
 
@@ -214,8 +214,8 @@ const ChartBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lang 
         chart.setOption(parsed.option);
         observer = new ResizeObserver(() => chart?.resize());
         observer.observe(el);
-      } catch (e: any) {
-        if (!disposed) setRuntimeError(e?.message || 'echarts init failed');
+      } catch (e) {
+        if (!disposed) setRuntimeError(e instanceof Error ? e.message : 'echarts init failed');
       }
     })();
     return () => {
@@ -266,17 +266,17 @@ const SortableTable: React.FC<{ children: React.ReactNode; lang: 'ar' | 'en' }> 
 
     let headerCells: React.ReactNode[] = [];
     if (thead) {
-      const tr = React.Children.toArray((thead.props as any).children).filter(React.isValidElement)[0] as
+      const tr = React.Children.toArray((thead.props as { children?: React.ReactNode }).children).filter(React.isValidElement)[0] as
         React.ReactElement | undefined;
       if (tr) {
-        headerCells = React.Children.toArray((tr.props as any).children)
+        headerCells = React.Children.toArray((tr.props as { children?: React.ReactNode }).children)
           .filter(React.isValidElement)
-          .map((th) => (th as React.ReactElement<any>).props.children);
+          .map((th) => (th as React.ReactElement<{ children?: React.ReactNode }>).props.children);
       }
     }
 
     const rows: React.ReactElement[] = tbody
-      ? (React.Children.toArray((tbody.props as any).children).filter(React.isValidElement) as React.ReactElement[])
+      ? (React.Children.toArray((tbody.props as { children?: React.ReactNode }).children).filter(React.isValidElement) as React.ReactElement[])
       : [];
 
     return { headerCells, rows };
@@ -286,12 +286,12 @@ const SortableTable: React.FC<{ children: React.ReactNode; lang: 'ar' | 'en' }> 
     if (!sort) return parsed.rows;
     const { col, dir } = sort;
     return [...parsed.rows].sort((a, b) => {
-      const aCells = React.Children.toArray((a.props as any).children).filter(
+      const aCells = React.Children.toArray((a.props as { children?: React.ReactNode }).children).filter(
         React.isValidElement,
-      ) as React.ReactElement<any>[];
-      const bCells = React.Children.toArray((b.props as any).children).filter(
+      ) as React.ReactElement<{ children?: React.ReactNode }>[];
+      const bCells = React.Children.toArray((b.props as { children?: React.ReactNode }).children).filter(
         React.isValidElement,
-      ) as React.ReactElement<any>[];
+      ) as React.ReactElement<{ children?: React.ReactNode }>[];
       const aText = extractText(aCells[col]?.props?.children ?? '');
       const bText = extractText(bCells[col]?.props?.children ?? '');
       const aNum = parseFloat(aText.replace(/[^\d.-]/g, ''));
@@ -334,11 +334,11 @@ const SortableTable: React.FC<{ children: React.ReactNode; lang: 'ar' | 'en' }> 
         <tbody className="divide-y divide-slate-100">
           {sortedRows.map((row, ri) => (
             <tr key={ri} className="hover:bg-indigo-50/40 transition-colors">
-              {React.Children.toArray((row.props as any).children)
+              {React.Children.toArray((row.props as { children?: React.ReactNode }).children)
                 .filter(React.isValidElement)
                 .map((td, ci) => (
                   <td key={ci} className="p-2.5 text-slate-700 text-right align-top">
-                    {(td as React.ReactElement<any>).props.children}
+                    {(td as React.ReactElement<{ children?: React.ReactNode }>).props.children}
                   </td>
                 ))}
             </tr>
@@ -493,15 +493,15 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   // content pre-processing is needed anymore.
 
   // Build the react-markdown `components` map once per relevant change.
-  const components = useMemo(
+  const components = useMemo<Components>(
     () => ({
       // Unwrap <pre> so CodeBlock owns its own container (avoids double scroll).
-      pre({ children }: any) {
+      pre({ children }) {
         return <>{children}</>;
       },
 
       // Code blocks + inline code
-      code({ className, children, ...props }: any) {
+      code({ className, children, ...props }) {
         const match = /language-(\w+)/.exec(className || '');
         const codeString = String(children).replace(/\n$/, '');
 
@@ -527,16 +527,16 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
       },
 
       // Sortable, responsive tables
-      table({ children }: any) {
+      table({ children }) {
         return <SortableTable lang={lang}>{children}</SortableTable>;
       },
 
       // GFM alerts + styled blockquotes
-      blockquote({ children }: any) {
+      blockquote({ children }) {
         const kids = React.Children.toArray(children).filter(React.isValidElement) as React.ReactElement[];
-        const firstP = kids.find((k) => (k as any).type === 'p');
+        const firstP = kids.find((k) => k.type === 'p');
         if (firstP) {
-          const alertType = matchAlertType(extractText((firstP.props as any).children));
+          const alertType = matchAlertType(extractText((firstP.props as { children?: React.ReactNode }).children));
           if (alertType) {
             const stripped = stripAlertMarker(firstP);
             const rest = kids.filter((k) => k !== firstP);
@@ -560,7 +560,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
       },
 
       // Links with media embed handling + security
-      a({ href, children }: any) {
+      a({ href, children }) {
         if (!href) return <span>{children}</span>;
 
         if (isImageUrl(href)) {
@@ -655,14 +655,14 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
           </ul>
         );
       },
-      ol({ children }: any) {
+      ol({ children }) {
         return (
           <ol className="my-2 list-decimal list-inside space-y-1 text-slate-800 pr-2 marker:text-indigo-600 marker:font-bold">
             {children}
           </ol>
         );
       },
-      li({ children }: any) {
+      li({ children }) {
         return <li className="leading-relaxed">{processChildren(children)}</li>;
       },
 
@@ -728,12 +728,12 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
       sub({ children }: any) {
         return <sub className="text-[0.75em]">{children}</sub>;
       },
-      sup({ children }: any) {
+      sup({ children }) {
         return <sup className="text-[0.75em]">{children}</sup>;
       },
 
       // Paragraphs with inline citation detection + bare image auto-embed
-      p({ children, node }: any) {
+      p({ children, node }) {
         if (
           node?.children?.length === 1 &&
           node.children[0]?.type === 'text' &&

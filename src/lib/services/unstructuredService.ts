@@ -21,6 +21,9 @@ import { ensureLongHttpTimeouts } from '../http/longHttpTimeouts';
 import { runExtractionChain } from './extraction/registry';
 import type { ExtractionContext } from './extraction/types';
 
+/** Uniform unknown-error message extraction for the many catch blocks here. */
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
 export interface FileTypeClassification {
   isText: boolean;
   isAudio: boolean;
@@ -187,7 +190,7 @@ export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> 
     }
 
     return '';
-  } catch (err: any) {
+  } catch (err) {
     log.warn('[Mammoth Parser] Primary extraction failed, trying extractRawText fallback:', err);
     try {
       const mammothParser = mammoth as any;
@@ -198,9 +201,9 @@ export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> 
         return rawText.trim();
       }
       throw new Error('Mammoth returned empty content');
-    } catch (rawErr: any) {
+    } catch (rawErr) {
       log.error('[Mammoth Parser] Both convertToMarkdown and extractRawText failed:', rawErr);
-      throw new Error(`Mammoth parsing error: ${err.message || err}`);
+      throw new Error(`Mammoth parsing error: ${errorMessage(err)}`);
     }
   }
 }
@@ -237,7 +240,7 @@ export interface DispatchResult {
   text: string;
   engineUsed: string;
   success: boolean;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -302,13 +305,13 @@ export async function mistralOcr(
     }
 
     throw new Error('Mistral OCR API returned empty text.');
-  } catch (error: any) {
+  } catch (error) {
     log.error('[Unstructured Service] Mistral OCR error:', error);
     return {
       text: '',
       engineUsed: 'Mistral Document AI (OCR)',
       success: false,
-      metadata: { error: error.message },
+      metadata: { error: errorMessage(error) },
     };
   }
 }
@@ -467,13 +470,13 @@ export async function partitionViaJobsApi(
       success: true,
       metadata: { elementsCount: totalElements, jobId },
     };
-  } catch (error: any) {
-    log.error('[Unstructured Service] Jobs API partition error:', error.message);
+  } catch (error) {
+    log.error('[Unstructured Service] Jobs API partition error:', errorMessage(error));
     return {
       text: '',
       engineUsed: 'Unstructured Transform API (Jobs ⚡)',
       success: false,
-      metadata: { error: error.message },
+      metadata: { error: errorMessage(error) },
     };
   }
 }
@@ -525,13 +528,13 @@ async function partitionViaLegacyEndpoint(
     }
 
     throw new Error('Unstructured API returned invalid elements format.');
-  } catch (error: any) {
+  } catch (error) {
     log.error('[Unstructured Service] Partition error:', error);
     return {
       text: '',
       engineUsed: 'Unstructured.io Partition Engine',
       success: false,
-      metadata: { error: error.message },
+      metadata: { error: errorMessage(error) },
     };
   }
 }
@@ -591,13 +594,13 @@ export async function transcribeWithGroqWhisper(
     }
 
     throw new Error('Groq Whisper API returned empty transcription text.');
-  } catch (error: any) {
+  } catch (error) {
     log.error('[Unstructured Service] Groq Whisper transcription error:', error);
     return {
       text: '',
       engineUsed,
       success: false,
-      metadata: { error: error.message },
+      metadata: { error: errorMessage(error) },
     };
   }
 }
@@ -635,13 +638,13 @@ export async function transcribeWithMistralVoxtral(
     }
 
     throw new Error('Mistral Voxtral returned empty transcription text.');
-  } catch (error: any) {
+  } catch (error) {
     log.error('[Unstructured Service] Mistral Voxtral transcription error:', error);
     return {
       text: '',
       engineUsed,
       success: false,
-      metadata: { error: error.message },
+      metadata: { error: errorMessage(error) },
     };
   }
 }
@@ -717,8 +720,8 @@ async function runTranscriptionWithModelChain(
         return { text: text.trim(), engineUsed, success: true };
       }
       lastError = `${modelId}: returned an empty transcription`;
-    } catch (err: any) {
-      lastError = `${modelId}: ${err?.message || err}`;
+    } catch (err) {
+      lastError = `${modelId}: ${errorMessage(err)}`;
       log.warn(`[Gemini Transcriber] Model ${modelId} failed — trying next fallback:`, lastError);
     }
   }
@@ -805,13 +808,13 @@ export async function transcribeWithGemini(
       engineUsed,
       options,
     );
-  } catch (err: any) {
+  } catch (err) {
     log.error('[Gemini Transcriber] Files API path failed:', err);
     return {
       text: '',
       engineUsed,
       success: false,
-      metadata: { error: err?.message },
+      metadata: { error: errorMessage(err) },
     };
   }
 }
