@@ -87,6 +87,7 @@
 
 - [المهام الخلفية (pg-boss + Cron)](09-operations/background-jobs.md)
 - [التسجيل المنظّم والمراقبة](09-operations/logging.md)
+- [دليل تدوير مفاتيح التشفير](09-operations/key-rotation.md)
 - [الاختبارات](09-operations/testing.md)
 - [السكربتات والأدوات](09-operations/scripts-tools.md)
 - [استكشاف الأخطاء](09-operations/troubleshooting.md)
