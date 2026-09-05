@@ -9,6 +9,9 @@ import {
   INITIAL_AUDIT_LOGS,
 } from '../storage/constants';
 import { getPostgresPool } from '../storage/postgres';
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('DrizzleMigrate');
 
 /**
  * DDL statements per multi-statement round-trip. 46 statements at 12 per
@@ -27,7 +30,7 @@ const SCHEMA_REVISION = '2026-08-29-perf-indexes';
 export async function migrateAndSeedWithDrizzle() {
   const pool = getPostgresPool();
   if (!pool) {
-    console.warn('[Drizzle] Postgres is not configured. Skipping Drizzle migrations and seeding.');
+    log.warn('[Drizzle] Postgres is not configured. Skipping Drizzle migrations and seeding.');
     return;
   }
 
@@ -44,7 +47,7 @@ export async function migrateAndSeedWithDrizzle() {
     // creates schema_meta below.
   }
 
-  console.log('[Drizzle] Initializing database migration with Drizzle ORM...');
+  log.info('[Drizzle] Initializing database migration with Drizzle ORM...');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -475,10 +478,10 @@ export async function migrateAndSeedWithDrizzle() {
       [SCHEMA_REVISION],
     );
     await client.query('COMMIT');
-    console.log('[Drizzle] Schema tables validated and migrated successfully.');
+    log.info('[Drizzle] Schema tables validated and migrated successfully.');
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('[Drizzle] Schema migrations failed:', error);
+    log.error('[Drizzle] Schema migrations failed:', error);
     throw error;
   } finally {
     client.release();
@@ -494,7 +497,7 @@ export async function migrateAndSeedWithDrizzle() {
     // pooler round-trip (~2.5 s of the cold-start budget).
     const seedOps: PromiseLike<unknown>[] = [];
 
-    console.log('[Drizzle] Seeding initial collections...');
+    log.info('[Drizzle] Seeding initial collections...');
     if (INITIAL_COLLECTIONS.length > 0) {
       seedOps.push(
         db
@@ -513,7 +516,7 @@ export async function migrateAndSeedWithDrizzle() {
       );
     }
 
-    console.log('[Drizzle] Seeding initial documents...');
+    log.info('[Drizzle] Seeding initial documents...');
     if (INITIAL_DOCUMENTS.length > 0) {
       seedOps.push(
         db
@@ -537,7 +540,7 @@ export async function migrateAndSeedWithDrizzle() {
       );
     }
 
-    console.log('[Drizzle] Seeding initial chunks...');
+    log.info('[Drizzle] Seeding initial chunks...');
     if (INITIAL_CHUNKS.length > 0) {
       seedOps.push(
         db
@@ -559,7 +562,7 @@ export async function migrateAndSeedWithDrizzle() {
       );
     }
 
-    console.log('[Drizzle] Seeding initial MCP servers...');
+    log.info('[Drizzle] Seeding initial MCP servers...');
     if (INITIAL_MCP_SERVERS.length > 0) {
       seedOps.push(
         db
@@ -592,7 +595,7 @@ export async function migrateAndSeedWithDrizzle() {
       );
     }
 
-    console.log('[Drizzle] Seeding initial sources...');
+    log.info('[Drizzle] Seeding initial sources...');
     if (INITIAL_SOURCES.length > 0) {
       seedOps.push(
         db
@@ -617,7 +620,7 @@ export async function migrateAndSeedWithDrizzle() {
       );
     }
 
-    console.log('[Drizzle] Seeding initial audit logs...');
+    log.info('[Drizzle] Seeding initial audit logs...');
     if (INITIAL_AUDIT_LOGS.length > 0) {
       seedOps.push(
         db
@@ -640,9 +643,9 @@ export async function migrateAndSeedWithDrizzle() {
     }
 
     await Promise.all(seedOps);
-    console.log('[Drizzle] Database seeding and schema migrations complete.');
+    log.info('[Drizzle] Database seeding and schema migrations complete.');
   } catch (seedErr) {
-    console.error('[Drizzle] Seeding failed:', seedErr);
+    log.error('[Drizzle] Seeding failed:', seedErr);
     throw seedErr;
   }
 }

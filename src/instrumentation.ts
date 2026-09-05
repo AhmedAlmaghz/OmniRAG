@@ -9,6 +9,10 @@
  * the /api/v1/jobs/tick route (driven by Vercel Cron) provides the worker via
  * polling instead. See SDLC ADR-013.
  */
+import { createLogger } from './lib/logging/logger';
+
+const log = createLogger('Instrumentation');
+
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   // Serverless hosts get their worker from the tick route, not a boot loop.
@@ -23,7 +27,7 @@ export async function register() {
     const started = await startConnectorSyncWorker();
     if (!started) return;
     const scheduled = await reconcileConnectorSchedules();
-    console.log(`[instrumentation] Background connector-sync worker active (${scheduled} scheduled sources).`);
+    log.info(`[instrumentation] Background connector-sync worker active (${scheduled} scheduled sources).`);
 
     // Re-reconcile periodically so newly created/updated/deleted sources are
     // reflected in the cron schedules without a restart.
@@ -35,6 +39,6 @@ export async function register() {
     );
     interval.unref?.();
   } catch (err) {
-    console.error('[instrumentation] Failed to start background job worker:', err);
+    log.error('[instrumentation] Failed to start background job worker:', err);
   }
 }

@@ -31,6 +31,10 @@ import { resetDrizzle } from '../../db';
 import pg from 'pg';
 const { Pool } = pg;
 
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('PostgresStorage');
+
 import { getEnv } from '../env/runtimeEnv';
 import { DEFAULT_AI_MODELS } from '../config/aiModels';
 
@@ -56,7 +60,7 @@ export function getPostgresPool(req?: any): any {
 
   const connectionString = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
   if (!connectionString) {
-    console.warn(
+    log.warn(
       'PostgreSQL Connection string (DATABASE_URL or POSTGRES_URL) is missing. Postgres storage will be bypassed.',
     );
     return null;
@@ -78,7 +82,7 @@ export function getPostgresPool(req?: any): any {
     });
     return pool;
   } catch (error) {
-    console.error('Failed to initialize PostgreSQL connection pool:', error);
+    log.error('Failed to initialize PostgreSQL connection pool:', error);
     return null;
   }
 }
@@ -91,10 +95,10 @@ export async function ensurePostgresTables() {
   try {
     await migrateAndSeedWithDrizzle();
     initialized = true;
-    console.log('PostgreSQL Drizzle tables verified, created, and seeded successfully.');
+    log.info('PostgreSQL Drizzle tables verified, created, and seeded successfully.');
     return;
   } catch (drizzleErr) {
-    console.warn('Drizzle migration failed, falling back to legacy SQL setup:', drizzleErr);
+    log.warn('Drizzle migration failed, falling back to legacy SQL setup:', drizzleErr);
   }
 
   try {
@@ -216,7 +220,7 @@ export async function ensurePostgresTables() {
         await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
         await client.query(`ALTER TABLE collections ADD COLUMN IF NOT EXISTS document_count INT DEFAULT 0;`);
       } catch (migrateErr) {
-        console.warn('Postgres ALTER COLUMN migration skipped or failed:', migrateErr);
+        log.warn('Postgres ALTER COLUMN migration skipped or failed:', migrateErr);
       }
 
       // 7. Audit Logs Table
@@ -302,7 +306,7 @@ export async function ensurePostgresTables() {
       try {
         await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100) NOT NULL DEFAULT '';`);
       } catch (e) {
-        console.warn('Postgres ALTER users.tenant_id migration skipped or failed:', e);
+        log.warn('Postgres ALTER users.tenant_id migration skipped or failed:', e);
       }
 
       await client.query(`
@@ -342,7 +346,7 @@ export async function ensurePostgresTables() {
         // full tenant scan because only tenant_id was indexed.
         await client.query(`CREATE INDEX IF NOT EXISTS chunks_document_id_idx ON chunks (document_id);`);
       } catch (e) {
-        console.warn('FTS index creation skipped or not supported:', e);
+        log.warn('FTS index creation skipped or not supported:', e);
       }
 
       // Btree index on tenant_id for both chunks and documents. Every tenant-
@@ -353,7 +357,7 @@ export async function ensurePostgresTables() {
         await client.query(`CREATE INDEX IF NOT EXISTS chunks_tenant_id_idx ON chunks (tenant_id);`);
         await client.query(`CREATE INDEX IF NOT EXISTS documents_tenant_id_idx ON documents (tenant_id);`);
       } catch (e) {
-        console.warn('tenant_id index creation skipped:', e);
+        log.warn('tenant_id index creation skipped:', e);
       }
 
       // Row Level Security is intentionally disabled. Tenant isolation is
@@ -371,19 +375,19 @@ export async function ensurePostgresTables() {
         await client.query(`DROP POLICY IF EXISTS tenant_isolation_documents ON documents;`);
         await client.query(`DROP POLICY IF EXISTS tenant_isolation_chunks ON chunks;`);
       } catch (rlsError) {
-        console.warn('RLS cleanup skipped:', rlsError);
+        log.warn('RLS cleanup skipped:', rlsError);
       }
 
       // Seed Initial Data into Postgres
       await seedPostgresData(client);
 
       initialized = true;
-      console.log('PostgreSQL OmniRAG tables verified, created, and seeded successfully.');
+      log.info('PostgreSQL OmniRAG tables verified, created, and seeded successfully.');
     } finally {
       client.release();
     }
   } catch (err) {
-    console.error('Error ensuring PostgreSQL tables exist:', err);
+    log.error('Error ensuring PostgreSQL tables exist:', err);
   }
 }
 
@@ -392,7 +396,7 @@ async function seedPostgresData(client: any) {
     // 1. Seed Collections
     const colCountRes = await client.query('SELECT COUNT(*) FROM collections');
     if (parseInt(colCountRes.rows[0].count) === 0) {
-      console.log('Seeding initial collections into Postgres...');
+      log.info('Seeding initial collections into Postgres...');
       for (const col of INITIAL_COLLECTIONS) {
         await client.query(
           `INSERT INTO collections (id, tenant_id, name, description, document_count, created_at)
@@ -405,7 +409,7 @@ async function seedPostgresData(client: any) {
     // 2. Seed Documents
     const docCountRes = await client.query('SELECT COUNT(*) FROM documents');
     if (parseInt(docCountRes.rows[0].count) === 0) {
-      console.log('Seeding initial documents into Postgres...');
+      log.info('Seeding initial documents into Postgres...');
       for (const docObj of INITIAL_DOCUMENTS) {
         await client.query(
           `INSERT INTO documents (id, tenant_id, title, content, source_type, language, status, chunk_count, created_at, metadata, collection_ids)
@@ -430,7 +434,7 @@ async function seedPostgresData(client: any) {
     // 3. Seed Chunks
     const chunkCountRes = await client.query('SELECT COUNT(*) FROM chunks');
     if (parseInt(chunkCountRes.rows[0].count) === 0) {
-      console.log('Seeding initial chunks into Postgres...');
+      log.info('Seeding initial chunks into Postgres...');
       for (const chunk of INITIAL_CHUNKS) {
         await client.query(
           `INSERT INTO chunks (id, tenant_id, document_id, document_title, content, chunk_index, page_number, language, metadata)
@@ -453,7 +457,7 @@ async function seedPostgresData(client: any) {
     // 4. Seed MCP Servers
     const mcpCountRes = await client.query('SELECT COUNT(*) FROM mcp_servers');
     if (parseInt(mcpCountRes.rows[0].count) === 0) {
-      console.log('Seeding initial MCP servers into Postgres...');
+      log.info('Seeding initial MCP servers into Postgres...');
       for (const s of INITIAL_MCP_SERVERS) {
         await client.query(
           `INSERT INTO mcp_servers (id, tenant_id, name, description, endpoint_url, protocol_version, sandbox_tier, enabled_tools, require_confirmation_tools, status, latency_ms, last_checked, headers, category, url, auth_type, transport_type, config, custom_tool_schemas)
@@ -486,7 +490,7 @@ async function seedPostgresData(client: any) {
     // 5. Seed Sources
     const srcCountRes = await client.query('SELECT COUNT(*) FROM sources');
     if (parseInt(srcCountRes.rows[0].count) === 0) {
-      console.log('Seeding initial sources into Postgres...');
+      log.info('Seeding initial sources into Postgres...');
       for (const s of INITIAL_SOURCES) {
         await client.query(
           `INSERT INTO sources (id, tenant_id, name, type, status, config, sync_schedule, last_sync_at, document_count, last_error, created_at, collection_ids)
@@ -512,7 +516,7 @@ async function seedPostgresData(client: any) {
     // 6. Seed Sync Logs
     const syncCountRes = await client.query('SELECT COUNT(*) FROM sync_logs');
     if (parseInt(syncCountRes.rows[0].count) === 0) {
-      console.log('Seeding initial sync logs into Postgres...');
+      log.info('Seeding initial sync logs into Postgres...');
       for (const log of INITIAL_SYNC_LOGS) {
         await client.query(
           `INSERT INTO sync_logs (id, tenant_id, source_id, source_name, status, items_processed, duration_ms, message, timestamp)
@@ -535,7 +539,7 @@ async function seedPostgresData(client: any) {
     // 7. Seed Audit Logs
     const auditCountRes = await client.query('SELECT COUNT(*) FROM audit_logs');
     if (parseInt(auditCountRes.rows[0].count) === 0) {
-      console.log('Seeding initial audit logs into Postgres...');
+      log.info('Seeding initial audit logs into Postgres...');
       for (const entry of INITIAL_AUDIT_LOGS) {
         await client.query(
           `INSERT INTO audit_logs (id, tenant_id, actor_id, action, resource_type, resource_id, status, details, timestamp)
@@ -555,7 +559,7 @@ async function seedPostgresData(client: any) {
       }
     }
   } catch (seedErr) {
-    console.error('Failed to seed Postgres tables:', seedErr);
+    log.error('Failed to seed Postgres tables:', seedErr);
   }
 }
 
@@ -593,7 +597,7 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
       };
     });
   } catch (error) {
-    console.error('Failed to get Postgres documents:', error);
+    log.error('Failed to get Postgres documents:', error);
     throw error;
   } finally {
     client.release();
@@ -629,7 +633,7 @@ export async function getPostgresDocumentById(id: string, tenantId: string): Pro
       collectionIds: row.collection_ids || [],
     };
   } catch (error) {
-    console.error('Failed to get Postgres document by ID:', error);
+    log.error('Failed to get Postgres document by ID:', error);
     throw error;
   } finally {
     client.release();
@@ -690,7 +694,7 @@ export async function insertPostgresDocument(doc: {
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Failed to insert document into Postgres:', error);
+    log.error('Failed to insert document into Postgres:', error);
     throw error;
   } finally {
     client.release();
@@ -711,7 +715,7 @@ export async function deletePostgresDocument(documentId: string, tenantId: strin
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Failed to delete document from Postgres:', error);
+    log.error('Failed to delete document from Postgres:', error);
     throw error;
   } finally {
     client.release();
@@ -740,7 +744,7 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
       metadata: row.metadata || {},
     }));
   } catch (error) {
-    console.error('Failed to get Postgres chunks:', error);
+    log.error('Failed to get Postgres chunks:', error);
     throw error;
   } finally {
     client.release();
@@ -788,7 +792,7 @@ export async function getPostgresChunksByDocument(
       total: countRes.rows[0]?.total ?? 0,
     };
   } catch (error) {
-    console.error('Failed to get Postgres chunks by document:', error);
+    log.error('Failed to get Postgres chunks by document:', error);
     throw error;
   } finally {
     client.release();
@@ -811,7 +815,7 @@ export async function deletePostgresChunksByDocument(documentId: string, tenantI
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     await client.query('DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2', [documentId, tenantId]);
   } catch (error) {
-    console.error('Failed to delete Postgres chunks for document:', error);
+    log.error('Failed to delete Postgres chunks for document:', error);
   } finally {
     client.release();
   }
@@ -858,7 +862,7 @@ export async function insertPostgresChunk(chunk: {
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Failed to insert chunk into Postgres:', error);
+    log.error('Failed to insert chunk into Postgres:', error);
   } finally {
     client.release();
   }
@@ -888,7 +892,7 @@ export async function getPostgresSources(tenantId: string): Promise<SourceConnec
       collectionIds: row.collection_ids || [],
     }));
   } catch (error) {
-    console.error('Failed to get Postgres sources:', error);
+    log.error('Failed to get Postgres sources:', error);
     throw error;
   } finally {
     client.release();
@@ -920,7 +924,7 @@ export async function getPostgresSourceById(id: string, tenantId: string): Promi
       collectionIds: row.collection_ids || [],
     };
   } catch (error) {
-    console.error('Failed to get Postgres source by ID:', error);
+    log.error('Failed to get Postgres source by ID:', error);
     throw error;
   } finally {
     client.release();
@@ -951,7 +955,7 @@ export async function getPostgresScheduledSources(): Promise<
       syncSchedule: row.sync_schedule,
     }));
   } catch (error) {
-    console.error('Failed to list scheduled Postgres sources:', error);
+    log.error('Failed to list scheduled Postgres sources:', error);
     throw error;
   } finally {
     client.release();
@@ -989,7 +993,7 @@ export async function insertPostgresSource(source: SourceConnector) {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres source:', error);
+    log.error('Failed to insert Postgres source:', error);
     throw error;
   } finally {
     client.release();
@@ -1005,7 +1009,7 @@ export async function deletePostgresSource(id: string, tenantId: string) {
   try {
     await client.query('DELETE FROM sources WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
   } catch (error) {
-    console.error('Failed to delete Postgres source:', error);
+    log.error('Failed to delete Postgres source:', error);
     throw error;
   } finally {
     client.release();
@@ -1040,14 +1044,14 @@ export async function getPostgresSyncLogs(tenantId: string, sourceId?: string): 
       timestamp: row.timestamp,
     }));
   } catch (error) {
-    console.error('Failed to get Postgres sync logs:', error);
+    log.error('Failed to get Postgres sync logs:', error);
     throw error;
   } finally {
     client.release();
   }
 }
 
-export async function insertPostgresSyncLog(log: SyncLogEntry) {
+export async function insertPostgresSyncLog(entry: SyncLogEntry) {
   await ensurePostgresTables();
   const p = getPostgresPool();
   if (!p) return;
@@ -1057,23 +1061,23 @@ export async function insertPostgresSyncLog(log: SyncLogEntry) {
     await client.query(
       `INSERT INTO sync_logs (id, tenant_id, source_id, source_name, status, items_processed, duration_ms, message, timestamp)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (id) DO UPDATE 
-       SET status = EXCLUDED.status, items_processed = EXCLUDED.items_processed, 
+       ON CONFLICT (id) DO UPDATE
+       SET status = EXCLUDED.status, items_processed = EXCLUDED.items_processed,
            duration_ms = EXCLUDED.duration_ms, message = EXCLUDED.message, timestamp = EXCLUDED.timestamp;`,
       [
-        log.id,
-        log.tenantId,
-        log.sourceId,
-        log.sourceName,
-        log.status,
-        log.itemsProcessed,
-        log.durationMs,
-        log.message,
-        log.timestamp,
+        entry.id,
+        entry.tenantId,
+        entry.sourceId,
+        entry.sourceName,
+        entry.status,
+        entry.itemsProcessed,
+        entry.durationMs,
+        entry.message,
+        entry.timestamp,
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres sync log:', error);
+    log.error('Failed to insert Postgres sync log:', error);
     throw error;
   } finally {
     client.release();
@@ -1100,7 +1104,7 @@ export async function getPostgresCollections(tenantId: string): Promise<Collecti
       createdAt: row.created_at,
     }));
   } catch (error) {
-    console.error('Failed to get Postgres collections:', error);
+    log.error('Failed to get Postgres collections:', error);
     throw error;
   } finally {
     client.release();
@@ -1122,7 +1126,7 @@ export async function insertPostgresCollection(col: Collection) {
       [col.id, col.tenantId, col.name, col.description, col.documentCount, col.createdAt],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres collection:', error);
+    log.error('Failed to insert Postgres collection:', error);
     throw error;
   } finally {
     client.release();
@@ -1162,7 +1166,7 @@ export async function getPostgresMcpServers(tenantId: string): Promise<MCPServer
       customToolSchemas: row.custom_tool_schemas || {},
     }));
   } catch (error) {
-    console.error('Failed to get Postgres MCP servers:', error);
+    log.error('Failed to get Postgres MCP servers:', error);
     return [];
   } finally {
     client.release();
@@ -1210,7 +1214,7 @@ export async function insertPostgresMcpServer(s: MCPServerConfig) {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres MCP server:', error);
+    log.error('Failed to insert Postgres MCP server:', error);
   } finally {
     client.release();
   }
@@ -1225,7 +1229,7 @@ export async function deletePostgresMcpServer(serverId: string, tenantId: string
   try {
     await client.query('DELETE FROM mcp_servers WHERE id = $1 AND tenant_id = $2', [serverId, tenantId]);
   } catch (error) {
-    console.error('Failed to delete Postgres MCP server:', error);
+    log.error('Failed to delete Postgres MCP server:', error);
   } finally {
     client.release();
   }
@@ -1252,7 +1256,7 @@ export async function getPostgresAuditLogs(tenantId: string): Promise<AuditLogEn
       timestamp: row.timestamp,
     }));
   } catch (error) {
-    console.error('Failed to get Postgres audit logs:', error);
+    log.error('Failed to get Postgres audit logs:', error);
     return [];
   } finally {
     client.release();
@@ -1282,7 +1286,7 @@ export async function insertPostgresAuditLog(entry: AuditLogEntry) {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres audit log:', error);
+    log.error('Failed to insert Postgres audit log:', error);
   } finally {
     client.release();
   }
@@ -1311,7 +1315,7 @@ export async function getPostgresToolCalls(tenantId: string): Promise<MCPToolCal
       timestamp: row.timestamp,
     }));
   } catch (error) {
-    console.error('Failed to get Postgres tool calls:', error);
+    log.error('Failed to get Postgres tool calls:', error);
     return [];
   } finally {
     client.release();
@@ -1346,7 +1350,7 @@ export async function insertPostgresToolCall(tc: MCPToolCall) {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres tool call:', error);
+    log.error('Failed to insert Postgres tool call:', error);
   } finally {
     client.release();
   }
@@ -1389,7 +1393,7 @@ export async function getPostgresConversations(tenantId: string): Promise<Conver
       firstUserMessage: row.first_user_message || undefined,
     }));
   } catch (error) {
-    console.error('Failed to get Postgres conversations:', error);
+    log.error('Failed to get Postgres conversations:', error);
     return [];
   } finally {
     client.release();
@@ -1418,7 +1422,7 @@ export async function getPostgresConversationById(id: string, tenantId: string):
       updatedAt: row.updated_at,
     };
   } catch (error) {
-    console.error('Failed to get Postgres conversation by ID:', error);
+    log.error('Failed to get Postgres conversation by ID:', error);
     return null;
   } finally {
     client.release();
@@ -1452,7 +1456,7 @@ export async function insertPostgresConversation(conv: Conversation) {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres conversation:', error);
+    log.error('Failed to insert Postgres conversation:', error);
   } finally {
     client.release();
   }
@@ -1471,7 +1475,7 @@ export async function deletePostgresConversation(id: string, tenantId: string) {
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Failed to delete Postgres conversation:', error);
+    log.error('Failed to delete Postgres conversation:', error);
   } finally {
     client.release();
   }
@@ -1504,7 +1508,7 @@ export async function getPostgresMessages(conversationId: string, tenantId: stri
       createdAt: row.created_at,
     }));
   } catch (error) {
-    console.error('Failed to get Postgres messages:', error);
+    log.error('Failed to get Postgres messages:', error);
     return [];
   } finally {
     client.release();
@@ -1539,7 +1543,7 @@ export async function insertPostgresMessage(msg: Message) {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres message:', error);
+    log.error('Failed to insert Postgres message:', error);
   } finally {
     client.release();
   }
@@ -1652,7 +1656,7 @@ export async function searchPostgresLexical(
         hasCollectionScope ? [tenantId, ftsQuery, dict, limitVal, collectionIds] : [tenantId, ftsQuery, dict, limitVal],
       );
     } catch (ftsError) {
-      console.warn('FTS query failed, falling back to ILIKE text search:', ftsError);
+      log.warn('FTS query failed, falling back to ILIKE text search:', ftsError);
       // Same mandatory tenant_id predicate + collection scope on the fallback
       // path (contract: $1/$2=ILIKE patterns, $3=tenant, $4=LIMIT, $5=scope).
       result = await client.query(
@@ -1682,7 +1686,7 @@ export async function searchPostgresLexical(
     }));
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('PostgreSQL lexical search failed:', error);
+    log.error('PostgreSQL lexical search failed:', error);
     return [];
   } finally {
     client.release();
@@ -1723,7 +1727,7 @@ export async function getPostgresUserByEmail(email: string): Promise<User | unde
       createdAt: row.created_at,
     };
   } catch (error) {
-    console.error('Failed to get Postgres user by email:', error);
+    log.error('Failed to get Postgres user by email:', error);
     throw error;
   } finally {
     client.release();
@@ -1743,7 +1747,7 @@ export async function insertPostgresUser(user: User): Promise<void> {
       [user.id, user.email.toLowerCase(), user.passwordHash, user.tenantId, user.createdAt],
     );
   } catch (error) {
-    console.error('Failed to insert user into Postgres:', error);
+    log.error('Failed to insert user into Postgres:', error);
     throw error;
   } finally {
     client.release();
@@ -1770,7 +1774,7 @@ export async function getPostgresUserById(id: string): Promise<User | undefined>
       createdAt: row.created_at,
     };
   } catch (error) {
-    console.error('Failed to get Postgres user by id:', error);
+    log.error('Failed to get Postgres user by id:', error);
     throw error;
   } finally {
     client.release();
@@ -1794,7 +1798,7 @@ export async function getPostgresTenant(tenantId: string): Promise<Tenant | unde
       settings: row.settings || DEFAULT_TENANT_SETTINGS,
     };
   } catch (error) {
-    console.error('Failed to get Postgres tenant:', error);
+    log.error('Failed to get Postgres tenant:', error);
     throw error;
   } finally {
     client.release();
@@ -1821,7 +1825,7 @@ export async function insertPostgresTenant(tenant: Tenant): Promise<void> {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert tenant into Postgres:', error);
+    log.error('Failed to insert tenant into Postgres:', error);
     throw error;
   } finally {
     client.release();
@@ -1849,7 +1853,7 @@ export async function findPostgresTenantIdBySsoDomain(domain: string): Promise<s
     );
     return res.rows[0]?.id;
   } catch (error) {
-    console.error('Failed to find tenant by SSO domain:', error);
+    log.error('Failed to find tenant by SSO domain:', error);
     return undefined;
   } finally {
     client.release();
@@ -1873,7 +1877,7 @@ export async function getPostgresSession(token: string): Promise<SessionRecord |
       createdAt: row.created_at,
     };
   } catch (error) {
-    console.error('Failed to get Postgres session:', error);
+    log.error('Failed to get Postgres session:', error);
     throw error;
   } finally {
     client.release();
@@ -1893,7 +1897,7 @@ export async function insertPostgresSession(session: SessionRecord): Promise<voi
       [session.token, session.userId, session.tenantId, session.expiresAt, session.createdAt],
     );
   } catch (error) {
-    console.error('Failed to insert session into Postgres:', error);
+    log.error('Failed to insert session into Postgres:', error);
     throw error;
   } finally {
     client.release();
@@ -1908,7 +1912,7 @@ export async function deletePostgresSession(token: string): Promise<void> {
   try {
     await client.query('DELETE FROM sessions WHERE token = $1', [token]);
   } catch (error) {
-    console.error('Failed to delete Postgres session:', error);
+    log.error('Failed to delete Postgres session:', error);
     throw error;
   } finally {
     client.release();
@@ -1927,7 +1931,7 @@ export async function deletePostgresSessionsForTenantUser(tenantId: string, user
   try {
     await client.query('DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2', [tenantId, userId]);
   } catch (error) {
-    console.error('Failed to delete Postgres sessions for tenant user:', error);
+    log.error('Failed to delete Postgres sessions for tenant user:', error);
     throw error;
   } finally {
     client.release();
@@ -1942,7 +1946,7 @@ export async function deleteExpiredPostgresSessions(): Promise<void> {
   try {
     await client.query('DELETE FROM sessions WHERE expires_at < $1', [new Date().toISOString()]);
   } catch (error) {
-    console.error('Failed to delete expired Postgres sessions:', error);
+    log.error('Failed to delete expired Postgres sessions:', error);
   } finally {
     client.release();
   }
@@ -1998,7 +2002,7 @@ export async function insertPostgresApiKey(key: ApiKeyRecord): Promise<void> {
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres API key:', error);
+    log.error('Failed to insert Postgres API key:', error);
     throw error;
   } finally {
     client.release();
@@ -2014,7 +2018,7 @@ export async function getPostgresApiKeys(tenantId: string): Promise<ApiKeyRecord
     const res = await client.query('SELECT * FROM api_keys WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
     return res.rows.map(mapApiKeyRow);
   } catch (error) {
-    console.error('Failed to list Postgres API keys:', error);
+    log.error('Failed to list Postgres API keys:', error);
     throw error;
   } finally {
     client.release();
@@ -2031,7 +2035,7 @@ export async function getPostgresApiKeyByHash(keyHash: string): Promise<ApiKeyRe
     if (res.rows.length === 0) return undefined;
     return mapApiKeyRow(res.rows[0]);
   } catch (error) {
-    console.error('Failed to look up Postgres API key by hash:', error);
+    log.error('Failed to look up Postgres API key by hash:', error);
     throw error;
   } finally {
     client.release();
@@ -2050,7 +2054,7 @@ export async function revokePostgresApiKey(id: string, tenantId: string): Promis
       tenantId,
     ]);
   } catch (error) {
-    console.error('Failed to revoke Postgres API key:', error);
+    log.error('Failed to revoke Postgres API key:', error);
     throw error;
   } finally {
     client.release();
@@ -2065,7 +2069,7 @@ export async function touchPostgresApiKeyLastUsed(id: string, timestamp: string)
     await client.query('UPDATE api_keys SET last_used_at = $1 WHERE id = $2', [timestamp, id]);
   } catch (error) {
     // Best-effort stamp — never fail the auth path over telemetry.
-    console.warn('Failed to stamp API key last_used_at:', (error as Error)?.message);
+    log.warn('Failed to stamp API key last_used_at:', (error as Error)?.message);
   } finally {
     client.release();
   }
@@ -2115,7 +2119,7 @@ export async function insertPostgresWebhookEndpoint(endpoint: WebhookEndpoint): 
       ],
     );
   } catch (error) {
-    console.error('Failed to insert Postgres webhook endpoint:', error);
+    log.error('Failed to insert Postgres webhook endpoint:', error);
     throw error;
   } finally {
     client.release();
@@ -2133,7 +2137,7 @@ export async function getPostgresWebhookEndpoints(tenantId: string): Promise<Web
     ]);
     return res.rows.map(mapWebhookEndpointRow);
   } catch (error) {
-    console.error('Failed to list Postgres webhook endpoints:', error);
+    log.error('Failed to list Postgres webhook endpoints:', error);
     throw error;
   } finally {
     client.release();
@@ -2155,7 +2159,7 @@ export async function getPostgresWebhookEndpointById(
     ]);
     return res.rows[0] ? mapWebhookEndpointRow(res.rows[0]) : undefined;
   } catch (error) {
-    console.error('Failed to fetch Postgres webhook endpoint:', error);
+    log.error('Failed to fetch Postgres webhook endpoint:', error);
     throw error;
   } finally {
     client.release();
@@ -2195,7 +2199,7 @@ export async function updatePostgresWebhookEndpoint(
       values,
     );
   } catch (error) {
-    console.error('Failed to update Postgres webhook endpoint:', error);
+    log.error('Failed to update Postgres webhook endpoint:', error);
     throw error;
   } finally {
     client.release();
@@ -2210,7 +2214,7 @@ export async function deletePostgresWebhookEndpoint(id: string, tenantId: string
   try {
     await client.query('DELETE FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
   } catch (error) {
-    console.error('Failed to delete Postgres webhook endpoint:', error);
+    log.error('Failed to delete Postgres webhook endpoint:', error);
     throw error;
   } finally {
     client.release();
@@ -2258,7 +2262,7 @@ export async function upsertPostgresProviderCredentials(record: ProviderCredenti
       ],
     );
   } catch (error) {
-    console.error('Failed to upsert Postgres provider credentials:', error);
+    log.error('Failed to upsert Postgres provider credentials:', error);
     throw error;
   } finally {
     client.release();
@@ -2281,7 +2285,7 @@ export async function getPostgresProviderCredentials(
     if (res.rows.length === 0) return undefined;
     return mapProviderCredentialRow(res.rows[0]);
   } catch (error) {
-    console.error('Failed to get Postgres provider credentials:', error);
+    log.error('Failed to get Postgres provider credentials:', error);
     throw error;
   } finally {
     client.release();
@@ -2299,7 +2303,7 @@ export async function getPostgresProviderCredentialsList(tenantId: string): Prom
     ]);
     return res.rows.map(mapProviderCredentialRow);
   } catch (error) {
-    console.error('Failed to list Postgres provider credentials:', error);
+    log.error('Failed to list Postgres provider credentials:', error);
     throw error;
   } finally {
     client.release();
@@ -2317,7 +2321,7 @@ export async function deletePostgresProviderCredentials(tenantId: string, provid
       providerId,
     ]);
   } catch (error) {
-    console.error('Failed to delete Postgres provider credentials:', error);
+    log.error('Failed to delete Postgres provider credentials:', error);
     throw error;
   } finally {
     client.release();
@@ -2332,7 +2336,7 @@ export async function updatePostgresTenantSettings(tenantId: string, settingsJso
   try {
     await client.query('UPDATE tenants SET settings = $1 WHERE id = $2', [settingsJson, tenantId]);
   } catch (error) {
-    console.error('Failed to update Postgres tenant settings:', error);
+    log.error('Failed to update Postgres tenant settings:', error);
     throw error;
   } finally {
     client.release();
@@ -2347,7 +2351,7 @@ export async function updatePostgresTenantPlan(tenantId: string, plan: string): 
   try {
     await client.query('UPDATE tenants SET plan = $1 WHERE id = $2', [plan, tenantId]);
   } catch (error) {
-    console.error('Failed to update Postgres tenant plan:', error);
+    log.error('Failed to update Postgres tenant plan:', error);
     throw error;
   } finally {
     client.release();

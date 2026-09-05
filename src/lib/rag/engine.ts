@@ -13,6 +13,9 @@ import { SYSTEM_CONFIG } from '../config/systemConfig';
 import { isTenantEmbeddingStale, selfHealStaleCorpus } from '../services/reembedService';
 import { buildTenantMcpTools, type CustomToolSchema } from '../mcp/aiSdkTools';
 import { ToolExecutionOutcome, executeMcpToolCall } from '../mcp/dispatcher';
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('RagEngine');
 
 /**
  * Dispatcher wrapper that converts hard failures (e.g. a model-hallucinated
@@ -430,7 +433,7 @@ export async function generateHydeDocument(query: string): Promise<string> {
     });
     return text || query;
   } catch (e) {
-    console.warn('HyDE generation fallback to raw query:', e);
+    log.warn('HyDE generation fallback to raw query:', e);
     return query;
   }
 }
@@ -546,7 +549,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   try {
     vectorsStale = await isTenantEmbeddingStale(tenantId);
     if (vectorsStale) {
-      console.warn(
+      log.warn(
         `[Hybrid Search] Stored vectors use a different embedding model/pipeline than the active one — semantic arm downgraded to rank-only; a background re-embed has been scheduled.`,
       );
       void selfHealStaleCorpus(tenantId);
@@ -721,7 +724,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       semanticMatches = resultChunks.filter((c) => c.semanticScore >= semanticFloor).length;
       lexicalMatches = resultChunks.filter((c) => c.lexicalRank !== null && c.lexicalRank > 0).length;
     } catch (realSearchError) {
-      console.error('Real hybrid search failed, falling back to local storage:', realSearchError);
+      log.error('Real hybrid search failed, falling back to local storage:', realSearchError);
       resultChunks = [];
     }
   }
@@ -745,7 +748,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
     // fix is restoring the Qdrant/Postgres backends.
     const FALLBACK_SCAN_CAP = 2000;
     if (chunks.length > FALLBACK_SCAN_CAP) {
-      console.warn(
+      log.warn(
         `[Search fallback] Tenant corpus has ${chunks.length} chunks; capping keyword fallback scan at ${FALLBACK_SCAN_CAP}.`,
       );
       chunks = chunks.slice(0, FALLBACK_SCAN_CAP);
@@ -827,7 +830,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   if (searchQuery.rerank && !aggregative && resultChunks.length > 1) {
     const preRerankTime = Date.now();
     resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[]);
-    console.log(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
+    log.info(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
   }
 
   // NAMED-DOCUMENT SPAN COVERAGE (the core fix for "answer from the WHOLE
@@ -873,11 +876,11 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
           fromNamedDocumentCoverage: true,
         }));
       resultChunks = [...resultChunks, ...missingChunks];
-      console.log(
+      log.info(
         `[Hybrid Search] Named-document coverage: "${namedDoc.title}" (match ${Math.round(namedDoc.overlap * 100)}%) — pool ${existingIds.size} retrieved + ${missingChunks.length} span-coverage chunks`,
       );
     } catch (coverageErr) {
-      console.warn('[Hybrid Search] Named-document span coverage failed:', (coverageErr as Error)?.message);
+      log.warn('[Hybrid Search] Named-document span coverage failed:', (coverageErr as Error)?.message);
     }
   }
 
@@ -905,7 +908,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       const namedBudget = Math.min(namedSet.length, contextChunkCap);
       const slack = Math.max(0, contextChunkCap - namedBudget);
       resultChunks = [...namedSet.slice(0, namedBudget), ...others.slice(0, slack)];
-      console.log(
+      log.info(
         `[Hybrid Search] Defensive context cap applied: ${preCapCount} → ${resultChunks.length} (named "${namedDoc.title}" ${namedBudget} chunks + ${Math.min(others.length, slack)} from other documents)`,
       );
     } else {
@@ -936,7 +939,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
         }
       }
       resultChunks = balanced;
-      console.log(
+      log.info(
         `[Hybrid Search] Defensive context cap applied: ${preCapCount} above-floor chunks → ${resultChunks.length} (cap=${contextChunkCap}), balanced across ${docOrder.length} document(s)`,
       );
     }
@@ -1161,7 +1164,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
         });
       }
 
-      console.log(
+      log.info(
         `[Agentic RAG] generateText via ${modelAlias} with ${aiTools ? Object.keys(aiTools).length : 0} MCP tools...`,
       );
       const response = await generateText({
@@ -1228,7 +1231,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
         suggestions,
       };
     } catch (err: any) {
-      console.error('AI SDK execution error, using deterministic fallback:', err);
+      log.error('AI SDK execution error, using deterministic fallback:', err);
     }
   }
 

@@ -21,6 +21,9 @@ import {
 } from '../types/omnirag';
 import { randomUUID } from 'crypto';
 import { chunkDocumentWithPages, estimateTokenCount } from '../rag/chunker';
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('OmniRAGStorage');
 import { DEFAULT_AI_MODELS, getAiModel } from '../config/aiModels';
 import {
   ensurePostgresTables,
@@ -739,13 +742,13 @@ async function ensureSeeded(): Promise<void> {
 
       const dbPromise = ensurePostgresTables().catch((err) => {
         if (!isSeeded) throw err; // if race is still ongoing, pass error to Promise.race
-        console.error('Background ensurePostgresTables late error caught to prevent unhandled rejection:', err);
+        log.error('Background ensurePostgresTables late error caught to prevent unhandled rejection:', err);
       });
 
       await Promise.race([dbPromise, timeoutPromise]);
       isSeeded = true;
     } catch (error) {
-      console.log('PostgreSQL database initialization offline fallback triggered:', (error as Error)?.message);
+      log.info('PostgreSQL database initialization offline fallback triggered:', (error as Error)?.message);
       dbInstance.enableMemoryFallback();
       isSeeded = true;
     } finally {
@@ -827,10 +830,10 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       this.pgErrorTimestamps = [];
       isSeeded = false;
       seedingPromise = null;
-      console.info('[OmniRAG Storage] Postgres circuit breaker HALF-OPEN: retrying durable storage on next operation.');
+      log.info('[OmniRAG Storage] Postgres circuit breaker HALF-OPEN: retrying durable storage on next operation.');
     }, OmniRAGDatabase.PG_FALLBACK_COOLDOWN_MS);
     this.pgRetryTimer.unref?.();
-    console.info(
+    log.info(
       `[OmniRAG Storage] Will retry Postgres in ${OmniRAGDatabase.PG_FALLBACK_COOLDOWN_MS / 1000}s (${reason}).`,
     );
   }
@@ -848,7 +851,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
 
     if (this.pgErrorTimestamps.length >= OmniRAGDatabase.PG_ERROR_THRESHOLD) {
       this.useMemory = true;
-      console.error(
+      log.error(
         `[OmniRAG Storage] Postgres circuit breaker OPEN after ${this.pgErrorTimestamps.length} errors within ${
           OmniRAGDatabase.PG_ERROR_WINDOW_MS / 1000
         }s (last in ${actionName}): ${errMsg}. Falling back to in-memory storage temporarily.`,
@@ -857,7 +860,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
     } else {
       // Transient error: this single call still falls back to memory (the
       // caller handles that), but the NEXT operation retries Postgres.
-      console.warn(
+      log.warn(
         `[OmniRAG Storage] Transient Postgres error in ${actionName} (${this.pgErrorTimestamps.length}/${OmniRAGDatabase.PG_ERROR_THRESHOLD} in window): ${errMsg}`,
       );
     }
@@ -1106,7 +1109,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
             extractedContent = pipelineRes.text;
           }
         } catch (pdfErr: any) {
-          console.warn('[syncSource] PDF pipeline failed:', pdfErr?.message);
+          log.warn('[syncSource] PDF pipeline failed:', pdfErr?.message);
         }
         if (!extractedContent) {
           return await failSync('فشل استخراج النصوص من الملف المرتبط بهذا الموصل.');
@@ -1858,7 +1861,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         },
       ]);
     } catch (vecErr) {
-      console.error('Vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
+      log.error('Vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
     }
   }
 
@@ -1999,7 +2002,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
         result.errors.push(`تعذر الرفع إلى محرك المتجهات (${vectorStore.nameAr}) — المستند غير قابل للبحث الدلالي بعد`);
       }
     } catch (vecErr) {
-      console.error('Batch vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
+      log.error('Batch vector embedding/Qdrant indexing error:', (vecErr as Error)?.message);
       result.indexed = 0;
       result.failed = chunks.length;
       result.errors.push((vecErr as Error)?.message || 'خطأ غير معروف أثناء الفهرسة المتجهية');
@@ -2583,7 +2586,7 @@ class OmniRAGDatabase implements IOmniRAGDatabase {
       await touchPostgresApiKeyLastUsed(id, timestamp);
     } catch (e) {
       // Best-effort telemetry — never surface into the auth path.
-      console.warn('[db] touchApiKeyLastUsed skipped:', (e as Error)?.message);
+      log.warn('[db] touchApiKeyLastUsed skipped:', (e as Error)?.message);
     }
   }
 

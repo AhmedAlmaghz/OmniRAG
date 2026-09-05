@@ -1,4 +1,7 @@
 import { PgBoss } from 'pg-boss';
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('JobQueue');
 
 /**
  * Background job queue built on pg-boss (Postgres-backed, no Redis). This is
@@ -50,7 +53,7 @@ export function getJobQueue(): Promise<PgBoss | null> {
           cronWorkerIntervalSeconds: 15,
           clockMonitorIntervalSeconds: 15,
         });
-        boss.on('error', (err: Error) => console.error('[JobQueue] pg-boss error:', err));
+        boss.on('error', (err: Error) => log.error('[JobQueue] pg-boss error:', err));
         await boss.start();
         // pg-boss v12+ requires explicit queue creation before send/schedule/
         // work — the pre-v12 auto-create no longer exists. Without this, every
@@ -60,14 +63,14 @@ export function getJobQueue(): Promise<PgBoss | null> {
         try {
           await boss.createQueue(CONNECTOR_SYNC_QUEUE);
           await boss.createQueue(DOCUMENT_REINDEX_QUEUE);
-          console.log('[JobQueue] queues ensured:', CONNECTOR_SYNC_QUEUE, DOCUMENT_REINDEX_QUEUE);
+          log.info('[JobQueue] queues ensured:', CONNECTOR_SYNC_QUEUE, DOCUMENT_REINDEX_QUEUE);
         } catch (createErr) {
-          console.error('[JobQueue] createQueue failed — jobs will fail until created:', createErr);
+          log.error('[JobQueue] createQueue failed — jobs will fail until created:', createErr);
         }
-        console.log('[JobQueue] pg-boss started — background jobs enabled.');
+        log.info('[JobQueue] pg-boss started — background jobs enabled.');
         return boss;
       } catch (err) {
-        console.error('[JobQueue] Failed to start pg-boss — background jobs disabled:', err);
+        log.error('[JobQueue] Failed to start pg-boss — background jobs disabled:', err);
         bossPromise = null;
         return null;
       }
