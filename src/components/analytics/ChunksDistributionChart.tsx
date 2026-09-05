@@ -1,7 +1,15 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
+// Direct d3 submodules (v0.12.13): the umbrella `d3` package shipped ~260KB
+// for three symbols. These five subpackages are the full surface used here —
+// `d3-transition` is imported for its side effect (patches selection with
+// .transition()).
+import { select } from 'd3-selection';
+import { scaleOrdinal } from 'd3-scale';
+import { schemeSet3 } from 'd3-scale-chromatic';
+import { arc, pie, type PieArcDatum } from 'd3-shape';
+import 'd3-transition';
 import { t } from '@/lib/i18n';
 
 interface ChunksDistributionChartProps {
@@ -16,15 +24,14 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
     if (!chartRef.current || !data || data.length === 0) return;
 
     // Clear previous chart
-    d3.select(chartRef.current).selectAll('*').remove();
+    select(chartRef.current).selectAll('*').remove();
 
     const width = 400;
     const height = 300;
     const margin = 40;
     const radius = Math.min(width, height) / 2 - margin;
 
-    const svg = d3
-      .select(chartRef.current)
+    const svg = select(chartRef.current)
       .append('svg')
       .attr('width', '100%')
       .attr('height', height)
@@ -33,33 +40,29 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
       .attr('transform', `translate(${width / 2},${height / 2})`);
 
     // Define color scale
-    const color = d3
-      .scaleOrdinal<string>()
+    const color = scaleOrdinal<string>()
       .domain(data.map((d) => d.name))
-      .range(d3.schemeSet3);
+      .range(schemeSet3);
 
     // Compute the position of each group on the pie
-    const pie = d3
-      .pie<{ name: string; count: number }>()
+    const pieLayout = pie<{ name: string; count: number }>()
       .value((d) => d.count)
       .sort(null);
 
-    const data_ready = pie(data);
+    const data_ready = pieLayout(data);
 
     // Shape helper to build arcs
-    const arcGenerator = d3
-      .arc<d3.PieArcDatum<{ name: string; count: number }>>()
+    const arcGenerator = arc<PieArcDatum<{ name: string; count: number }>>()
       .innerRadius(radius * 0.5) // This makes it a donut chart
       .outerRadius(radius);
 
     // Hover arc generator
-    const arcHover = d3
-      .arc<d3.PieArcDatum<{ name: string; count: number }>>()
+    const arcHover = arc<PieArcDatum<{ name: string; count: number }>>()
       .innerRadius(radius * 0.5)
       .outerRadius(radius + 10);
 
     // Build the pie chart
-    const path = svg
+    svg
       .selectAll('mySlices')
       .data(data_ready)
       .enter()
@@ -71,7 +74,7 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
       .style('opacity', 0.8)
       .style('transition', 'all 0.3s ease-in-out')
       .on('mouseover', function (event, d) {
-        d3.select(this)
+        select(this)
           .transition()
           .duration(200)
           .attr('d', arcHover as any)
@@ -80,7 +83,7 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
         // Tooltip or central text could be added here
       })
       .on('mouseout', function (event, d) {
-        d3.select(this)
+        select(this)
           .transition()
           .duration(200)
           .attr('d', arcGenerator as any)
@@ -88,8 +91,7 @@ export default function ChunksDistributionChart({ data, lang }: ChunksDistributi
       });
 
     // Add labels
-    const outerArc = d3
-      .arc<d3.PieArcDatum<{ name: string; count: number }>>()
+    const outerArc = arc<PieArcDatum<{ name: string; count: number }>>()
       .innerRadius(radius * 1.1)
       .outerRadius(radius * 1.1);
 
