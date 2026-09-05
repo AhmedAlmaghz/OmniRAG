@@ -6,7 +6,21 @@ import { createHash } from 'node:crypto';
 import { getEnv } from '../env/runtimeEnv';
 import { QdrantClient } from '@qdrant/js-client-rest';
 
-let client: any = null;
+/** Minimal local shapes for the qdrant responses this module consumes —
+ *  decoupled from the SDK's generated internal types. */
+interface QdrantFilterCondition {
+  key: string;
+  match: Record<string, unknown>;
+}
+interface ScoredPointLike {
+  id: string | number;
+  score?: number;
+  payload?: Record<string, unknown> | null;
+}
+
+type RequestLike = Parameters<typeof getEnv>[1];
+
+let client: QdrantClient | null = null;
 let collectionVerified = false;
 const COLLECTION_NAME = 'omnirag_chunks';
 
@@ -15,7 +29,7 @@ export function resetQdrantClient() {
   collectionVerified = false;
 }
 
-export function getQdrantClient(req?: any): any {
+export function getQdrantClient(req?: RequestLike): QdrantClient | null {
   if (typeof window !== 'undefined') return null; // Safe guard for client-side compilation
   if (client) return client;
 
@@ -46,7 +60,7 @@ export async function ensureQdrantCollection() {
 
   try {
     const collectionsRes = await qc.getCollections();
-    const exists = collectionsRes.collections.some((c: any) => c.name === COLLECTION_NAME);
+    const exists = collectionsRes.collections.some((c) => c.name === COLLECTION_NAME);
 
     if (!exists) {
       log.info(`Creating Qdrant collection "${COLLECTION_NAME}" with 3072-dimensional cosine similarity vectors...`);
@@ -90,7 +104,7 @@ export async function upsertQdrantChunk(params: {
     pageNumber: number;
     language: string;
     collectionIds?: string[];
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }) {
   await upsertQdrantChunks([{ id: params.id, vector: params.vector, payload: params.payload }]);
@@ -151,7 +165,7 @@ export async function upsertQdrantChunks(
       pageNumber: number;
       language: string;
       collectionIds?: string[];
-      [key: string]: any;
+      [key: string]: unknown;
     };
   }>,
 ): Promise<boolean> {
@@ -198,7 +212,7 @@ export async function deleteQdrantChunk(id: string) {
 export async function updateQdrantDocumentPayload(
   documentId: string,
   tenantId: string,
-  payloadUpdates: Record<string, any>,
+  payloadUpdates: Record<string, unknown>,
 ) {
   await ensureQdrantCollection();
   const qc = getQdrantClient();
@@ -263,7 +277,7 @@ export async function searchQdrantSemantic(params: {
 
   try {
     // Mandatory isolation filter + optional collectionIds filters
-    const filterConditions: any[] = [{ key: 'tenantId', match: { value: params.tenantId } }];
+    const filterConditions: QdrantFilterCondition[] = [{ key: 'tenantId', match: { value: params.tenantId } }];
 
     if (params.collectionIds && params.collectionIds.length > 0) {
       filterConditions.push({
@@ -272,7 +286,7 @@ export async function searchQdrantSemantic(params: {
       });
     }
 
-    let results: any[] = [];
+    let results: ScoredPointLike[] = [];
 
     if (typeof qc.query === 'function') {
       const qRes = await qc.query(COLLECTION_NAME, {
@@ -285,8 +299,12 @@ export async function searchQdrantSemantic(params: {
         with_payload: true,
       });
       results = Array.isArray(qRes) ? qRes : qRes?.points || [];
-    } else if (typeof (qc as any).search === 'function') {
-      const sRes = await (qc as any).search(COLLECTION_NAME, {
+    } else if (typeof (qc as unknown as { search?: unknown }).search === 'function') {
+      const sRes = await (
+        qc as unknown as {
+          search: (name: string, args: Record<string, unknown>) => Promise<ScoredPointLike[] | { points?: ScoredPointLike[] }>;
+        }
+      ).search(COLLECTION_NAME, {
         vector: params.vector,
         filter: {
           must: filterConditions,
@@ -298,8 +316,8 @@ export async function searchQdrantSemantic(params: {
       results = Array.isArray(sRes) ? sRes : sRes?.points || [];
     }
 
-    return results.map((r: any) => {
-      const payload = (r.payload || {}) as any;
+    return results.map((r: ScoredPointLike) => {
+      const payload = (r.payload || {}) as Partial<{ documentId: string; documentTitle: string; content: string; chunkIndex: number; pageNumber: number; language: string }>;
       return {
         id: String(r.id),
         documentId: payload.documentId || '',
@@ -308,7 +326,7 @@ export async function searchQdrantSemantic(params: {
         chunkIndex: payload.chunkIndex || 0,
         pageNumber: payload.pageNumber || 1,
         language: payload.language || 'ar',
-        semanticScore: r.score,
+        semanticScore: r.score ?? 0,
       };
     });
   } catch (error) {

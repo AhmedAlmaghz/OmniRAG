@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * Regression guard for the cross-tenant lexical-search leak (Phase 2).
@@ -53,6 +53,14 @@ describe('searchPostgresLexical tenant isolation (regression)', () => {
     // Re-initialise the postgres singleton for each test so ensurePostgresTables
     // runs against the fresh mock and `queries` only reflects THIS test's calls.
     vi.resetModules();
+  });
+
+  afterEach(() => {
+    // Env hygiene (v0.12.16): the threads pool shares process.env across test
+    // files in the same worker — a leaked DATABASE_URL here made later files
+    // (rate limiter, storage init) attempt real 8s-timeout postgres connects.
+    delete process.env.DATABASE_URL;
+    delete process.env.PG_TLS_REJECT_UNAUTHORIZED;
   });
 
   it('binds tenant_id as a parameter on the primary FTS path', async () => {

@@ -1,8 +1,11 @@
 import { createLogger } from '@/lib/logging/logger';
 
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
 const log = createLogger('LibMcpRegistryTools');
 
 import { db } from '@/lib/storage/db';
+import type { Document, DocumentChunk } from '@/lib/types/omnirag';
 import { generateEmbedding } from '@/lib/rag/embedding';
 import { getVectorStoreForTenant } from '@/lib/storage/vectors/registry';
 import { randomInt } from '@/lib/crypto/webRandom';
@@ -92,7 +95,7 @@ interface WebSearchHit {
   snippet: string;
 }
 
-async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs = 10000): Promise<any> {
+async function fetchJsonWithTimeout<T = unknown>(url: string, init: RequestInit, timeoutMs = 10000): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -108,7 +111,8 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs = 
 
 async function tavilySearch(query: string, numResults: number, language: string): Promise<WebSearchHit[]> {
   const apiKey = getEnv('TAVILY_API_KEY');
-  const data = await fetchJsonWithTimeout('https://api.tavily.com/search', {
+  const data = await fetchJsonWithTimeout<{ results?: Array<{ title?: string; url?: string; content?: string; snippet?: string }> }>(
+      'https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -121,7 +125,7 @@ async function tavilySearch(query: string, numResults: number, language: string)
       lang: language,
     }),
   });
-  return (data?.results || []).map((r: any) => ({
+  return (data?.results || []).map((r) => ({
     title: r.title || '',
     url: r.url || '',
     snippet: r.content || r.snippet || '',
@@ -130,12 +134,12 @@ async function tavilySearch(query: string, numResults: number, language: string)
 
 async function serperSearch(query: string, numResults: number, language: string): Promise<WebSearchHit[]> {
   const apiKey = getEnv('SERPER_API_KEY');
-  const data = await fetchJsonWithTimeout('https://google.serper.dev/search', {
+  const data = await fetchJsonWithTimeout<{ organic?: Array<{ title?: string; link?: string; snippet?: string }> }>('https://google.serper.dev/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
     body: JSON.stringify({ q: query, num: numResults, gl: language === 'ar' ? 'sa' : 'us', hl: language }),
   });
-  return (data?.organic || []).map((r: any) => ({
+  return (data?.organic || []).map((r) => ({
     title: r.title || '',
     url: r.link || '',
     snippet: r.snippet || '',
@@ -146,11 +150,11 @@ async function braveSearch(query: string, numResults: number, language: string):
   const apiKey = getEnv('BRAVE_API_KEY');
   const params = new URLSearchParams({ q: query, count: String(numResults) });
   if (language === 'ar') params.set('search_lang', 'ar');
-  const data = await fetchJsonWithTimeout(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+  const data = await fetchJsonWithTimeout<{ web?: { results?: Array<{ title?: string; url?: string; description?: string }> } }>(`https://api.search.brave.com/res/v1/web/search?${params}`, {
     method: 'GET',
     headers: { Accept: 'application/json', 'X-Subscription-Token': apiKey },
   });
-  return (data?.web?.results || []).map((r: any) => ({
+  return (data?.web?.results || []).map((r) => ({
     title: r.title || '',
     url: r.url || '',
     snippet: r.description || '',
@@ -583,12 +587,12 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
           resultsCount: hits.length,
           sources: hits,
         };
-      } catch (err: any) {
+      } catch (err) {
         return {
           success: false,
           simulated: false,
           query,
-          error: `فشل البحث الحي: ${err?.message || err}`,
+          error: `فشل البحث الحي: ${errorMessage(err)}`,
           sources: [],
         };
       }
@@ -618,9 +622,9 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       let fetched;
       try {
         fetched = await safeFetchText(url, { timeoutMs: 12000, maxBytes: 1024 * 1024 });
-      } catch (err: any) {
+      } catch (err) {
         // Policy violations (SSRF guard, dummy endpoints) surface as honest errors.
-        return { success: false, simulated: false, url, error: err?.message || 'فشل جلب الرابط' };
+        return { success: false, simulated: false, url, error: errorMessage(err) || 'فشل جلب الرابط' };
       }
 
       if (!fetched.ok) {
@@ -748,7 +752,8 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       required: ['documentUrl'],
     },
     execute: async (args, ctx) => {
-      const { documentUrl, fileName = 'document.pdf', strategy = 'hi_res' } = args;
+      const { documentUrl, fileName = 'document.pdf', strategy: rawStrategy } = args;
+      const strategy = rawStrategy === 'fast' || rawStrategy === 'ocr_only' ? rawStrategy : 'hi_res';
       if (!documentUrl || typeof documentUrl !== 'string') {
         throw new Error('مرجع المستند (documentUrl) مطلوب: رابط عام أو Data URL أو Base64');
       }
@@ -764,15 +769,15 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
       let parsed;
       try {
         parsed = await dispatchFile(buffer, fileName, normalizeMimeType(fileName), {
-          strategy: strategy as any,
+          strategy,
           preferredEngine: 'auto',
         });
-      } catch (err: any) {
+      } catch (err) {
         return {
           success: false,
           simulated: false,
           fileName,
-          error: `فشل تحويل المستند: ${err?.message || err}`,
+          error: `فشل تحويل المستند: ${errorMessage(err)}`,
         };
       }
 
@@ -860,12 +865,12 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
           markdown,
           metadata: { fileName, tenantId: ctx.tenantId },
         };
-      } catch (err: any) {
+      } catch (err) {
         return {
           success: false,
           simulated: false,
           fileName,
-          error: `فشل تحليل Mistral OCR: ${err?.message || err}`,
+          error: `فشل تحليل Mistral OCR: ${errorMessage(err)}`,
         };
       }
     },
@@ -1054,12 +1059,12 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         let parsed;
         try {
           parsed = await dispatchFile(buffer, fileName, normalizeMimeType(fileName), { preferredEngine: 'auto' });
-        } catch (err: any) {
+        } catch (err) {
           return {
             success: false,
             simulated: false,
             fileName,
-            error: `فشل تحويل الملف إلى نص: ${err?.message || err}`,
+            error: `فشل تحويل الملف إلى نص: ${errorMessage(err)}`,
           };
         }
         if (!parsed.success || !parsed.text?.trim()) {
@@ -1115,7 +1120,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         documentCount: 1,
         collectionIds: collections,
         createdAt: now,
-      } as any);
+      });
 
       const docId = `doc-mcp-ingest-${Date.now().toString().slice(-8)}`;
       const pageChunks = chunkDocumentWithPages(content);
@@ -1133,7 +1138,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
         createdAt: now,
         metadata: { ingestedVia: 'mcp_tool', origin: fetchedFrom, sourceId },
         collectionIds: collections,
-      } as any;
+      } satisfies Document;
       await db.addDocument(newDoc);
 
       const chunks = chunkTextList.map(
@@ -1149,7 +1154,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
             language: 'ar',
             score: 0,
             metadata: { ingestedVia: 'mcp_tool', position: index, tokenCount: estimateTokenCount(chunkText) },
-          }) as any,
+          }) satisfies DocumentChunk,
       );
       const indexResult = await db.addChunks(chunks);
 
@@ -1231,12 +1236,12 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
           transcriptUrl: result.videoUrl,
           markdown: `# ${result.title}\n\n**القناة:** ${result.channel} | **المدة:** ${result.duration}\n\n${result.transcript}`,
         };
-      } catch (err: any) {
+      } catch (err) {
         return {
           success: false,
           simulated: false,
           url,
-          error: err?.message || 'فشل جلب التفريغ النصي للفيديو',
+          error: errorMessage(err) || 'فشل جلب التفريغ النصي للفيديو',
         };
       }
     },

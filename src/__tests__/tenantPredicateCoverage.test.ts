@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
@@ -122,6 +122,13 @@ function referencedTables(stmt: string): string[] {
 const isDdl = (stmt: string) => /^(CREATE|DROP|ALTER)\b/i.test(stmt);
 
 describe('tenant predicate coverage (static scan of postgres.ts)', () => {
+  afterEach(() => {
+    // Env hygiene (v0.12.16): see lexicalTenantIsolation afterEach comment —
+    // the threads pool shares process.env across files in the same worker.
+    delete process.env.DATABASE_URL;
+    delete process.env.PG_TLS_REJECT_UNAUTHORIZED;
+  });
+
   it('has an allowlist that matches actual SQL (no stale entries)', () => {
     for (const entry of ALLOWLIST) {
       expect(
