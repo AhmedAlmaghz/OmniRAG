@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpGenerateTool');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
 import { generateObject } from 'ai';
@@ -137,7 +141,7 @@ ${prompt}`,
 
       return NextResponse.json({ error: 'إجراء غير مدعوم' }, { status: 400 });
     } catch (error: unknown) {
-      console.error('Error in MCP generate-tool API:', error);
+      log.error('Error in MCP generate-tool API:', error);
       return NextResponse.json({ error: 'فشل توليد الأداة (Failed to generate tool)' }, { status: 500 });
     }
   });

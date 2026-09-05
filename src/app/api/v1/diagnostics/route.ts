@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1Diagnostics');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { getPostgresPool } from '@/lib/storage/postgres';
@@ -104,7 +108,7 @@ async function runPostgresDiagnostic(req?: any) {
       client.release();
     }
   } catch (err: any) {
-    console.error('[diagnostics] PostgreSQL connection failed:', err);
+    log.error('[diagnostics] PostgreSQL connection failed:', err);
     return {
       service: 'postgresql',
       name: 'PostgreSQL Database',
@@ -182,7 +186,7 @@ async function runQdrantDiagnostic(req?: any) {
         : 'Qdrant cluster connected. Ready to provision "omnirag_chunks" collection on first insert.',
     };
   } catch (err: any) {
-    console.error('[diagnostics] Qdrant connection failed:', err);
+    log.error('[diagnostics] Qdrant connection failed:', err);
     return {
       service: 'qdrant',
       name: 'Qdrant Vector Engine',
@@ -268,7 +272,7 @@ async function runMistralDiagnostic(req?: any) {
       };
     }
   } catch (err: any) {
-    console.error('[diagnostics] Mistral endpoint check failed:', err);
+    log.error('[diagnostics] Mistral endpoint check failed:', err);
     return {
       service: 'mistral',
       name: 'Mistral Document AI',

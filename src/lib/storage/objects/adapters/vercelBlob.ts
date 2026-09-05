@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibStorageObjectsAdaptersVercelBlob');
+
 import type { IObjectStore } from '../types';
 
 /**
@@ -28,7 +32,7 @@ export const vercelBlobObjectStore: IObjectStore = {
       });
       return true;
     } catch (err) {
-      console.error(`[objectStore:vercel-blob] put failed for ${key}:`, (err as Error)?.message);
+      log.error(`[objectStore:vercel-blob] put failed for ${key}:`, (err as Error)?.message);
       return false;
     }
   },
@@ -58,7 +62,7 @@ export const vercelBlobObjectStore: IObjectStore = {
       const { del } = await import('@vercel/blob');
       await del(key, {});
     } catch (err) {
-      console.warn(`[objectStore:vercel-blob] delete failed for ${key}:`, (err as Error)?.message);
+      log.warn(`[objectStore:vercel-blob] delete failed for ${key}:`, (err as Error)?.message);
     }
   },
 };

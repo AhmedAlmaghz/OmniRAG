@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1SourcesIdSync');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/lib/storage/db';
@@ -63,7 +67,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, { params }: { para
           sourceName: synced?.name ?? null,
         });
       } catch (err) {
-        console.error(`[sources/sync] Background sync failed for ${id}:`, err);
+        log.error(`[sources/sync] Background sync failed for ${id}:`, err);
         try {
           await db.updateSource(id, { status: 'error', lastError: (err as Error)?.message || String(err) }, tenantId);
         } catch {

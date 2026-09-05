@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesExtractionEngines');
+
 import type { DispatchResult } from '../unstructuredService';
 import type { ExtractionContext, IExtractionEngine } from './types';
 
@@ -24,7 +28,7 @@ const localPptxEngine: IExtractionEngine = {
     try {
       const localPptx = await parsePptxLocally(ctx.fileBuffer);
       if (localPptx.text.trim().length >= 400) {
-        console.log(
+        log.info(
           `[Document Ingestion] Parsed PowerPoint locally (${localPptx.slideCount} slides) — no cloud engine needed.`,
         );
         return {
@@ -33,12 +37,12 @@ const localPptxEngine: IExtractionEngine = {
           success: true,
         };
       }
-      console.warn(
+      log.warn(
         `[Document Ingestion] Local PPTX parse produced only ${localPptx.text.trim().length} chars — falling through to cloud engines.`,
       );
       return null;
     } catch (e: any) {
-      console.warn('[Document Ingestion] Local PPTX parser failed, falling back to other engines...', e?.message);
+      log.warn('[Document Ingestion] Local PPTX parser failed, falling back to other engines...', e?.message);
       return null;
     }
   },
@@ -56,7 +60,7 @@ const mammothDocxEngine: IExtractionEngine = {
   extract: async (ctx) => {
     const { parseDocxWithMammoth } = await import('../unstructuredService');
     try {
-      console.log(
+      log.info(
         `[Document Ingestion] Parsing Word Document (${ctx.fileName}) locally using mammoth to preserve perfect Arabic UTF-8 encoding...`,
       );
       const mammothText = await parseDocxWithMammoth(ctx.fileBuffer);
@@ -69,7 +73,7 @@ const mammothDocxEngine: IExtractionEngine = {
       }
       return null;
     } catch (e: any) {
-      console.error('[Document Ingestion] Local Mammoth DOCX parser failed, falling back to other engines...', e);
+      log.error('[Document Ingestion] Local Mammoth DOCX parser failed, falling back to other engines...', e);
       return null;
     }
   },
@@ -117,7 +121,7 @@ const localOnlyEngine: IExtractionEngine = {
           return { text: localText, engineUsed: 'Local Tesseract OCR (offline ⚡)', success: true };
         }
       } catch (e: any) {
-        console.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
+        log.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
       }
       return localUnsupported('تعذر التعرف الضوئي على نص داخل الصورة عبر المكتبة المحلية (Tesseract).');
     }
@@ -168,7 +172,7 @@ const plainTextEngine: IExtractionEngine = {
       const text = ctx.fileBuffer.toString('utf-8');
       return { text, engineUsed: 'Direct UTF-8 Text Reader', success: true };
     } catch (e: any) {
-      console.warn('[Unstructured Service] Failed to read as plain text:', e);
+      log.warn('[Unstructured Service] Failed to read as plain text:', e);
       return null;
     }
   },
@@ -190,7 +194,7 @@ const mistralOcrEngine: IExtractionEngine = {
     const { mistralOcr } = await import('../unstructuredService');
     const result = await mistralOcr(ctx.fileBuffer, ctx.fileName, ctx.mimeType, ctx.mistralKey);
     if (result.success) return result;
-    console.warn('[Unstructured Service] Mistral OCR workflow failed, falling back to other engines...');
+    log.warn('[Unstructured Service] Mistral OCR workflow failed, falling back to other engines...');
     return null;
   },
 };
@@ -220,7 +224,7 @@ const unstructuredEngine: IExtractionEngine = {
       ctx.options.strategy || 'hi_res',
     );
     if (result.success) return result;
-    console.warn('[Unstructured Service] Partition workflow failed, falling back to Gemini OCR parser...');
+    log.warn('[Unstructured Service] Partition workflow failed, falling back to Gemini OCR parser...');
     return null;
   },
 };
@@ -286,7 +290,7 @@ const geminiEngine: IExtractionEngine = {
       }
       return null;
     } catch (err: any) {
-      console.error('[Unstructured Service] Fallback document extraction failed:', err);
+      log.error('[Unstructured Service] Fallback document extraction failed:', err);
       return null;
     }
   },
@@ -310,7 +314,7 @@ const tesseractEngine: IExtractionEngine = {
       }
       return null;
     } catch (e: any) {
-      console.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
+      log.warn('[Unstructured Service] Local Tesseract OCR failed:', e?.message);
       return null;
     }
   },
@@ -346,7 +350,7 @@ const pptxSlideOcrEngine: IExtractionEngine = {
       }
       return null;
     } catch (e: any) {
-      console.warn('[Unstructured Service] Local PPTX slide-image OCR failed:', e?.message);
+      log.warn('[Unstructured Service] Local PPTX slide-image OCR failed:', e?.message);
       return null;
     }
   },

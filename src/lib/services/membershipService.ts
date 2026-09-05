@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesMembershipService');
+
 import { randomUUID, randomBytes } from 'node:crypto';
 import { getPostgresPool } from '../storage/postgres';
 import { db } from '../storage/db';
@@ -310,7 +314,7 @@ export async function resolveMembershipRole(tenantId: string, userId: string): P
     }
     return null;
   } catch (err) {
-    console.warn('[membershipService] resolveMembershipRole failed:', (err as Error)?.message);
+    log.warn('[membershipService] resolveMembershipRole failed:', (err as Error)?.message);
     return null;
   }
 }
@@ -676,7 +680,7 @@ export async function canAccessResource(
     const teamIds = new Set(await listUserTeamIds(userId, tenantId));
     return active.some((s) => s.granteeType === 'team' && teamIds.has(s.granteeId) && satisfies(s));
   } catch (err) {
-    console.warn('[membershipService] canAccessResource failed:', (err as Error)?.message);
+    log.warn('[membershipService] canAccessResource failed:', (err as Error)?.message);
     return false;
   }
 }

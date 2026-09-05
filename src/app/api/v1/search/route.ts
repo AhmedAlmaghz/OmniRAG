@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1Search');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -86,7 +90,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
       return NextResponse.json(searchResults);
     } catch (err: any) {
-      console.error('[api/v1/search] Error:', err);
+      log.error('[api/v1/search] Error:', err);
       return NextResponse.json({ error: 'فشل تنفيذ البحث (Search request failed)' }, { status: 500 });
     }
   });

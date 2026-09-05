@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibStorageObjectsAdaptersS3');
+
 import { getS3Config, presignS3Url, downloadS3Object, deleteS3Object } from '../../../uploads/directUpload';
 import type { IObjectStore } from '../types';
 
@@ -34,12 +38,12 @@ export const s3ObjectStore: IObjectStore = {
         headers: { 'Content-Type': contentType || 'application/octet-stream' },
       });
       if (!res.ok) {
-        console.warn(`[objectStore:s3] PUT ${key} failed: HTTP ${res.status}`);
+        log.warn(`[objectStore:s3] PUT ${key} failed: HTTP ${res.status}`);
         return false;
       }
       return true;
     } catch (err) {
-      console.error(`[objectStore:s3] put failed for ${key}:`, (err as Error)?.message);
+      log.error(`[objectStore:s3] put failed for ${key}:`, (err as Error)?.message);
       return false;
     }
   },
@@ -62,7 +66,7 @@ export const s3ObjectStore: IObjectStore = {
         contentType: contentType || 'application/octet-stream',
       });
     } catch (err) {
-      console.error(`[objectStore:s3] presignPut failed for ${key}:`, (err as Error)?.message);
+      log.error(`[objectStore:s3] presignPut failed for ${key}:`, (err as Error)?.message);
       return null;
     }
   },

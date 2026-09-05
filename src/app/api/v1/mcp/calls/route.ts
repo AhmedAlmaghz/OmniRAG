@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpCalls');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
@@ -21,7 +25,7 @@ export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props)
       calls,
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/calls] GET error:', err);
+    log.error('[api/v1/mcp/calls] GET error:', err);
     return NextResponse.json({ success: false, error: 'فشل جلب سجل استدعاءات الأدوات' }, { status: 500 });
   }
 });

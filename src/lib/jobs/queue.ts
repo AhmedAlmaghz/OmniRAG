@@ -1,5 +1,5 @@
 import { PgBoss } from 'pg-boss';
-import { createLogger } from '../logging/logger';
+import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('JobQueue');
 

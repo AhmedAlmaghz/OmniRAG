@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibConnectorsLiveConnectors');
+
 /**
  * Live connector extractions for knowledge-source synchronization.
  *
@@ -386,7 +390,7 @@ export async function extractFromWebFile(config: Record<string, any>): Promise<C
   const fileName = (typeof config?.fileName === 'string' && config.fileName.trim()) || fileNameFromUrl(fileUrl);
   const mimeType = bareContentType(res.contentType) || 'application/octet-stream';
 
-  console.log(
+  log.info(
     `[Web File Connector] Processing ${fileName} (${(res.bytes.length / 1024 / 1024).toFixed(2)} MB, ${mimeType}) with engine: ${engine}...`,
   );
   const processed = await processFileBuffer(res.bytes, fileName, mimeType, { preferredEngine: engine });

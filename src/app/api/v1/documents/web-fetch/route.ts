@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1DocumentsWebFetch');
+
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
@@ -88,7 +92,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
     const maxBytes =
       Math.min(Math.max(maxFileSizeMb || DEFAULT_MAX_FILE_SIZE_MB, 1), MAX_ALLOWED_FILE_SIZE_MB_CAP) * 1024 * 1024;
 
-    console.log(
+    log.info(
       `[Web Fetch] Downloading ${url} (engine: ${engine}, cap: ${(maxBytes / 1024 / 1024).toFixed(0)} MB)...`,
     );
     const download = await safeFetchBinary(url, { timeoutMs: DOWNLOAD_TIMEOUT_MS, maxBytes });
@@ -139,7 +143,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       );
     }
 
-    console.log(
+    log.info(
       `[Web Fetch] Processing ${resolvedFileName} (${(download.bytes.length / 1024 / 1024).toFixed(2)} MB) via ${engine}...`,
     );
     const processed = await processFileBuffer(download.bytes, resolvedFileName, mimeType, { preferredEngine: engine });

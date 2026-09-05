@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibStorageVectorsRegistry');
+
 import type { IVectorStore, VectorStoreDescriptor } from './types';
 import { qdrantVectorStore } from './adapters/qdrant';
 import { pgvectorStore } from './adapters/pgvector';
@@ -79,7 +83,7 @@ export function getVectorStore(tenantConfig?: { vectorStoreId?: string } | null)
   if (wanted) {
     const store = byId.get(wanted);
     if (store) return store;
-    console.warn(`[vectorStore] unknown vectorStoreId "${wanted}" — using deployment default`);
+    log.warn(`[vectorStore] unknown vectorStoreId "${wanted}" — using deployment default`);
   }
   return getDefaultVectorStore();
 }
@@ -121,7 +125,7 @@ export async function getVectorStoreSelection(tenantId: string): Promise<VectorS
       if (store) selection = { store, explicit: true };
     }
   } catch (e) {
-    console.warn('[vectorStore] tenant config lookup failed, using default:', (e as Error)?.message);
+    log.warn('[vectorStore] tenant config lookup failed, using default:', (e as Error)?.message);
   }
 
   if (selectionCache.size >= MAX_CACHE) {

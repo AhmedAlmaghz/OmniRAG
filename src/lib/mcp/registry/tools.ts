@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibMcpRegistryTools');
+
 import { db } from '@/lib/storage/db';
 import { generateEmbedding } from '@/lib/rag/embedding';
 import { getVectorStoreForTenant } from '@/lib/storage/vectors/registry';
@@ -929,7 +933,7 @@ export const MCP_TOOLS_REGISTRY: Record<string, MCPToolDefinition> = {
           };
         }
       } catch (err) {
-        console.log('Vector search in MCP tool fallback to DB chunks');
+        log.info('Vector search in MCP tool fallback to DB chunks');
       }
 
       // Fallback

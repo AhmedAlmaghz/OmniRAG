@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibAiRegistryCredentials');
+
 import { getEnv } from '../../env/runtimeEnv';
 import { getActiveTenantId } from '../../config/requestContext';
 import { decryptToken } from '../../mcp/auth/encryption';
@@ -96,7 +100,7 @@ export async function resolveProviderCredentials(providerId: string): Promise<Pr
         creds = { ...decrypted, baseUrl: record.baseUrl || decrypted.baseUrl || undefined };
       }
     } catch (e) {
-      console.warn('[providerCredentials] tenant lookup failed, falling back to env:', (e as Error)?.message);
+      log.warn('[providerCredentials] tenant lookup failed, falling back to env:', (e as Error)?.message);
     }
   }
 

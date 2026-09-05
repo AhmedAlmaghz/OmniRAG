@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1Collections');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -38,7 +42,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     const collections = await db.getCollections(tenantId);
     return NextResponse.json({ collections });
   } catch (err: any) {
-    console.error('API Error in collections GET:', err);
+    log.error('API Error in collections GET:', err);
     return NextResponse.json(
       { collections: [], error: 'حدث خطأ داخلي في الخادم. يرجى المحاولة مرة أخرى لاحقاً.', code: 'INTERNAL_ERROR' },
       { status: 500 },

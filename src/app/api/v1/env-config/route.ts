@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1EnvConfig');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { getEnv, setServerEnvs } from '@/lib/env/runtimeEnv';
@@ -265,7 +269,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             message: 'تم الاتصال بقاعدة بيانات PostgreSQL (Neon DB) بنجاح! الجداول الأساسية جاهزة.',
           });
         } catch (err: any) {
-          console.error('[env-config] PostgreSQL connection check failed:', err);
+          log.error('[env-config] PostgreSQL connection check failed:', err);
           return NextResponse.json({
             success: false,
             key,
@@ -310,7 +314,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             });
           }
         } catch (err: any) {
-          console.error('[env-config] Qdrant connection check failed:', err);
+          log.error('[env-config] Qdrant connection check failed:', err);
           return NextResponse.json({
             success: false,
             key,
@@ -341,7 +345,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
             });
           }
         } catch (err: any) {
-          console.error('[env-config] Mistral check failed:', err);
+          log.error('[env-config] Mistral check failed:', err);
           return NextResponse.json({
             success: false,
             key,

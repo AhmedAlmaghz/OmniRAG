@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1Documents');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse, after } from 'next/server';
 import { z } from 'zod';
@@ -78,7 +82,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     const docs = await db.getDocuments(tenantId);
     return NextResponse.json({ documents: docs });
   } catch (error: any) {
-    console.error('API Error in documents GET:', error);
+    log.error('API Error in documents GET:', error);
     return NextResponse.json(
       {
         documents: [],

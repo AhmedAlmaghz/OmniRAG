@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1YoutubeTranscript');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
 import { processYoutubeTranscript, TranscriptExtractionError } from '@/lib/youtube/transcriptParser';
@@ -19,7 +23,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
     const result = await processYoutubeTranscript(url, lang);
     return NextResponse.json(result);
   } catch (error: any) {
-    console.error('YouTube transcript route error:', error);
+    log.error('YouTube transcript route error:', error);
 
     // Typed extraction failures carry a machine-readable code — no fragile
     // substring matching on Arabic message text.

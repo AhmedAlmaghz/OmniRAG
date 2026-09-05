@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpHealth');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
@@ -41,7 +45,7 @@ export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props)
       servers: probes,
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/health] GET error:', err);
+    log.error('[api/v1/mcp/health] GET error:', err);
     return NextResponse.json({ success: false, error: 'فشل فحص الحالة المجمعة لخوادم MCP' }, { status: 500 });
   }
 });

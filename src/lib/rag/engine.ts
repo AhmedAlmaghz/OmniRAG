@@ -13,7 +13,7 @@ import { SYSTEM_CONFIG } from '../config/systemConfig';
 import { isTenantEmbeddingStale, selfHealStaleCorpus } from '../services/reembedService';
 import { buildTenantMcpTools, type CustomToolSchema } from '../mcp/aiSdkTools';
 import { ToolExecutionOutcome, executeMcpToolCall } from '../mcp/dispatcher';
-import { createLogger } from '../logging/logger';
+import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('RagEngine');
 

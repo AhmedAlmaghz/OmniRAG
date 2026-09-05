@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibYoutubeTranscriptParser');
+
 import { YoutubeTranscript } from 'youtube-transcript';
 // @ts-expect-error — youtube-captions-scraper ships no bundled types
 import { getSubtitles } from 'youtube-captions-scraper';
@@ -280,7 +284,7 @@ export class TranscriptExtractionError extends Error {
  */
 async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  console.log(`[YouTube Downloader] Starting audio-only stream download for video ID: ${videoId}...`);
+  log.info(`[YouTube Downloader] Starting audio-only stream download for video ID: ${videoId}...`);
 
   const stream = ytdl(url, {
     filter: 'audioonly',
@@ -301,7 +305,7 @@ async function downloadYoutubeAudio(videoId: string): Promise<{ buffer: Buffer; 
     stream.on('end', () => {
       clearTimeout(timeout);
       const buffer = Buffer.concat(chunks);
-      console.log(
+      log.info(
         `[YouTube Downloader] Audio download complete! Buffer size: ${(buffer.length / 1024 / 1024).toFixed(2)} MB`,
       );
       resolve({
@@ -401,7 +405,7 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
       }
     }
   } catch (e) {
-    console.warn('Warning: Could not fetch YouTube HTML metadata:', e);
+    log.warn('Warning: Could not fetch YouTube HTML metadata:', e);
   }
 
   // 2. Strategy 1: Try native youtube-transcript package first (fast, exact timestamps, not blocked by bot checks)
@@ -455,14 +459,14 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
       // direct-URL Gemini path instead of blaming missing keys.
       const reason = String(downloadError?.message || downloadError || 'unknown download error');
       failureNotes.push(`تعذر تنزيل صوت الفيديو من هذا الخادم (${reason})`);
-      console.log(`[YouTube Transcription] Audio stream not extractable on this host: ${reason}`);
+      log.info(`[YouTube Transcription] Audio stream not extractable on this host: ${reason}`);
     }
 
     if (audioResult && audioResult.buffer && audioResult.buffer.length > 0) {
       // 5a. Groq Whisper — fastest option when the key is present and the file is small enough.
       if (groqKey) {
         if (audioResult.buffer.length > 25 * 1024 * 1024) {
-          console.log(
+          log.info(
             `[YouTube Transcription] Audio size ${(audioResult.buffer.length / 1024 / 1024).toFixed(2)}MB exceeds Whisper 25MB limit — deferring to Gemini transcription.`,
           );
         } else {
@@ -507,7 +511,7 @@ export async function processYoutubeTranscript(url: string, lang: string = 'ar')
     // 5c. Gemini DIRECT on the YouTube URL — bypasses local downloads
     // entirely, so it works even when YouTube blocks this host's requests.
     if (!transcriptText && hasGemini) {
-      console.log('[YouTube Transcription] Trying Gemini direct video-URL transcription...');
+      log.info('[YouTube Transcription] Trying Gemini direct video-URL transcription...');
       const urlResult = await transcribeYoutubeUrlWithGemini(targetUrl);
       if (urlResult && urlResult.success && urlResult.text) {
         transcriptText = urlResult.text;

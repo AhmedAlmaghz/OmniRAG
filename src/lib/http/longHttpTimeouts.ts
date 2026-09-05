@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibHttpLongHttpTimeouts');
+
 import { Agent, setGlobalDispatcher } from 'undici';
 
 /**
@@ -28,6 +32,6 @@ export function ensureLongHttpTimeouts(): void {
     );
   } catch (err: any) {
     // Non-fatal: callers fall back through the engine chain either way.
-    console.warn('[longHttpTimeouts] Could not configure undici dispatcher:', err?.message);
+    log.warn('[longHttpTimeouts] Could not configure undici dispatcher:', err?.message);
   }
 }

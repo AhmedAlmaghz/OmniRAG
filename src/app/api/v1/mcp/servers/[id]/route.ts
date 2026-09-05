@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpServersId');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
@@ -26,7 +30,7 @@ export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx, props)
       server,
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/servers/[id]] GET error:', err);
+    log.error('[api/v1/mcp/servers/[id]] GET error:', err);
     return NextResponse.json({ success: false, error: 'فشل جلب تفاصيل خادم الـ MCP' }, { status: 500 });
   }
 });
@@ -62,7 +66,7 @@ export const PATCH = withAuthAndRateLimit(async (req: NextRequest, authCtx, prop
       server,
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/servers/[id]] PATCH error:', err);
+    log.error('[api/v1/mcp/servers/[id]] PATCH error:', err);
     return NextResponse.json({ success: false, error: 'فشل تحديث بيانات خادم الـ MCP' }, { status: 500 });
   }
 });
@@ -94,7 +98,7 @@ export const DELETE = withAuthAndRateLimit(async (req: NextRequest, authCtx, pro
       message: `تم حذف خادم الـ MCP (${id}) بنجاح`,
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/servers/[id]] DELETE error:', err);
+    log.error('[api/v1/mcp/servers/[id]] DELETE error:', err);
     return NextResponse.json({ success: false, error: 'فشل حذف خادم الـ MCP' }, { status: 500 });
   }
 });

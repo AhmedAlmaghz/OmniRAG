@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1AuthSsoCallback');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
@@ -131,7 +135,7 @@ export async function GET(req: NextRequest) {
     const res = NextResponse.redirect(home, 302);
     return setSessionCookie(res, { token });
   } catch (err) {
-    console.error('[sso/callback] error:', (err as Error)?.message);
+    log.error('[sso/callback] error:', (err as Error)?.message);
     return failRedirect(req, 'callback_failed');
   }
 }

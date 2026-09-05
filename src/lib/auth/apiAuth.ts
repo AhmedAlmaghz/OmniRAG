@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibAuthApiAuth');
+
 import { NextRequest, NextResponse } from 'next/server';
 import type { SessionRecord } from '../types/omnirag';
 import { db } from '../storage/db';
@@ -63,7 +67,7 @@ async function verifyApiKeyAuth(req: NextRequest): Promise<AuthenticatedContext 
   try {
     record = await db.getApiKeyByHash(keyHash);
   } catch (error) {
-    console.warn('[apiAuth] API key lookup failed — rejecting request:', (error as Error)?.message);
+    log.warn('[apiAuth] API key lookup failed — rejecting request:', (error as Error)?.message);
     return deny(401, '401_API_KEY_LOOKUP_FAILED', 'تعذّر التحقق من مفتاح API (Could not verify API key).');
   }
 
@@ -143,7 +147,7 @@ export async function verifyApiAuth(req: NextRequest): Promise<AuthenticatedCont
   try {
     session = await db.getSession(token);
   } catch (error) {
-    console.warn('[apiAuth] Session lookup failed — rejecting request:', (error as Error)?.message);
+    log.warn('[apiAuth] Session lookup failed — rejecting request:', (error as Error)?.message);
     return deny(401, '401_SESSION_LOOKUP_FAILED', 'تعذّر التحقق من الجلسة (Could not verify session).');
   }
 

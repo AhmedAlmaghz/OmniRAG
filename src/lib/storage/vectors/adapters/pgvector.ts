@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibStorageVectorsAdaptersPgvector');
+
 import { getEnv } from '../../../env/runtimeEnv';
 import { getPostgresPool } from '../../postgres';
 import type {
@@ -43,7 +47,7 @@ function markUnavailable(reason: string): void {
   unavailable = true;
   if (!unavailableLogged) {
     unavailableLogged = true;
-    console.warn(`[pgvector] backend unavailable — semantic search/ingestion via pgvector disabled: ${reason}`);
+    log.warn(`[pgvector] backend unavailable — semantic search/ingestion via pgvector disabled: ${reason}`);
   }
 }
 
@@ -186,7 +190,7 @@ export const pgvectorStore: IVectorStore = {
       );
       return true;
     } catch (err) {
-      console.error(`[pgvector] upsert of ${points.length} point(s) failed:`, (err as Error)?.message);
+      log.error(`[pgvector] upsert of ${points.length} point(s) failed:`, (err as Error)?.message);
       return false;
     }
   },
@@ -236,7 +240,7 @@ export const pgvectorStore: IVectorStore = {
         }))
         .filter((hit: VectorSearchHit) => hit.semanticScore >= threshold);
     } catch (err) {
-      console.error('[pgvector] search failed:', (err as Error)?.message);
+      log.error('[pgvector] search failed:', (err as Error)?.message);
       return [];
     }
   },
@@ -251,7 +255,7 @@ export const pgvectorStore: IVectorStore = {
       try {
         await pool.query(`DELETE FROM ${table} WHERE tenant_id = $1 AND document_id = $2`, [tenantId, documentId]);
       } catch (err) {
-        console.error(`[pgvector] deleteByDocument failed on ${table}:`, (err as Error)?.message);
+        log.error(`[pgvector] deleteByDocument failed on ${table}:`, (err as Error)?.message);
       }
     }
   },
@@ -265,7 +269,7 @@ export const pgvectorStore: IVectorStore = {
       try {
         await pool.query(`DELETE FROM ${table} WHERE id = $1`, [id]);
       } catch (err) {
-        console.error(`[pgvector] deletePoint failed on ${table}:`, (err as Error)?.message);
+        log.error(`[pgvector] deletePoint failed on ${table}:`, (err as Error)?.message);
       }
     }
   },
@@ -309,7 +313,7 @@ export const pgvectorStore: IVectorStore = {
           values,
         );
       } catch (err) {
-        console.error(`[pgvector] updateDocumentPayload failed on ${table}:`, (err as Error)?.message);
+        log.error(`[pgvector] updateDocumentPayload failed on ${table}:`, (err as Error)?.message);
       }
     }
   },

@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1ShareToken');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
 import { getEnv } from '@/lib/env/runtimeEnv';
@@ -111,7 +115,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
       },
     });
   } catch (err) {
-    console.error('[share link] Unexpected error:', (err as Error)?.message);
+    log.error('[share link] Unexpected error:', (err as Error)?.message);
     return NextResponse.json({ error: 'خطأ داخلي في الخادم (Internal Server Error)' }, { status: 500 });
   }
 }

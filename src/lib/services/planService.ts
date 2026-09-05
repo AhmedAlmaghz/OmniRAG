@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesPlanService');
+
 import { NextResponse } from 'next/server';
 import { db } from '../storage/db';
 import { getPostgresPool } from '../storage/postgres';
@@ -147,7 +151,7 @@ export async function getTenantPlanId(tenantId: string): Promise<PlanId> {
     const tenant: Tenant | undefined = await db.getTenant(tenantId);
     return normalizePlanId(tenant?.plan);
   } catch (err) {
-    console.warn('[plans] plan lookup failed, defaulting to individual:', (err as Error)?.message);
+    log.warn('[plans] plan lookup failed, defaulting to individual:', (err as Error)?.message);
     return 'individual';
   }
 }
@@ -219,7 +223,7 @@ export async function countResourceUsage(tenantId: string, resource: QuotaResour
         return 0;
     }
   } catch (err) {
-    console.warn(`[plans] usage count failed for ${resource}:`, (err as Error)?.message);
+    log.warn(`[plans] usage count failed for ${resource}:`, (err as Error)?.message);
     return 0;
   }
 }
@@ -337,6 +341,6 @@ export async function recordTokenUsage(tenantId: string, tokens: number, period 
       [tenantId, period, Math.round(tokens), new Date().toISOString()],
     );
   } catch (err) {
-    console.warn('[plans] token usage record failed:', (err as Error)?.message);
+    log.warn('[plans] token usage record failed:', (err as Error)?.message);
   }
 }

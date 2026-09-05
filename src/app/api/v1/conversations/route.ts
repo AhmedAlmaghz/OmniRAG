@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1Conversations');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
@@ -26,7 +30,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
     const conversations = await db.getConversations(tenantId);
     return NextResponse.json({ conversations });
   } catch (err: unknown) {
-    console.error('GET /api/v1/conversations error:', err);
+    log.error('GET /api/v1/conversations error:', err);
     return NextResponse.json({ error: 'فشل جلب المحادثات (Failed to fetch conversations)' }, { status: 500 });
   }
 });
@@ -109,7 +113,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (err: unknown) {
-    console.error('POST /api/v1/conversations error:', err);
+    log.error('POST /api/v1/conversations error:', err);
     return NextResponse.json({ error: 'خطأ داخلي في الخادم (Internal Server Error)' }, { status: 500 });
   }
 });

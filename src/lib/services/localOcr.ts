@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesLocalOcr');
+
 import zlib from 'node:zlib';
 import { PDFDocument, PDFName, PDFDict, PDFRawStream, PDFArray, PDFRef, decodePDFRawStream } from 'pdf-lib';
 
@@ -189,7 +193,7 @@ export async function extractImagesFromPdf(pdfBuffer: Buffer, maxImages = 200): 
         }
         // 'jpx' (JPEG2000) and exotic filters are skipped — cloud OCR covers them.
       } catch (err: any) {
-        console.warn(`[localOcr] Failed to convert image ${name}:`, err?.message);
+        log.warn(`[localOcr] Failed to convert image ${name}:`, err?.message);
       }
     }
   }
@@ -244,7 +248,7 @@ export async function ocrPdfLocally(pdfBuffer: Buffer, opts: { maxPages?: number
       const text = await ocrImageBuffer(images[i]);
       if (text) texts.push(`### [صفحة ${i + 1}]\n${text}`);
     } catch (err: any) {
-      console.warn(`[localOcr] Page ${i + 1} recognition failed:`, err?.message);
+      log.warn(`[localOcr] Page ${i + 1} recognition failed:`, err?.message);
     }
   }
   return texts.join('\n\n');

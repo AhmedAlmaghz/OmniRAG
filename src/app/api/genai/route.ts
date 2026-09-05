@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiGenai');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { generateTextResilient } from '@/lib/ai/resilientGenerate';
@@ -50,7 +54,7 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props
       });
     });
   } catch (error: any) {
-    console.error('GenAI route error:', error);
+    log.error('GenAI route error:', error);
     return NextResponse.json({ error: 'فشل توليد المحتوى (Failed to process AI generation)' }, { status: 500 });
   }
 });

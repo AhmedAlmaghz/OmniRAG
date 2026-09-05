@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1Sources');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse, after } from 'next/server';
 import { z } from 'zod';
@@ -77,7 +81,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
       mcpResources,
     });
   } catch (error: any) {
-    console.error('API Error in sources GET:', error);
+    log.error('API Error in sources GET:', error);
     return NextResponse.json(
       {
         tenantId,
@@ -170,7 +174,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       try {
         await db.syncSource(id, tenantId);
       } catch (err) {
-        console.error(`[sources POST] Background initial sync failed for ${id}:`, err);
+        log.error(`[sources POST] Background initial sync failed for ${id}:`, err);
         try {
           await db.updateSource(id, { status: 'error', lastError: (err as Error)?.message || String(err) }, tenantId);
         } catch {
@@ -188,7 +192,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       { status: 201 },
     );
   } catch (error: any) {
-    console.error('API Error in sources POST:', error);
+    log.error('API Error in sources POST:', error);
     return NextResponse.json({ error: 'فشل إنشاء مصدر البيانات (Failed to create source connector)' }, { status: 500 });
   }
 });
@@ -237,7 +241,7 @@ export const PUT = withAuthAndRateLimit(async (req, authCtx, props) => {
       source: { ...updated, config: redactSourceConfig(updated.config) },
     });
   } catch (error: any) {
-    console.error('API Error in sources PUT:', error);
+    log.error('API Error in sources PUT:', error);
     return NextResponse.json({ error: 'فشل تحديث مصدر البيانات (Failed to update source)' }, { status: 500 });
   }
 });

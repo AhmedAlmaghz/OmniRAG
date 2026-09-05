@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1DocumentsParse');
+
 import crypto from 'crypto';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
@@ -259,12 +263,12 @@ async function fetchBlobFile(
 
     // Best-effort cleanup of the transient upload.
     del(blobUrl, {}).catch((delErr) => {
-      console.warn('[Document Ingestion] Failed to delete transient blob:', delErr?.message);
+      log.warn('[Document Ingestion] Failed to delete transient blob:', delErr?.message);
     });
 
     return { buffer, fileName, mimeType };
   } catch (err: any) {
-    console.error('[Document Ingestion] Blob fetch failed:', err?.message);
+    log.error('[Document Ingestion] Blob fetch failed:', err?.message);
     return {
       error: 'فشل تحميل الملف من التخزين المؤقت (Failed to load file from storage)',
       code: '502_BLOB_FETCH_FAILED',
@@ -397,7 +401,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
             }
           }
         } catch (jsonErr: any) {
-          console.error('[Document Ingestion API] Error parsing JSON body:', jsonErr);
+          log.error('[Document Ingestion API] Error parsing JSON body:', jsonErr);
         }
       } else if (contentType.includes('multipart/form-data')) {
         try {
@@ -460,7 +464,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
             }
           }
         } catch (formErr: any) {
-          console.error('[Document Ingestion API] Error parsing formData from request:', formErr);
+          log.error('[Document Ingestion API] Error parsing formData from request:', formErr);
         }
       } else {
         // Fallback for raw stream text
@@ -536,20 +540,20 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
           if (archiveStore.id === 'local') {
             // Historical archive directory for existing self-hosted deployments.
             const archivedPath = archiveUploadedFile(fileBuffer, fileName, tenantIdForArchive, fileHash);
-            console.log(`[Document Ingestion] File archived to disk: ${archivedPath}`);
+            log.info(`[Document Ingestion] File archived to disk: ${archivedPath}`);
           } else {
             const dateStr = new Date().toISOString().slice(0, 10);
             const safeName = (fileName || 'document.bin').replace(/[^\w.\-() ]/g, '_').slice(-120);
             const archiveKey = `archive/${tenantIdForArchive}/${dateStr}/${fileHash.substring(0, 16)}_${safeName}`;
             const archived = await archiveStore.put(archiveKey, fileBuffer, resolvedMime);
             if (archived) {
-              console.log(`[Document Ingestion] File archived to ${archiveStore.id}: ${archiveKey}`);
+              log.info(`[Document Ingestion] File archived to ${archiveStore.id}: ${archiveKey}`);
             } else {
-              console.warn(`[Document Ingestion] Archiving to ${archiveStore.id} failed (non-fatal)`);
+              log.warn(`[Document Ingestion] Archiving to ${archiveStore.id} failed (non-fatal)`);
             }
           }
         } catch (archiveErr: any) {
-          console.warn('[Document Ingestion] Archiving failed (non-fatal):', archiveErr?.message);
+          log.warn('[Document Ingestion] Archiving failed (non-fatal):', archiveErr?.message);
         }
       }
 
@@ -561,7 +565,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       if (!skipCache && SERVER_OCR_CACHE.has(ocrCacheKey)) {
         const cached = SERVER_OCR_CACHE.get(ocrCacheKey)!;
         cached.hits += 1;
-        console.log(
+        log.info(
           `[Document Ingestion Cache] Server OCR Cache Hit for ${fileName} (Tenant: ${tenantId}, Hash: ${fileHash.substring(0, 10)}..., Hits: ${cached.hits})`,
         );
         return NextResponse.json(
@@ -586,7 +590,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
       let chunksProcessed = 1;
 
       const isPdf = mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
-      console.log(
+      log.info(
         `[Document Ingestion] Processing ${isPdf ? 'PDF' : 'document'} (${fileName}, ${(fileBuffer.length / (1024 * 1024)).toFixed(2)} MB) via the shared file pipeline (engine: ${requestedEngine})...`,
       );
 

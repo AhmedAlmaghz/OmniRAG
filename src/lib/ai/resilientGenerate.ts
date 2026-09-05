@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibAiResilientGenerate');
+
 import { generateText, type ModelMessage } from 'ai';
 import { getAiModel, getFallbackModels } from '../config/aiModels';
 import { resolveLanguageModel } from './registry/resolve';
@@ -69,7 +73,7 @@ export async function generateTextResilient(options: ResilientTextOptions = {}):
   }
 
   if (lastError) {
-    console.warn('[AI Resilient] All models failed:', lastError);
+    log.warn('[AI Resilient] All models failed:', lastError);
   }
   return null;
 }

@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpServersIdTest');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
@@ -76,7 +80,7 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props
       testedAt: new Date().toISOString(),
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/servers/[id]/test] POST error:', err);
+    log.error('[api/v1/mcp/servers/[id]/test] POST error:', err);
     return NextResponse.json({ success: false, error: 'فشل اختبار اتصال خادم الـ MCP' }, { status: 500 });
   }
 });

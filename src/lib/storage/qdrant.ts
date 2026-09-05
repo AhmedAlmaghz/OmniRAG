@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibStorageQdrant');
+
 import { createHash } from 'node:crypto';
 import { getEnv } from '../env/runtimeEnv';
 import { QdrantClient } from '@qdrant/js-client-rest';
@@ -19,7 +23,7 @@ export function getQdrantClient(req?: any): any {
   const apiKey = getEnv('QDRANT_API_KEY', req);
 
   if (!url) {
-    console.warn('Qdrant URL (QDRANT_URL) is missing. Qdrant semantic search will be bypassed.');
+    log.warn('Qdrant URL (QDRANT_URL) is missing. Qdrant semantic search will be bypassed.');
     return null;
   }
 
@@ -30,7 +34,7 @@ export function getQdrantClient(req?: any): any {
     });
     return client;
   } catch (error) {
-    console.error('Failed to initialize Qdrant client:', error);
+    log.error('Failed to initialize Qdrant client:', error);
     return null;
   }
 }
@@ -45,7 +49,7 @@ export async function ensureQdrantCollection() {
     const exists = collectionsRes.collections.some((c: any) => c.name === COLLECTION_NAME);
 
     if (!exists) {
-      console.log(`Creating Qdrant collection "${COLLECTION_NAME}" with 3072-dimensional cosine similarity vectors...`);
+      log.info(`Creating Qdrant collection "${COLLECTION_NAME}" with 3072-dimensional cosine similarity vectors...`);
       await qc.createCollection(COLLECTION_NAME, {
         vectors: {
           size: 3072,
@@ -68,9 +72,9 @@ export async function ensureQdrantCollection() {
       });
     }
     collectionVerified = true;
-    console.log(`Qdrant collection "${COLLECTION_NAME}" verified successfully.`);
+    log.info(`Qdrant collection "${COLLECTION_NAME}" verified successfully.`);
   } catch (error) {
-    console.error('Error ensuring Qdrant collection exists:', error);
+    log.error('Error ensuring Qdrant collection exists:', error);
   }
 }
 
@@ -163,7 +167,7 @@ export async function upsertQdrantChunks(
     });
     return true;
   } catch (error) {
-    console.error(`Failed to upsert ${points.length} point(s) into Qdrant:`, error);
+    log.error(`Failed to upsert ${points.length} point(s) into Qdrant:`, error);
     return false;
   }
 }
@@ -187,7 +191,7 @@ export async function deleteQdrantChunk(id: string) {
       points: [toQdrantPointId(id)],
     });
   } catch (error) {
-    console.error(`Failed to delete point ${id} from Qdrant:`, error);
+    log.error(`Failed to delete point ${id} from Qdrant:`, error);
   }
 }
 
@@ -211,7 +215,7 @@ export async function updateQdrantDocumentPayload(
       },
     });
   } catch (error) {
-    console.error(`Failed to update payload for document ${documentId} in Qdrant:`, error);
+    log.error(`Failed to update payload for document ${documentId} in Qdrant:`, error);
   }
 }
 
@@ -231,7 +235,7 @@ export async function deleteQdrantDocument(documentId: string, tenantId: string)
       },
     });
   } catch (error) {
-    console.error(`Failed to delete points for document ${documentId} from Qdrant:`, error);
+    log.error(`Failed to delete points for document ${documentId} from Qdrant:`, error);
   }
 }
 
@@ -308,7 +312,7 @@ export async function searchQdrantSemantic(params: {
       };
     });
   } catch (error) {
-    console.error('Qdrant semantic search failed:', error);
+    log.error('Qdrant semantic search failed:', error);
     return [];
   }
 }

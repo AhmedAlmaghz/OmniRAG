@@ -21,7 +21,7 @@ import {
 } from '../types/omnirag';
 import { randomUUID } from 'crypto';
 import { chunkDocumentWithPages, estimateTokenCount } from '../rag/chunker';
-import { createLogger } from '../logging/logger';
+import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('OmniRAGStorage');
 import { DEFAULT_AI_MODELS, getAiModel } from '../config/aiModels';

@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1ChatCompletions');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
 import { HookHarness } from '@/lib/harness/hook-harness';
@@ -154,7 +158,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx, props) => {
         suggestions: ragResponse.suggestions,
       });
     } catch (err: unknown) {
-      console.error('API Error in /api/v1/chat/completions:', err);
+      log.error('API Error in /api/v1/chat/completions:', err);
       return NextResponse.json(
         { error: 'حدث خطأ داخلي في المعالجة (Internal Processing Error)', code: '500_INTERNAL_ERROR' },
         { status: 500 },

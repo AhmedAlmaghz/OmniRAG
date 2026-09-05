@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1AuthSsoInitiate');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
@@ -106,7 +110,7 @@ export async function POST(req: NextRequest) {
     const authorizationUrl = await buildAuthorizationUrl({ config: sso, redirectUri, state, codeChallenge });
     return NextResponse.json({ authorizationUrl, state });
   } catch (err) {
-    console.error('[sso/initiate] error:', (err as Error)?.message);
+    log.error('[sso/initiate] error:', (err as Error)?.message);
     return NextResponse.json(
       { error: 'تعذر بدء تسجيل الدخول الأحادي (Could not start SSO)', code: '500_SERVER_ERROR' },
       { status: 500 },

@@ -9,7 +9,7 @@
  * the /api/v1/jobs/tick route (driven by Vercel Cron) provides the worker via
  * polling instead. See SDLC ADR-013.
  */
-import { createLogger } from './lib/logging/logger';
+import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('Instrumentation');
 

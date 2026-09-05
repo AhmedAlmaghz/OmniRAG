@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1DocumentsUploadToken');
+
 import { NextResponse } from 'next/server';
 import { handleUpload } from '@vercel/blob/client';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
@@ -81,7 +85,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
 
     return NextResponse.json(result);
   } catch (error: any) {
-    console.error('[upload-token] Error generating client token:', error?.message);
+    log.error('[upload-token] Error generating client token:', error?.message);
     return NextResponse.json(
       {
         error: 'تعذر إنشاء رمز الرفع (Failed to generate upload token)',

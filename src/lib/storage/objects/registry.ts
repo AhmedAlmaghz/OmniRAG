@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibStorageObjectsRegistry');
+
 import type { IObjectStore, ObjectStoreDescriptor } from './types';
 import { s3ObjectStore } from './adapters/s3';
 import { vercelBlobObjectStore } from './adapters/vercelBlob';
@@ -74,7 +78,7 @@ export function getObjectStore(tenantConfig?: { objectStoreId?: string } | null)
   if (wanted) {
     const store = byId.get(wanted);
     if (store) return store;
-    console.warn(`[objectStore] unknown objectStoreId "${wanted}" — using deployment default`);
+    log.warn(`[objectStore] unknown objectStoreId "${wanted}" — using deployment default`);
   }
   return getDefaultObjectStore();
 }
@@ -111,7 +115,7 @@ export async function getObjectStoreSelection(tenantId: string): Promise<ObjectS
       if (store) selection = { store, explicit: true };
     }
   } catch (e) {
-    console.warn('[objectStore] tenant config lookup failed, using default:', (e as Error)?.message);
+    log.warn('[objectStore] tenant config lookup failed, using default:', (e as Error)?.message);
   }
 
   if (selectionCache.size >= MAX_CACHE) {

@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpOauthCallback');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { mcpOAuthManager } from '@/lib/mcp/auth/oauth-manager';
 
@@ -84,7 +88,7 @@ export async function GET(req: NextRequest) {
       (success ? 'تم ربط توثيق OAuth بنجاح. يمكنك إغلاق هذه النافذة.' : 'فشل إكمال تدفق توثيق OAuth');
     return popupClosePage(success, message);
   } catch (err: any) {
-    console.error('[api/v1/mcp/oauth/callback] GET error:', err);
+    log.error('[api/v1/mcp/oauth/callback] GET error:', err);
     return popupClosePage(false, 'حدث خطأ داخلي أثناء إكمال توثيق OAuth');
   }
 }

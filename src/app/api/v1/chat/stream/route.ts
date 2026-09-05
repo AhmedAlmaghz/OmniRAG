@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1ChatStream');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextResponse } from 'next/server';
 import {
@@ -403,7 +407,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
                 usedModel = aliasToTry;
                 delivered = true;
                 if (aliasToTry !== modelAlias) {
-                  console.log(`[chat/stream] primary "${modelAlias}" unavailable — serving via "${aliasToTry}".`);
+                  log.info(`[chat/stream] primary "${modelAlias}" unavailable — serving via "${aliasToTry}".`);
                 }
                 break;
               }
@@ -411,14 +415,14 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
               lastFailReason = `${aliasToTry}: empty response`;
             } catch (err: any) {
               lastFailReason = `${aliasToTry}: ${(err?.data?.error?.message || err?.message || err || '').toString().slice(0, 200)}`;
-              console.error(`[chat/stream] model "${aliasToTry}" failed:`, lastFailReason);
+              log.error(`[chat/stream] model "${aliasToTry}" failed:`, lastFailReason);
             }
           }
 
           // Every configured model failed → emit the classified error.
           if (!delivered) {
             const raw = lastFailReason;
-            console.error('[chat/stream] all models failed:', raw);
+            log.error('[chat/stream] all models failed:', raw);
             const isQuota = /quota|RESOURCE_EXHAUSTED|exceeded your current quota|429/i.test(raw);
             const isTimeout = /timeout|timed out|TimeoutError|AbortError|aborted/i.test(raw);
             const message = isQuota
@@ -530,7 +534,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
       return createUIMessageStreamResponse({ stream });
     });
   } catch (err: unknown) {
-    console.error('API Error in /api/v1/chat/stream:', err);
+    log.error('API Error in /api/v1/chat/stream:', err);
     return NextResponse.json(
       { error: 'حدث خطأ داخلي في المعالجة (Internal Processing Error)', code: '500_INTERNAL_ERROR' },
       { status: 500 },

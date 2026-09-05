@@ -5,7 +5,7 @@ import { getEnv } from '../env/runtimeEnv';
 import { db } from '../storage/db';
 import { runWithRequestContext } from '../config/requestContext';
 import { isSameOriginRequest, getAllowedOrigins } from '../security/securityHeaders';
-import { createLogger } from '../logging/logger';
+import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('ApiGateway');
 

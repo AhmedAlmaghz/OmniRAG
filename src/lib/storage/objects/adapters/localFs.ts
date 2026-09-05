@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibStorageObjectsAdaptersLocalFs');
+
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IObjectStore } from '../types';
@@ -41,7 +45,7 @@ export const localFsObjectStore: IObjectStore = {
       await fs.promises.writeFile(target, data);
       return true;
     } catch (err) {
-      console.error(`[objectStore:local] put failed for ${key}:`, (err as Error)?.message);
+      log.error(`[objectStore:local] put failed for ${key}:`, (err as Error)?.message);
       return false;
     }
   },

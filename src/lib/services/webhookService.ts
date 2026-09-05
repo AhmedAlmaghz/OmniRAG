@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesWebhookService');
+
 import crypto from 'crypto';
 import { randomUUID } from 'crypto';
 import { db } from '../storage/db';
@@ -298,7 +302,7 @@ export async function dispatchWebhookEvent(
       r.status === 'fulfilled' ? r.value : { ok: false, status: null, error: 'unexpected dispatch error' },
     );
   } catch (err) {
-    console.warn('[webhooks] dispatch failed silently:', (err as Error)?.message);
+    log.warn('[webhooks] dispatch failed silently:', (err as Error)?.message);
     return [];
   }
 }

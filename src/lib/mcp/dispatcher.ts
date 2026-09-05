@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibMcpDispatcher');
+
 import { db } from '@/lib/storage/db';
 import { MCPToolCall } from '@/lib/types/omnirag';
 import { randomUUID } from 'crypto';
@@ -246,7 +250,7 @@ export async function executeMcpToolCall(
       });
     }
   } catch (persistErr) {
-    console.warn('[MCP Dispatcher] failed to persist tool-call record:', persistErr);
+    log.warn('[MCP Dispatcher] failed to persist tool-call record:', persistErr);
   }
 
   return outcome;

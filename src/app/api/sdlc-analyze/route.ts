@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiSdlcAnalyze');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { generateTextResilient } from '@/lib/ai/resilientGenerate';
@@ -72,7 +76,7 @@ Return a strictly valid JSON response without markdown formatting with this sche
           return NextResponse.json(parsed);
         }
       } catch (aiErr) {
-        console.warn('AI analysis fallback to static heuristic');
+        log.warn('AI analysis fallback to static heuristic');
       }
     }
 
@@ -137,7 +141,7 @@ Return a strictly valid JSON response without markdown formatting with this sche
     // which fabricated a successful analysis when the route actually failed.
     // Surface the failure honestly with a 500 and an Arabic-safe message that
     // does not leak the underlying error to the client.
-    console.error('SDLC analyze error:', error);
+    log.error('SDLC analyze error:', error);
     return NextResponse.json(
       {
         score: 0,

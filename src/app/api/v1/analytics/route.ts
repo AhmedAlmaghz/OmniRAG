@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1Analytics');
+
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
@@ -49,7 +53,7 @@ export const GET = withAuthAndRateLimit(async (req, authCtx, props) => {
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (err) {
-    console.error('[api/v1/analytics] GET error:', err);
+    log.error('[api/v1/analytics] GET error:', err);
     return NextResponse.json(
       { error: 'فشل تجميع مقاييس التحليلات (Failed to aggregate analytics)', code: '500_ANALYTICS_ERROR' },
       { status: 500 },

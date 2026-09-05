@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibMcpRemoteClient');
+
 import { createMCPClient, type CallToolResult, type MCPClient } from '@ai-sdk/mcp';
 import { assertPublicHttpUrl } from './net';
 import { mcpOAuthManager } from './auth/oauth-manager';
@@ -101,7 +105,7 @@ export async function withRemoteMcpSession<T>(
         initializationOptions: { timeout: callBudget },
         maxRetries: 1,
         onUncaughtError: (err: any) =>
-          console.warn(`[Remote MCP] Uncaught stdio transport error (${server.name}):`, err?.message || err),
+          log.warn(`[Remote MCP] Uncaught stdio transport error (${server.name}):`, err?.message || err),
       });
       return await fn(client);
     }
@@ -119,12 +123,12 @@ export async function withRemoteMcpSession<T>(
       initializationOptions: { timeout: callBudget },
       maxRetries: 1,
       onUncaughtError: (err: any) =>
-        console.warn(`[Remote MCP] Uncaught transport error (${server.name}):`, err?.message || err),
+        log.warn(`[Remote MCP] Uncaught transport error (${server.name}):`, err?.message || err),
     });
     return await fn(client);
   } finally {
     await client?.close().catch((err: any) => {
-      console.warn(`[Remote MCP] Session close failed (${server.name}):`, err?.message || err);
+      log.warn(`[Remote MCP] Session close failed (${server.name}):`, err?.message || err);
     });
   }
 }

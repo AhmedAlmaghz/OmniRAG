@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpPresets');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { db } from '@/lib/storage/db';
@@ -55,7 +59,7 @@ export const GET = withAuthAndRateLimit(async (req: NextRequest, authCtx) => {
       presets: catalog,
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/presets] GET error:', err);
+    log.error('[api/v1/mcp/presets] GET error:', err);
     return NextResponse.json({ success: false, error: 'فشل جلب كتالوج خوادم MCP' }, { status: 500 });
   }
 });
@@ -125,7 +129,7 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx) => {
       { status: 201 },
     );
   } catch (err: any) {
-    console.error('[api/v1/mcp/presets] POST error:', err);
+    log.error('[api/v1/mcp/presets] POST error:', err);
     return NextResponse.json({ success: false, error: 'فشل تثبيت قالب خادم MCP' }, { status: 500 });
   }
 });

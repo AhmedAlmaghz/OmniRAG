@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1AuthRegister');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/storage/db';
 import { hashPassword } from '@/lib/auth/password';
@@ -149,7 +153,7 @@ export async function POST(req: NextRequest) {
         await seedNewTenant(tenantId, workspaceName);
       } catch (seedErr) {
         // Non-fatal: tenant row exists; later calls auto-seed default data on first read.
-        console.warn('[auth/register] seedNewTenant failed (non-fatal):', (seedErr as Error)?.message);
+        log.warn('[auth/register] seedNewTenant failed (non-fatal):', (seedErr as Error)?.message);
       }
     }
 
@@ -160,7 +164,7 @@ export async function POST(req: NextRequest) {
       try {
         await acceptInvitation(joinInvitation.token, userId, email);
       } catch (err) {
-        console.warn('[auth/register] acceptInvitation failed:', (err as Error)?.message);
+        log.warn('[auth/register] acceptInvitation failed:', (err as Error)?.message);
       }
     }
 

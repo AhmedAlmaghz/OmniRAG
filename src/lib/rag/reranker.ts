@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibRagReranker');
+
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { DocumentChunk } from '../types/omnirag';
@@ -104,7 +108,7 @@ Evaluate each chunk and assign it a relevance score from 0.0 to 10.0.
     const tail = chunks.slice(scoredChunks.length);
     return [...scoredChunks, ...tail];
   } catch (err) {
-    console.error('LLM Reranking failed, falling back to original sort:', err);
+    log.error('LLM Reranking failed, falling back to original sort:', err);
     // Preserve the full pool on failure — the engine applies the soft cap.
     return chunks;
   }

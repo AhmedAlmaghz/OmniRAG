@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('AppApiV1McpOauthInitiate');
+
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { mcpOAuthManager } from '@/lib/mcp/auth/oauth-manager';
@@ -78,7 +82,7 @@ export const POST = withAuthAndRateLimit(async (req: NextRequest, authCtx, props
       rfcValidation: 'RFC 8707 + RFC 9207 Enabled',
     });
   } catch (err: any) {
-    console.error('[api/v1/mcp/oauth/initiate] POST error:', err);
+    log.error('[api/v1/mcp/oauth/initiate] POST error:', err);
     return NextResponse.json({ success: false, error: 'فشل بدء تدفق توثيق OAuth 2.0' }, { status: 500 });
   }
 });

@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesUnstructuredService');
+
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -141,11 +145,11 @@ export function archiveUploadedFile(fileBuffer: Buffer, fileName: string, tenant
 
     // Write raw file to disk
     fs.writeFileSync(archiveFilePath, fileBuffer);
-    console.log(`[File Archiver] Successfully archived file to disk: ${archiveFilePath}`);
+    log.info(`[File Archiver] Successfully archived file to disk: ${archiveFilePath}`);
 
     return archiveFilePath;
   } catch (error) {
-    console.error('[File Archiver] Error writing file to archive directory:', error);
+    log.error('[File Archiver] Error writing file to archive directory:', error);
     return '';
   }
 }
@@ -162,7 +166,7 @@ export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> 
     // 1. Primary Extraction: Convert to Markdown preserving structure
     const result = await mammothParser.convertToMarkdown({ buffer: fileBuffer });
     if (result.messages && result.messages.length > 0) {
-      console.log('[Mammoth Parser] Messages:', result.messages.map((m: any) => m.message).join(', '));
+      log.info('[Mammoth Parser] Messages:', result.messages.map((m: any) => m.message).join(', '));
     }
 
     let text = result.value || '';
@@ -184,7 +188,7 @@ export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> 
 
     return '';
   } catch (err: any) {
-    console.warn('[Mammoth Parser] Primary extraction failed, trying extractRawText fallback:', err);
+    log.warn('[Mammoth Parser] Primary extraction failed, trying extractRawText fallback:', err);
     try {
       const mammothParser = mammoth as any;
       const rawResult = await mammothParser.extractRawText({ buffer: fileBuffer });
@@ -195,7 +199,7 @@ export async function parseDocxWithMammoth(fileBuffer: Buffer): Promise<string> 
       }
       throw new Error('Mammoth returned empty content');
     } catch (rawErr: any) {
-      console.error('[Mammoth Parser] Both convertToMarkdown and extractRawText failed:', rawErr);
+      log.error('[Mammoth Parser] Both convertToMarkdown and extractRawText failed:', rawErr);
       throw new Error(`Mammoth parsing error: ${err.message || err}`);
     }
   }
@@ -252,7 +256,7 @@ export async function mistralOcr(
     const base64Data = fileBuffer.toString('base64');
     const resolvedMime = normalizeMimeType(fileName, mimeType);
 
-    console.log(`[Mistral OCR] Calling mistral-ocr-latest for ${fileName} (${resolvedMime})...`);
+    log.info(`[Mistral OCR] Calling mistral-ocr-latest for ${fileName} (${resolvedMime})...`);
     const res = await fetch('https://api.mistral.ai/v1/ocr', {
       method: 'POST',
       headers: {
@@ -299,7 +303,7 @@ export async function mistralOcr(
 
     throw new Error('Mistral OCR API returned empty text.');
   } catch (error: any) {
-    console.error('[Unstructured Service] Mistral OCR error:', error);
+    log.error('[Unstructured Service] Mistral OCR error:', error);
     return {
       text: '',
       engineUsed: 'Mistral Document AI (OCR)',
@@ -464,7 +468,7 @@ export async function partitionViaJobsApi(
       metadata: { elementsCount: totalElements, jobId },
     };
   } catch (error: any) {
-    console.error('[Unstructured Service] Jobs API partition error:', error.message);
+    log.error('[Unstructured Service] Jobs API partition error:', error.message);
     return {
       text: '',
       engineUsed: 'Unstructured Transform API (Jobs ⚡)',
@@ -522,7 +526,7 @@ async function partitionViaLegacyEndpoint(
 
     throw new Error('Unstructured API returned invalid elements format.');
   } catch (error: any) {
-    console.error('[Unstructured Service] Partition error:', error);
+    log.error('[Unstructured Service] Partition error:', error);
     return {
       text: '',
       engineUsed: 'Unstructured.io Partition Engine',
@@ -568,7 +572,7 @@ export async function transcribeWithGroqWhisper(
     }
 
     const modelId = getAiModel('whisperModel');
-    console.log(`[Groq Whisper] Transcribing ${fileName} via AI SDK (${modelId})...`);
+    log.info(`[Groq Whisper] Transcribing ${fileName} via AI SDK (${modelId})...`);
 
     // AI SDK v7 native transcription over the shared Groq provider — replaces
     // the hand-rolled multipart fetch to api.groq.com.
@@ -588,7 +592,7 @@ export async function transcribeWithGroqWhisper(
 
     throw new Error('Groq Whisper API returned empty transcription text.');
   } catch (error: any) {
-    console.error('[Unstructured Service] Groq Whisper transcription error:', error);
+    log.error('[Unstructured Service] Groq Whisper transcription error:', error);
     return {
       text: '',
       engineUsed,
@@ -615,7 +619,7 @@ export async function transcribeWithMistralVoxtral(
       throw new Error('MISTRAL_API_KEY is not configured.');
     }
 
-    console.log(`[Mistral Voxtral] Transcribing ${fileName} via AI SDK...`);
+    log.info(`[Mistral Voxtral] Transcribing ${fileName} via AI SDK...`);
     const { text } = await transcribe({
       model: mistralTranscriptionModel(),
       audio: new Uint8Array(fileBuffer),
@@ -632,7 +636,7 @@ export async function transcribeWithMistralVoxtral(
 
     throw new Error('Mistral Voxtral returned empty transcription text.');
   } catch (error: any) {
-    console.error('[Unstructured Service] Mistral Voxtral transcription error:', error);
+    log.error('[Unstructured Service] Mistral Voxtral transcription error:', error);
     return {
       text: '',
       engineUsed,
@@ -688,7 +692,7 @@ async function runTranscriptionWithModelChain(
   let lastError = '';
   for (const modelId of modelsToTry) {
     try {
-      console.log(`[Gemini Transcriber] Transcribing via ${modelId} (${mediaPart.mediaType})...`);
+      log.info(`[Gemini Transcriber] Transcribing via ${modelId} (${mediaPart.mediaType})...`);
       const { text } = await generateText({
         model: await resolveLanguageModel(modelId),
         messages: [
@@ -715,11 +719,11 @@ async function runTranscriptionWithModelChain(
       lastError = `${modelId}: returned an empty transcription`;
     } catch (err: any) {
       lastError = `${modelId}: ${err?.message || err}`;
-      console.warn(`[Gemini Transcriber] Model ${modelId} failed — trying next fallback:`, lastError);
+      log.warn(`[Gemini Transcriber] Model ${modelId} failed — trying next fallback:`, lastError);
     }
   }
 
-  console.error('[Gemini Transcriber] All models failed:', lastError);
+  log.error('[Gemini Transcriber] All models failed:', lastError);
   return {
     text: '',
     engineUsed,
@@ -779,7 +783,7 @@ export async function transcribeWithGemini(
   // Large media: upload through the AI SDK (`uploadFile` over the shared
   // Google provider's Files API) and reference it by provider reference.
   // Uploaded media expires automatically per the provider retention policy.
-  console.log(
+  log.info(
     `[Gemini Transcriber] ${fileName} (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB) exceeds the inline limit — uploading via AI SDK uploadFile...`,
   );
   try {
@@ -802,7 +806,7 @@ export async function transcribeWithGemini(
       options,
     );
   } catch (err: any) {
-    console.error('[Gemini Transcriber] Files API path failed:', err);
+    log.error('[Gemini Transcriber] Files API path failed:', err);
     return {
       text: '',
       engineUsed,
@@ -854,7 +858,7 @@ export async function transcribeAudioVideo(
     if (groqResult.success) {
       return groqResult;
     }
-    console.warn('[Unstructured Service] Groq Whisper failed, trying Mistral Voxtral...');
+    log.warn('[Unstructured Service] Groq Whisper failed, trying Mistral Voxtral...');
   }
 
   if (resolveMistralApiKey()) {
@@ -862,7 +866,7 @@ export async function transcribeAudioVideo(
     if (voxtralResult.success) {
       return voxtralResult;
     }
-    console.warn('[Unstructured Service] Mistral Voxtral failed, falling back to Gemini audio/video transcriber...');
+    log.warn('[Unstructured Service] Mistral Voxtral failed, falling back to Gemini audio/video transcriber...');
   }
 
   return transcribeWithGemini(fileBuffer, fileName, mimeType, { model: options.model });

@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibJobsConnectorSync');
+
 import { db } from '../storage/db';
 import { getJobQueue, CONNECTOR_SYNC_QUEUE } from './queue';
 import type { Job } from 'pg-boss';
@@ -48,7 +52,7 @@ export async function enqueueConnectorSync(sourceId: string, tenantId: string): 
     });
     return true;
   } catch (err) {
-    console.error(`[ConnectorSync] Failed to enqueue sync for ${sourceId}:`, err);
+    log.error(`[ConnectorSync] Failed to enqueue sync for ${sourceId}:`, err);
     return false;
   }
 }
@@ -75,18 +79,18 @@ export async function startConnectorSyncWorker(): Promise<boolean> {
         try {
           const result = await db.syncSource(sourceId, tenantId);
           if (!result.success) {
-            console.warn(`[ConnectorSync] Sync reported failure for source ${sourceId}.`);
+            log.warn(`[ConnectorSync] Sync reported failure for source ${sourceId}.`);
           }
         } catch (err) {
           // syncSource already records failure state/logs; this guards the worker.
-          console.error(`[ConnectorSync] Sync threw for source ${sourceId}:`, err);
+          log.error(`[ConnectorSync] Sync threw for source ${sourceId}:`, err);
         }
       });
     }
   });
 
   workerRegistered = true;
-  console.log(`[ConnectorSync] Worker registered on queue "${CONNECTOR_SYNC_QUEUE}".`);
+  log.info(`[ConnectorSync] Worker registered on queue "${CONNECTOR_SYNC_QUEUE}".`);
   return true;
 }
 
@@ -124,7 +128,7 @@ export async function reconcileConnectorSchedules(): Promise<number> {
 
     return wanted.length;
   } catch (err) {
-    console.error('[ConnectorSync] Schedule reconciliation failed:', err);
+    log.error('[ConnectorSync] Schedule reconciliation failed:', err);
     return 0;
   }
 }

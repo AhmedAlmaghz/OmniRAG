@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesTenantConfigService');
+
 import { db } from '../storage/db';
 import type { Tenant, TenantSettings } from '../types/omnirag';
 import { DEFAULT_AI_MODELS, type AIModelConfig, normalizeModelConfig } from '../config/aiModels';
@@ -97,7 +101,7 @@ export async function getTenantConfig(tenantId: string): Promise<TenantConfig> {
     const tenant: Tenant | undefined = await db.getTenant(tenantId);
     return normalizeTenantConfig((tenant?.settings as TenantConfig | undefined) ?? null);
   } catch (e) {
-    console.warn('[tenantConfig] getTenantConfig failed, using defaults:', (e as Error)?.message);
+    log.warn('[tenantConfig] getTenantConfig failed, using defaults:', (e as Error)?.message);
     return defaultTenantConfig();
   }
 }

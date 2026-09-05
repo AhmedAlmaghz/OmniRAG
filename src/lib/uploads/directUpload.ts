@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibUploadsDirectUpload');
+
 import crypto from 'crypto';
 
 /**
@@ -252,12 +256,12 @@ export async function downloadS3Object(key: string): Promise<Buffer | null> {
     const url = presignS3Url({ method: 'GET', key, expiresInSeconds: 300 });
     const res = await fetch(url);
     if (!res.ok) {
-      console.warn(`[directUpload] GET ${key} failed: HTTP ${res.status}`);
+      log.warn(`[directUpload] GET ${key} failed: HTTP ${res.status}`);
       return null;
     }
     return Buffer.from(await res.arrayBuffer());
   } catch (err: any) {
-    console.warn(`[directUpload] GET ${key} errored:`, err?.message);
+    log.warn(`[directUpload] GET ${key} errored:`, err?.message);
     return null;
   }
 }
@@ -268,6 +272,6 @@ export async function deleteS3Object(key: string): Promise<void> {
     const url = presignS3Url({ method: 'DELETE', key, expiresInSeconds: 120 });
     await fetch(url, { method: 'DELETE' });
   } catch (err: any) {
-    console.warn(`[directUpload] DELETE ${key} failed:`, err?.message);
+    log.warn(`[directUpload] DELETE ${key} failed:`, err?.message);
   }
 }

@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibServicesReembedService');
+
 import { db } from '../storage/db';
 import { embedBatch } from '../rag/embedding';
 import { getVectorStoreForTenant } from '../storage/vectors/registry';
@@ -108,7 +112,7 @@ export async function reembedTenantCorpus(tenantId: string, modelUsed?: string):
       result.failed += batch.length;
       const msg = (err?.message || String(err)).slice(0, 200);
       result.errors.push(`فشل تضمين دفعة (${offset}..${offset + batch.length}): ${msg}`);
-      console.error('[Reembed] batch failed:', msg);
+      log.error('[Reembed] batch failed:', msg);
     }
   }
 
@@ -169,7 +173,7 @@ export async function selfHealStaleCorpus(tenantId: string): Promise<void> {
     // search honest, and the manual /reembed endpoint reports the reason.
     const { isModelRefConfigured } = await import('../ai/registry/resolve');
     if (!(await isModelRefConfigured(getAiModel('embeddingModel')))) {
-      console.warn(
+      log.warn(
         '[Reembed self-heal] embedding model not configured — skipping to avoid overwriting vectors with fallback hashes.',
       );
       return;
@@ -192,7 +196,7 @@ export async function selfHealStaleCorpus(tenantId: string): Promise<void> {
       })
       .catch(() => {});
   } catch (err) {
-    console.error('[Reembed self-heal] failed:', (err as Error)?.message);
+    log.error('[Reembed self-heal] failed:', (err as Error)?.message);
   } finally {
     selfHealingTenants.delete(tenantId);
   }

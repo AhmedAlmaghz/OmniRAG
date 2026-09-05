@@ -1,3 +1,7 @@
+import { createLogger } from '@/lib/logging/logger';
+
+const log = createLogger('LibPdfPdfChunker');
+
 import { PDFDocument } from 'pdf-lib';
 import { generateTextResilient } from '../ai/resilientGenerate';
 import { getAiModel, getFallbackModels } from '../config/aiModels';
@@ -85,7 +89,7 @@ export async function slicePdfIntoChunks(
 
     return { totalPages, chunks };
   } catch (error: any) {
-    console.warn('[PDF Chunker] pdf-lib slice fallback to single chunk:', error?.message || error);
+    log.warn('[PDF Chunker] pdf-lib slice fallback to single chunk:', error?.message || error);
     // Fallback: return as single chunk
     return {
       totalPages: 1,
@@ -139,7 +143,7 @@ export async function parsePdfChunkWithMistral(
 
     if (!res.ok) {
       const errText = await res.text();
-      console.warn(`[Mistral OCR] HTTP ${res.status} error on chunk ${chunk.chunkIndex}:`, errText);
+      log.warn(`[Mistral OCR] HTTP ${res.status} error on chunk ${chunk.chunkIndex}:`, errText);
       return null;
     }
 
@@ -160,7 +164,7 @@ export async function parsePdfChunkWithMistral(
       pages: pagesResult,
     };
   } catch (err: any) {
-    console.warn(`[Mistral OCR] Execution failed on chunk ${chunk.chunkIndex}:`, err?.message || err);
+    log.warn(`[Mistral OCR] Execution failed on chunk ${chunk.chunkIndex}:`, err?.message || err);
     return null;
   }
 }
@@ -191,10 +195,10 @@ export async function parsePdfChunkWithUnstructured(
     if (result.success && result.text.trim().length > 0) {
       return { text: result.text.trim() };
     }
-    console.warn(`[Unstructured API] Chunk ${chunk.chunkIndex}: ${result.metadata?.error || 'no text'}`);
+    log.warn(`[Unstructured API] Chunk ${chunk.chunkIndex}: ${result.metadata?.error || 'no text'}`);
     return null;
   } catch (err: any) {
-    console.warn(`[Unstructured API] Chunk ${chunk.chunkIndex} error:`, err?.message);
+    log.warn(`[Unstructured API] Chunk ${chunk.chunkIndex} error:`, err?.message);
     return null;
   }
 }
@@ -236,7 +240,7 @@ Maintain accurate Arabic text if present. Output ONLY the extracted text with cl
       return { text: result.text };
     }
   } catch (err: any) {
-    console.warn(`[Gemini PDF Parser] Chunk ${chunk.chunkIndex} error:`, err?.message || err);
+    log.warn(`[Gemini PDF Parser] Chunk ${chunk.chunkIndex} error:`, err?.message || err);
   }
   return null;
 }
@@ -283,7 +287,7 @@ export async function parsePdfChunkWithNativePdfParse(
       return { text: extracted, confidence: 'high' };
     }
   } catch (err: any) {
-    console.warn(`[Native pdf-parse] Chunk ${chunk.chunkIndex} warning:`, err?.message || err);
+    log.warn(`[Native pdf-parse] Chunk ${chunk.chunkIndex} warning:`, err?.message || err);
   }
 
   // Stream text operator extraction fallback for text-based PDFs
@@ -383,22 +387,22 @@ export async function processPdfWithBatchedPipeline(
   const SINGLE_REQUEST_BYTES = 30 * 1024 * 1024;
   if (pdfBuffer.length <= SINGLE_REQUEST_BYTES) {
     resolvedPagesPerChunk = Number.MAX_SAFE_INTEGER;
-    console.log(`[Knowledge Pipeline] PDF (${fileMb.toFixed(2)} MB) fits a single OCR request — skipping slicing.`);
+    log.info(`[Knowledge Pipeline] PDF (${fileMb.toFixed(2)} MB) fits a single OCR request — skipping slicing.`);
   } else if (fileMb > 15) {
     resolvedPagesPerChunk = Math.min(pagesPerChunk, 5); // 5 pages per chunk for huge files (>15MB)
-    console.log(
+    log.info(
       `[Knowledge Pipeline] Huge PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 5 to avoid 413 errors.`,
     );
   } else if (fileMb > 5) {
     resolvedPagesPerChunk = Math.min(pagesPerChunk, 10); // 10 pages per chunk for medium-large files (>5MB)
-    console.log(
+    log.info(
       `[Knowledge Pipeline] Medium-large PDF detected (${fileMb.toFixed(2)} MB). Reducing pagesPerChunk dynamically to 10 to avoid 413 errors.`,
     );
   }
 
   // 2. Slice PDF into optimized chunks
   const { totalPages, chunks } = await slicePdfIntoChunks(pdfBuffer, resolvedPagesPerChunk);
-  console.log(
+  log.info(
     `[Knowledge Pipeline] Processing PDF (${totalPages} pages) sliced into ${chunks.length} sequential chunks (${resolvedPagesPerChunk} pages/chunk)...`,
   );
 
@@ -412,13 +416,13 @@ export async function processPdfWithBatchedPipeline(
       const localText = await ocrPdfLocally(chunk.pdfBuffer);
       return localText.trim();
     } catch (ocrErr: any) {
-      console.warn(`[Knowledge Pipeline] Local OCR failed on chunk ${chunk.chunkIndex}:`, ocrErr?.message);
+      log.warn(`[Knowledge Pipeline] Local OCR failed on chunk ${chunk.chunkIndex}:`, ocrErr?.message);
       return '';
     }
   };
 
   for (const chunk of chunks) {
-    console.log(
+    log.info(
       `[Knowledge Pipeline] Ingesting Chunk ${chunk.chunkIndex}/${chunk.totalChunks} (Pages ${chunk.startPage} - ${chunk.endPage})...`,
     );
     let chunkText = '';
@@ -438,7 +442,7 @@ export async function processPdfWithBatchedPipeline(
         chunkText = nativeRes.text.trim();
         primaryEngineUsed = 'Native High-Speed PDF Parser';
       } else if (nativeRes) {
-        console.log(
+        log.info(
           `[Knowledge Pipeline] Native extraction for chunk ${chunk.chunkIndex} failed the quality gate — deferring to OCR engines.`,
         );
       }
@@ -530,7 +534,7 @@ export async function processPdfWithBatchedPipeline(
   // If chunking produced no text, attempt direct processing on full PDF buffer
   // with Gemini Multimodal AI (skipped for the explicit 'local' engine).
   if (accumulatedTexts.length === 0 && pdfBuffer.length > 0 && preferredEngine !== 'local') {
-    console.log('[Knowledge Pipeline] Chunks produced no text. Retrying full PDF buffer directly with Gemini AI...');
+    log.info('[Knowledge Pipeline] Chunks produced no text. Retrying full PDF buffer directly with Gemini AI...');
     const fullGeminiRes = await parsePdfChunkWithGemini({
       chunkIndex: 1,
       totalChunks: 1,
@@ -555,7 +559,7 @@ export async function processPdfWithBatchedPipeline(
         primaryEngineUsed = 'Local Tesseract OCR (offline ⚡)';
       }
     } catch (ocrErr: any) {
-      console.warn('[Knowledge Pipeline] Local OCR full-buffer fallback failed:', ocrErr?.message);
+      log.warn('[Knowledge Pipeline] Local OCR full-buffer fallback failed:', ocrErr?.message);
     }
   }
 
