@@ -65,21 +65,12 @@ const ALLOWLIST: Array<{ match: string; reason: string }> = [
     match: 'SELECT COUNT(*) FROM',
     reason: 'Seed emptiness probe in seedPostgresData — count-only on a fresh database, returns no rows.',
   },
-  {
-    match: 'SELECT id, tenant_id, sync_schedule FROM sources',
-    reason:
-      'getPostgresScheduledSources — background connector-sync job must scan ALL tenants by design; it returns tenant_id per row and downstream sync re-scopes per tenant.',
-  },
-  {
-    match: 'SELECT * FROM api_keys WHERE key_hash = $1',
-    reason:
-      'getPostgresApiKeyByHash — bearer-key authentication: the SHA-256 hash IS the credential and uniquely selects the tenant; tenant comes from the matched row.',
-  },
-  {
-    match: 'UPDATE api_keys SET last_used_at',
-    reason:
-      'touchPostgresApiKeyLastUsed — operates on the primary key id returned by the authenticated hash lookup above.',
-  },
+  // v0.12.10: the three former cross-tenant-by-design raw statements
+  // (api_keys by hash, last-used stamp, scheduled sources) now route through
+  // owner-owned SECURITY DEFINER functions (omnirag_get_api_key_by_hash,
+  // omnirag_touch_api_key_last_used, omnirag_list_scheduled_sources) created
+  // by the migrator — they no longer reference tenant tables directly, so no
+  // allowlist entry is needed for them here.
 ];
 
 const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();

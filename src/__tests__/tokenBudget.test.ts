@@ -6,8 +6,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * against a mocked Postgres pool.
  */
 
-vi.mock('../lib/storage/postgres', () => ({
+const postgresMock = vi.hoisted(() => ({
   getPostgresPool: vi.fn(),
+  queryAsTenant: vi.fn(),
+}));
+vi.mock('../lib/storage/postgres', () => ({
+  getPostgresPool: postgresMock.getPostgresPool,
+  queryAsTenant: postgresMock.queryAsTenant,
 }));
 vi.mock('../lib/storage/db', () => ({
   db: {
@@ -22,9 +27,8 @@ vi.mock('../lib/storage/db', () => ({
 }));
 
 import { PLANS, getTokenBudgetStatus, recordTokenUsage, getTokenUsage } from '../lib/services/planService';
-import * as postgres from '../lib/storage/postgres';
 
-const getPostgresPool = vi.mocked(postgres.getPostgresPool);
+const getPostgresPool = postgresMock.getPostgresPool;
 
 /** Mutable in-memory usage_counters emulation with atomic upsert semantics. */
 const counters = new Map<string, number>();
@@ -56,7 +60,17 @@ describe('plan catalog — monthlyTokenBudget values', () => {
 describe('token budget enforcement', () => {
   beforeEach(() => {
     counters.clear();
+    // planService (v0.12.10) routes through queryAsTenant: emulate its
+    // checkout+scope+query contract over the fake pool — including the
+    // "not configured" throw the fail-open test relies on.
     getPostgresPool.mockReset().mockReturnValue(fakePool as never);
+    postgresMock.queryAsTenant.mockReset().mockImplementation(
+      async (_tenantId: string, sql: string, params?: unknown[]) => {
+        const pool = getPostgresPool();
+        if (!pool) throw new Error('PostgreSQL is not configured');
+        return await pool.query(sql, params as any[]);
+      },
+    );
   });
 
   it('reports remaining headroom under the limit', async () => {

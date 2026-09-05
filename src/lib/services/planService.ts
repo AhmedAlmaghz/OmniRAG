@@ -4,7 +4,7 @@ const log = createLogger('LibServicesPlanService');
 
 import { NextResponse } from 'next/server';
 import { db } from '../storage/db';
-import { getPostgresPool } from '../storage/postgres';
+import { queryAsTenant } from '../storage/postgres';
 import { listTenantMemberships, listTenantTeams } from './membershipService';
 import type { PlanId, Tenant } from '../types/omnirag';
 
@@ -298,9 +298,7 @@ export interface TokenBudgetStatus {
 /** Read the tenant's month-to-date token spend (0 when the DB is away). */
 export async function getTokenUsage(tenantId: string, period = currentPeriod()): Promise<number> {
   try {
-    const pool = getPostgresPool();
-    if (!pool) return 0;
-    const res = await pool.query('SELECT tokens_used FROM usage_counters WHERE tenant_id = $1 AND period = $2', [
+    const res = await queryAsTenant(tenantId, 'SELECT tokens_used FROM usage_counters WHERE tenant_id = $1 AND period = $2', [
       tenantId,
       period,
     ]);
@@ -330,9 +328,8 @@ export async function getTokenBudgetStatus(tenantId: string): Promise<TokenBudge
 export async function recordTokenUsage(tenantId: string, tokens: number, period = currentPeriod()): Promise<void> {
   if (!Number.isFinite(tokens) || tokens <= 0) return;
   try {
-    const pool = getPostgresPool();
-    if (!pool) return;
-    await pool.query(
+    await queryAsTenant(
+      tenantId,
       `INSERT INTO usage_counters (tenant_id, period, tokens_used, updated_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (tenant_id, period) DO UPDATE SET

@@ -8,7 +8,7 @@ import {
   INITIAL_SOURCES,
   INITIAL_AUDIT_LOGS,
 } from '../storage/constants';
-import { getPostgresPool } from '../storage/postgres';
+import { getOwnerPool } from '../storage/postgres';
 import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('DrizzleMigrate');
@@ -25,10 +25,152 @@ const DDL_BATCH_SIZE = 12;
  * revision. The revision marker makes cold starts a single SELECT instead of
  * the full 4-round-trip DDL transaction.
  */
-const SCHEMA_REVISION = '2026-09-05-rls-policies';
+const SCHEMA_REVISION = '2026-09-05-rls-activation';
+
+/**
+ * RLS activation DDL (v0.12.10) — ONE source of truth shared by the Drizzle
+ * path (batched below) and the legacy fallback in postgres.ts (per-statement).
+ * Idempotent everywhere: ENABLE + DROP/CREATE POLICY, role creation guarded,
+ * grants re-asserted, functions CREATE OR REPLACE'd.
+ *
+ * `omnirag_app` is the least-privilege runtime role (DATABASE_APP_URL): being
+ * non-owner, the policies apply to every runtime query. The ten SECURITY
+ * DEFINER functions are the ONLY sanctioned cross-tenant paths — owner-owned,
+ * search_path pinned, not executable by PUBLIC, each limited to a single
+ * statement scoped to the caller's own credential (hash/token/state/id).
+ */
+const RLS_TABLES = [
+  'documents',
+  'chunks',
+  'sources',
+  'sync_logs',
+  'collections',
+  'mcp_servers',
+  'audit_logs',
+  'tool_calls',
+  'conversations',
+  'messages',
+  'api_keys',
+  'provider_credentials',
+  'memberships',
+  'invitations',
+  'teams',
+  'resource_shares',
+  'sso_flows',
+  'webhook_endpoints',
+  'usage_counters',
+];
+
+export const TENANT_RLS_DDL: string[] = (() => {
+  const stmts: string[] = [];
+  for (const t of RLS_TABLES) {
+    stmts.push(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_${t} ON ${t};
+CREATE POLICY tenant_isolation_${t} ON ${t}
+  USING (tenant_id = current_setting('app.current_tenant', true))
+  WITH CHECK (tenant_id = current_setting('app.current_tenant', true));`);
+  }
+  stmts.push(`DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'omnirag_app') THEN
+    CREATE ROLE omnirag_app NOLOGIN;
+  END IF;
+END $$;`);
+  stmts.push(`GRANT USAGE ON SCHEMA public TO omnirag_app;`);
+  stmts.push(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO omnirag_app;`);
+  // Future tables (e.g. pgvector's dynamic vector_chunks) inherit the grants
+  // automatically for tables created by THIS role (the owner).
+  stmts.push(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO omnirag_app;`);
+  const definer = (sql: string, signature: string) => {
+    stmts.push(sql);
+    stmts.push(`REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC;`);
+    stmts.push(`GRANT EXECUTE ON FUNCTION ${signature} TO omnirag_app;`);
+  };
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_get_api_key_by_hash(p_key_hash text)
+  RETURNS SETOF api_keys LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM api_keys WHERE key_hash = p_key_hash LIMIT 1 $fn$;`,
+    'omnirag_get_api_key_by_hash(text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_touch_api_key_last_used(p_id text, p_ts text)
+  RETURNS void LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ UPDATE api_keys SET last_used_at = p_ts WHERE id = p_id $fn$;`,
+    'omnirag_touch_api_key_last_used(text, text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_list_scheduled_sources()
+  RETURNS TABLE(id text, tenant_id text, sync_schedule text)
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$
+    SELECT s.id, s.tenant_id, s.sync_schedule FROM sources s
+    WHERE s.sync_schedule IS NOT NULL AND s.sync_schedule <> '' AND s.sync_schedule <> 'manual'
+  $fn$;`,
+    'omnirag_list_scheduled_sources()',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_list_user_memberships(p_user_id text)
+  RETURNS SETOF memberships LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM memberships WHERE user_id = p_user_id $fn$;`,
+    'omnirag_list_user_memberships(text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_get_invitation_by_token(p_token text)
+  RETURNS SETOF invitations LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM invitations WHERE token = p_token $fn$;`,
+    'omnirag_get_invitation_by_token(text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_list_pending_invitations_by_email(p_email text)
+  RETURNS SETOF invitations LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM invitations
+    WHERE email = lower(p_email) AND status = 'pending' AND expires_at > to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') $fn$;`,
+    'omnirag_list_pending_invitations_by_email(text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_set_invitation_status(p_id text, p_status text)
+  RETURNS void LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ UPDATE invitations SET status = p_status WHERE id = p_id $fn$;`,
+    'omnirag_set_invitation_status(text, text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_get_share_by_link_token(p_token text)
+  RETURNS SETOF resource_shares LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM resource_shares WHERE link_token = p_token $fn$;`,
+    'omnirag_get_share_by_link_token(text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_consume_sso_flow(p_state text)
+  RETURNS SETOF sso_flows LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ DELETE FROM sso_flows WHERE state = p_state RETURNING * $fn$;`,
+    'omnirag_consume_sso_flow(text)',
+  );
+  definer(
+    `CREATE OR REPLACE FUNCTION omnirag_purge_expired_sso_flows(p_now text)
+  RETURNS void LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ DELETE FROM sso_flows WHERE expires_at <= p_now $fn$;`,
+    'omnirag_purge_expired_sso_flows(text)',
+  );
+  return stmts;
+})();
+
+/** Gives omnirag_app login capability when APP_DB_PASSWORD is configured. */
+export async function applyAppRoleLoginPassword(client: any): Promise<void> {
+  const appDbPassword = process.env.APP_DB_PASSWORD;
+  if (!appDbPassword) return;
+  // %L safely quotes; $1 needs an explicit type inside format().
+  const stmt = await client.query(
+    `SELECT format('ALTER ROLE omnirag_app WITH LOGIN PASSWORD %L', $1::text) AS sql`,
+    [appDbPassword],
+  );
+  await client.query(stmt.rows[0].sql);
+  log.info('[Drizzle] omnirag_app login credential applied (APP_DB_PASSWORD).');
+}
 
 export async function migrateAndSeedWithDrizzle() {
-  const pool = getPostgresPool();
+  // Migrations and seeding ALWAYS run on the owner connection — the runtime
+  // app role (DATABASE_APP_URL) must never own tables, or it would bypass RLS.
+  const pool = getOwnerPool();
   if (!pool) {
     log.warn('[Drizzle] Postgres is not configured. Skipping Drizzle migrations and seeding.');
     return;
@@ -465,49 +607,18 @@ export async function migrateAndSeedWithDrizzle() {
     ddl(`CREATE INDEX IF NOT EXISTS messages_tenant_conversation_idx
          ON messages (tenant_id, conversation_id);`);
 
-    // ── Row Level Security policies (v0.12.9) ─────────────────────────────
-    // Fail-closed second line of defense behind the app-layer tenant_id
-    // predicates: a row is visible/writable only when the session's
-    // app.current_tenant matches the row. Unset var → NULL comparison → zero
-    // rows, never allow-all. ENABLE without FORCE keeps the table OWNER (the
-    // role the app connects as in every current deployment) bypassing the
-    // policies — zero behavior change today; a non-owner app role activates
-    // them. Activation runbook: docs/06-security/overview.md (قسم RLS) —
-    // live contract probe: npm run db:verify-rls.
-    const RLS_TABLES = [
-      'documents',
-      'chunks',
-      'sources',
-      'sync_logs',
-      'collections',
-      'mcp_servers',
-      'audit_logs',
-      'tool_calls',
-      'conversations',
-      'messages',
-      'api_keys',
-      'provider_credentials',
-      'memberships',
-      'invitations',
-      'teams',
-      'resource_shares',
-      'sso_flows',
-      'webhook_endpoints',
-      'usage_counters',
-    ];
-    for (const t of RLS_TABLES) {
-      ddl(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation_${t} ON ${t};
-CREATE POLICY tenant_isolation_${t} ON ${t}
-  USING (tenant_id = current_setting('app.current_tenant', true))
-  WITH CHECK (tenant_id = current_setting('app.current_tenant', true));`);
-    }
+    // ── RLS activation (v0.12.10) — shared single source of truth ────────
+    TENANT_RLS_DDL.forEach((stmt) => ddl(stmt));
 
     // One round-trip per batch; Postgres executes the joined statements
     // sequentially and aborts the whole transaction on the first error.
     for (let i = 0; i < ddlStatements.length; i += DDL_BATCH_SIZE) {
       await client.query(ddlStatements.slice(i, i + DDL_BATCH_SIZE).join('\n'));
     }
+    // Give omnirag_app login capability when APP_DB_PASSWORD is configured
+    // (docker compose sets it; managed-cloud operators create the role
+    // themselves with LOGIN instead).
+    await applyAppRoleLoginPassword(client);
     // Stamp the revision INSIDE the transaction: a failed DDL batch rolls the
     // stamp back too, so the next cold start retries instead of skipping.
     await client.query(

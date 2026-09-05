@@ -464,6 +464,92 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- 10. APP ROLE + GRANTS + SECURITY DEFINER ESCAPES (v0.12.10)
+-- ══════════════════════════════════════════════════════════════════════════
+-- التفعيل الفعلي لسياسات القسم 9: دور التطبيق `omnirag_app` غير مالك، فتنطبق
+-- عليه السياسات بمجرد توجيه DATABASE_APP_URL إليه. كل الدوال أدناه:
+--   • مملوكة للمالك (SECURITY DEFINER) → تتجاوز RLS بحد ذاتها
+--   • search_path مثبّت = public (منع اختطاف مسار البحث)
+--   • غير قابلة للتنفيذ من PUBLIC — لـ omnirag_app فقط
+--   • مساحة سطحها استعلام واحد مقيّد بمعاملها (توكن/معرف/حالة المتصل)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'omnirag_app') THEN
+    CREATE ROLE omnirag_app NOLOGIN;
+  END IF;
+END $$;
+
+GRANT USAGE ON SCHEMA public TO omnirag_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO omnirag_app;
+-- الجداول المستقبلية (مثل vector_chunks الديناميكي) ترث الامتيازات تلقائياً.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_get_api_key_by_hash(p_key_hash text)
+  RETURNS SETOF api_keys LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM api_keys WHERE key_hash = p_key_hash LIMIT 1 $fn$;
+REVOKE ALL ON FUNCTION omnirag_get_api_key_by_hash(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_get_api_key_by_hash(text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_touch_api_key_last_used(p_id text, p_ts text)
+  RETURNS void LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ UPDATE api_keys SET last_used_at = p_ts WHERE id = p_id $fn$;
+REVOKE ALL ON FUNCTION omnirag_touch_api_key_last_used(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_touch_api_key_last_used(text, text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_list_scheduled_sources()
+  RETURNS TABLE(id text, tenant_id text, sync_schedule text)
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$
+    SELECT s.id, s.tenant_id, s.sync_schedule FROM sources s
+    WHERE s.sync_schedule IS NOT NULL AND s.sync_schedule <> '' AND s.sync_schedule <> 'manual'
+  $fn$;
+REVOKE ALL ON FUNCTION omnirag_list_scheduled_sources() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_list_scheduled_sources() TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_list_user_memberships(p_user_id text)
+  RETURNS SETOF memberships LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM memberships WHERE user_id = p_user_id $fn$;
+REVOKE ALL ON FUNCTION omnirag_list_user_memberships(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_list_user_memberships(text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_get_invitation_by_token(p_token text)
+  RETURNS SETOF invitations LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM invitations WHERE token = p_token $fn$;
+REVOKE ALL ON FUNCTION omnirag_get_invitation_by_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_get_invitation_by_token(text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_list_pending_invitations_by_email(p_email text)
+  RETURNS SETOF invitations LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM invitations
+    WHERE email = lower(p_email) AND status = 'pending' AND expires_at > to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') $fn$;
+REVOKE ALL ON FUNCTION omnirag_list_pending_invitations_by_email(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_list_pending_invitations_by_email(text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_set_invitation_status(p_id text, p_status text)
+  RETURNS void LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ UPDATE invitations SET status = p_status WHERE id = p_id $fn$;
+REVOKE ALL ON FUNCTION omnirag_set_invitation_status(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_set_invitation_status(text, text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_get_share_by_link_token(p_token text)
+  RETURNS SETOF resource_shares LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+  AS $fn$ SELECT * FROM resource_shares WHERE link_token = p_token $fn$;
+REVOKE ALL ON FUNCTION omnirag_get_share_by_link_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_get_share_by_link_token(text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_consume_sso_flow(p_state text)
+  RETURNS SETOF sso_flows LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ DELETE FROM sso_flows WHERE state = p_state RETURNING * $fn$;
+REVOKE ALL ON FUNCTION omnirag_consume_sso_flow(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_consume_sso_flow(text) TO omnirag_app;
+
+CREATE OR REPLACE FUNCTION omnirag_purge_expired_sso_flows(p_now text)
+  RETURNS void LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public
+  AS $fn$ DELETE FROM sso_flows WHERE expires_at <= p_now $fn$;
+REVOKE ALL ON FUNCTION omnirag_purge_expired_sso_flows(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION omnirag_purge_expired_sso_flows(text) TO omnirag_app;
+
 COMMIT;
 
 -- ============================================================================

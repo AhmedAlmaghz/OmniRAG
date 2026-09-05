@@ -21,7 +21,13 @@ services:
         required: false
     environment:
       # Internal service addresses (override anything coming from .env).
+      # DATABASE_URL = owner connection (migrations/DDL/seeds only).
+      # DATABASE_APP_URL = least-privilege runtime role — Row Level Security
+      # policies are ENFORCED on it (staged activation, v0.12.10). Remove this
+      # line to revert to the dormant owner-bypass mode.
       DATABASE_URL: postgresql://omnirag:omnirag@postgres:5432/omnirag
+      DATABASE_APP_URL: postgresql://omnirag_app:${APP_DB_PASSWORD:-omnirag_app_local}@postgres:5432/omnirag
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-omnirag_app_local}
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       APP_URL: ${APP_URL:-http://localhost:3000}

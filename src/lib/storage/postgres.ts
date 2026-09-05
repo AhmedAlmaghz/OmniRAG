@@ -26,7 +26,7 @@ import {
   INITIAL_SYNC_LOGS,
   INITIAL_AUDIT_LOGS,
 } from './constants';
-import { migrateAndSeedWithDrizzle } from '../db/migrateAndSeedDrizzle';
+import { migrateAndSeedWithDrizzle, TENANT_RLS_DDL, applyAppRoleLoginPassword } from '../db/migrateAndSeedDrizzle';
 import { resetDrizzle } from '../../db';
 import pg from 'pg';
 const { Pool } = pg;
@@ -38,25 +38,73 @@ const log = createLogger('PostgresStorage');
 import { getEnv } from '../env/runtimeEnv';
 import { DEFAULT_AI_MODELS } from '../config/aiModels';
 
-let pool: any = null;
+let pool: any = null; // runtime pool (least-privilege app role when DATABASE_APP_URL is set)
+let ownerPool: any = null; // migration/DDL pool — always the owner connection
 let initialized = false;
 
 export function resetPostgresPool() {
-  if (pool) {
-    try {
-      pool.end();
-    } catch (e) {}
+  for (const p of [pool, ownerPool]) {
+    if (p) {
+      try {
+        p.end();
+      } catch (e) {}
+    }
   }
   pool = null;
+  ownerPool = null;
   initialized = false;
+  initPromise = null;
   try {
     resetDrizzle();
   } catch (e) {}
 }
 
+function buildPool(connectionString: string): any {
+  const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+  const sslMode = new URL(connectionString).searchParams.get('sslmode');
+  const strictTls = process.env.PG_TLS_REJECT_UNAUTHORIZED !== 'false';
+  return new Pool({
+    connectionString,
+    // Local dev: no TLS. Managed clouds (Supabase/Neon) advertise their own
+    // CA via the driver's bundled certs; only loosen verification when
+    // explicitly allowed via env (rare, staged migrations only).
+    ssl: isLocal ? false : strictTls ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 8000,
+  });
+}
+
+/**
+ * Runtime data-access pool. When `DATABASE_APP_URL` is configured it points at
+ * the least-privilege app role and Row Level Security policies are ENFORCED
+ * (non-owner roles do not bypass RLS); without it this falls back to the owner
+ * connection and the policies stay dormant (owner bypass) — the documented
+ * staged-activation posture. See docs/06-security/overview.md → قسم RLS.
+ */
 export function getPostgresPool(req?: any): any {
   if (typeof window !== 'undefined') return null; // Safe guard for client-side compilation
+  const appUrl = getEnv('DATABASE_APP_URL', req);
+  if (!appUrl) return getOwnerPool(req);
   if (pool) return pool;
+  try {
+    pool = buildPool(appUrl);
+    return pool;
+  } catch (error) {
+    log.error('Failed to initialize PostgreSQL runtime pool:', error);
+    return getOwnerPool(req);
+  }
+}
+
+/**
+ * Owner connection — DDL, migrations, seeding, and role/policy management
+ * ONLY. Never use for tenant-scoped runtime reads: the table owner bypasses
+ * Row Level Security, so routing runtime traffic here would silently disable
+ * the second line of defense.
+ */
+export function getOwnerPool(req?: any): any {
+  if (typeof window !== 'undefined') return null;
+  if (ownerPool) return ownerPool;
 
   const connectionString = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
   if (!connectionString) {
@@ -67,32 +115,69 @@ export function getPostgresPool(req?: any): any {
   }
 
   try {
-    const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
-    const sslMode = new URL(connectionString).searchParams.get('sslmode');
-    const strictTls = process.env.PG_TLS_REJECT_UNAUTHORIZED !== 'false';
-    pool = new Pool({
-      connectionString,
-      // Local dev: no TLS. Managed clouds (Supabase/Neon) advertise their own
-      // CA via the driver's bundled certs; only loosen verification when
-      // explicitly allowed via env (rare, staged migrations only).
-      ssl: isLocal ? false : strictTls ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 8000,
-    });
-    return pool;
+    ownerPool = buildPool(connectionString);
+    return ownerPool;
   } catch (error) {
-    log.error('Failed to initialize PostgreSQL connection pool:', error);
+    log.error('Failed to initialize PostgreSQL owner pool:', error);
     return null;
   }
 }
 
+/**
+ * Bind the session's tenant scope on a checked-out connection. Session-scoped
+ * (`is_local = false`) so every statement this function runs — including
+ * multi-statement transactions — is covered by the RLS policies; released
+ * connections are RESET so a pooled connection never carries a tenant across
+ * requests.
+ */
+export async function setTenantScope(client: any, tenantId: string): Promise<void> {
+  await client.query(`SELECT set_config('app.current_tenant', $1, 'false')`, [tenantId]);
+}
+
+/** Clear the tenant scope, then return the connection to the pool. */
+export async function releaseTenantClient(client: any): Promise<void> {
+  try {
+    await client.query('RESET app.current_tenant');
+  } catch {
+    // Aborted transaction or dying connection — pool discards it either way.
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * One tenant-scoped query for modules that talk to the pool directly instead
+ * of going through this file's functions (membershipService, planService):
+ * checkout + scope + statement + cleanup as a single unit.
+ */
+export async function queryAsTenant(tenantId: string, text: string, params?: unknown[]): Promise<any> {
+  const p = getPostgresPool();
+  if (!p) throw new Error('PostgreSQL is not configured');
+  const client = await p.connect();
+  try {
+    await setTenantScope(client, tenantId);
+    return await client.query(text, params);
+  } finally {
+    await releaseTenantClient(client);
+  }
+}
+
+let initPromise: Promise<void> | null = null;
+
+/**
+ * Shared in-flight initialization. The boot worker (connector-sync, via
+ * instrumentation) and the first API request can both reach this before the
+ * migration transaction commits — two concurrent DDL passes raced and the
+ * loser failed on not-yet-created tables (observed live on a cold boot with
+ * RLS activation). Every caller awaits the SAME pass.
+ */
 export async function ensurePostgresTables() {
   if (initialized) return;
-  const p = getPostgresPool();
+  const p = getOwnerPool();
   if (!p) return;
 
-  try {
+  initPromise ??= (async () => {
+    try {
     await migrateAndSeedWithDrizzle();
     initialized = true;
     log.info('PostgreSQL Drizzle tables verified, created, and seeded successfully.');
@@ -386,6 +471,17 @@ export async function ensurePostgresTables() {
       // Seed Initial Data into Postgres
       await seedPostgresData(client);
 
+      // RLS activation DDL — the SAME single source of truth as the Drizzle
+      // path (policies + app role + grants + SECURITY DEFINER escapes).
+      // Without it a legacy-fallback boot would leave DATABASE_APP_URL
+      // half-activated (tables exist, role/policies do not).
+      try {
+        for (const stmt of TENANT_RLS_DDL) await client.query(stmt);
+        await applyAppRoleLoginPassword(client);
+      } catch (rlsErr) {
+        log.warn('RLS activation DDL failed in legacy fallback:', rlsErr);
+      }
+
       initialized = true;
       log.info('PostgreSQL OmniRAG tables verified, created, and seeded successfully.');
     } finally {
@@ -394,6 +490,9 @@ export async function ensurePostgresTables() {
   } catch (err) {
     log.error('Error ensuring PostgreSQL tables exist:', err);
   }
+})();
+
+  await initPromise;
 }
 
 async function seedPostgresData(client: any) {
@@ -579,6 +678,7 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     const res = await client.query('SELECT * FROM documents WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
@@ -605,7 +705,7 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
     log.error('Failed to get Postgres documents:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -615,6 +715,7 @@ export async function getPostgresDocumentById(id: string, tenantId: string): Pro
   if (!p) return undefined;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     const res = await client.query('SELECT * FROM documents WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
@@ -641,7 +742,7 @@ export async function getPostgresDocumentById(id: string, tenantId: string): Pro
     log.error('Failed to get Postgres document by ID:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -666,6 +767,7 @@ export async function insertPostgresDocument(doc: {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, doc.tenantId);
   try {
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [doc.tenantId]);
@@ -702,7 +804,7 @@ export async function insertPostgresDocument(doc: {
     log.error('Failed to insert document into Postgres:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -712,6 +814,7 @@ export async function deletePostgresDocument(documentId: string, tenantId: strin
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
@@ -723,7 +826,7 @@ export async function deletePostgresDocument(documentId: string, tenantId: strin
     log.error('Failed to delete document from Postgres:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -734,6 +837,7 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     const res = await client.query('SELECT * FROM chunks WHERE tenant_id = $1', [tenantId]);
@@ -752,7 +856,7 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
     log.error('Failed to get Postgres chunks:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -772,6 +876,7 @@ export async function getPostgresChunksByDocument(
 
   const { limit = 200, offset = 0 } = opts;
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     const countRes = await client.query(
@@ -800,7 +905,7 @@ export async function getPostgresChunksByDocument(
     log.error('Failed to get Postgres chunks by document:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -816,13 +921,14 @@ export async function deletePostgresChunksByDocument(documentId: string, tenantI
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     await client.query('DELETE FROM chunks WHERE document_id = $1 AND tenant_id = $2', [documentId, tenantId]);
   } catch (error) {
     log.error('Failed to delete Postgres chunks for document:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -842,6 +948,7 @@ export async function insertPostgresChunk(chunk: {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, chunk.tenantId);
   try {
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [chunk.tenantId]);
@@ -869,7 +976,7 @@ export async function insertPostgresChunk(chunk: {
     await client.query('ROLLBACK');
     log.error('Failed to insert chunk into Postgres:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -880,6 +987,7 @@ export async function getPostgresSources(tenantId: string): Promise<SourceConnec
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM sources WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
     return res.rows.map((row: any) => ({
@@ -900,7 +1008,7 @@ export async function getPostgresSources(tenantId: string): Promise<SourceConnec
     log.error('Failed to get Postgres sources:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -910,6 +1018,7 @@ export async function getPostgresSourceById(id: string, tenantId: string): Promi
   if (!p) return undefined;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM sources WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
     if (res.rows.length === 0) return undefined;
@@ -932,7 +1041,7 @@ export async function getPostgresSourceById(id: string, tenantId: string): Promi
     log.error('Failed to get Postgres source by ID:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -950,9 +1059,11 @@ export async function getPostgresScheduledSources(): Promise<
 
   const client = await p.connect();
   try {
+    // SECURITY DEFINER: the background connector-sync worker must fan out
+    // across ALL tenants by design (returns tenant_id per row; downstream
+    // sync re-scopes per tenant) — impossible under a scoped session.
     const res = await client.query(
-      `SELECT id, tenant_id, sync_schedule FROM sources
-       WHERE sync_schedule IS NOT NULL AND sync_schedule <> '' AND sync_schedule <> 'manual'`,
+      'SELECT id, tenant_id, sync_schedule FROM omnirag_list_scheduled_sources()',
     );
     return res.rows.map((row: any) => ({
       id: row.id,
@@ -963,7 +1074,7 @@ export async function getPostgresScheduledSources(): Promise<
     log.error('Failed to list scheduled Postgres sources:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -973,6 +1084,7 @@ export async function insertPostgresSource(source: SourceConnector) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, source.tenantId);
   try {
     await client.query(
       `INSERT INTO sources (id, tenant_id, name, type, status, config, sync_schedule, last_sync_at, document_count, last_error, created_at, collection_ids)
@@ -1001,7 +1113,7 @@ export async function insertPostgresSource(source: SourceConnector) {
     log.error('Failed to insert Postgres source:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1011,13 +1123,14 @@ export async function deletePostgresSource(id: string, tenantId: string) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('DELETE FROM sources WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
   } catch (error) {
     log.error('Failed to delete Postgres source:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1028,6 +1141,7 @@ export async function getPostgresSyncLogs(tenantId: string, sourceId?: string): 
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     let queryText = 'SELECT * FROM sync_logs WHERE tenant_id = $1';
     const params = [tenantId];
@@ -1052,7 +1166,7 @@ export async function getPostgresSyncLogs(tenantId: string, sourceId?: string): 
     log.error('Failed to get Postgres sync logs:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1062,6 +1176,7 @@ export async function insertPostgresSyncLog(entry: SyncLogEntry) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, entry.tenantId);
   try {
     await client.query(
       `INSERT INTO sync_logs (id, tenant_id, source_id, source_name, status, items_processed, duration_ms, message, timestamp)
@@ -1085,7 +1200,7 @@ export async function insertPostgresSyncLog(entry: SyncLogEntry) {
     log.error('Failed to insert Postgres sync log:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1096,6 +1211,7 @@ export async function getPostgresCollections(tenantId: string): Promise<Collecti
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM collections WHERE tenant_id = $1 ORDER BY created_at DESC', [
       tenantId,
@@ -1112,7 +1228,7 @@ export async function getPostgresCollections(tenantId: string): Promise<Collecti
     log.error('Failed to get Postgres collections:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1122,6 +1238,7 @@ export async function insertPostgresCollection(col: Collection) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, col.tenantId);
   try {
     await client.query(
       `INSERT INTO collections (id, tenant_id, name, description, document_count, created_at)
@@ -1134,7 +1251,7 @@ export async function insertPostgresCollection(col: Collection) {
     log.error('Failed to insert Postgres collection:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1145,6 +1262,7 @@ export async function getPostgresMcpServers(tenantId: string): Promise<MCPServer
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM mcp_servers WHERE tenant_id = $1 ORDER BY created_at DESC', [
       tenantId,
@@ -1174,7 +1292,7 @@ export async function getPostgresMcpServers(tenantId: string): Promise<MCPServer
     log.error('Failed to get Postgres MCP servers:', error);
     return [];
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1184,6 +1302,7 @@ export async function insertPostgresMcpServer(s: MCPServerConfig) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, s.tenantId);
   try {
     await client.query(
       `INSERT INTO mcp_servers (id, tenant_id, name, description, endpoint_url, protocol_version, sandbox_tier, enabled_tools, require_confirmation_tools, status, latency_ms, last_checked, headers, category, url, auth_type, transport_type, config, custom_tool_schemas)
@@ -1221,7 +1340,7 @@ export async function insertPostgresMcpServer(s: MCPServerConfig) {
   } catch (error) {
     log.error('Failed to insert Postgres MCP server:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1231,12 +1350,13 @@ export async function deletePostgresMcpServer(serverId: string, tenantId: string
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('DELETE FROM mcp_servers WHERE id = $1 AND tenant_id = $2', [serverId, tenantId]);
   } catch (error) {
     log.error('Failed to delete Postgres MCP server:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1247,6 +1367,7 @@ export async function getPostgresAuditLogs(tenantId: string): Promise<AuditLogEn
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM audit_logs WHERE tenant_id = $1 ORDER BY timestamp DESC', [tenantId]);
     return res.rows.map((row: any) => ({
@@ -1264,7 +1385,7 @@ export async function getPostgresAuditLogs(tenantId: string): Promise<AuditLogEn
     log.error('Failed to get Postgres audit logs:', error);
     return [];
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1274,6 +1395,7 @@ export async function insertPostgresAuditLog(entry: AuditLogEntry) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, entry.tenantId);
   try {
     await client.query(
       `INSERT INTO audit_logs (id, tenant_id, actor_id, action, resource_type, resource_id, status, details, timestamp)
@@ -1293,7 +1415,7 @@ export async function insertPostgresAuditLog(entry: AuditLogEntry) {
   } catch (error) {
     log.error('Failed to insert Postgres audit log:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1304,6 +1426,7 @@ export async function getPostgresToolCalls(tenantId: string): Promise<MCPToolCal
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM tool_calls WHERE tenant_id = $1 ORDER BY timestamp DESC', [tenantId]);
     return res.rows.map((row: any) => ({
@@ -1323,7 +1446,7 @@ export async function getPostgresToolCalls(tenantId: string): Promise<MCPToolCal
     log.error('Failed to get Postgres tool calls:', error);
     return [];
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1333,6 +1456,7 @@ export async function insertPostgresToolCall(tc: MCPToolCall) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, tc.tenantId);
   try {
     await client.query(
       `INSERT INTO tool_calls (id, tenant_id, conversation_id, scoped_tool_name, input_params, output_result, latency_ms, status, has_side_effect, user_confirmed, timestamp)
@@ -1357,7 +1481,7 @@ export async function insertPostgresToolCall(tc: MCPToolCall) {
   } catch (error) {
     log.error('Failed to insert Postgres tool call:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1368,6 +1492,7 @@ export async function getPostgresConversations(tenantId: string): Promise<Conver
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     // A single LATERAL join fetches each conversation's first user message so
     // the sidebar can preview the original request without N+1 queries.
@@ -1401,7 +1526,7 @@ export async function getPostgresConversations(tenantId: string): Promise<Conver
     log.error('Failed to get Postgres conversations:', error);
     return [];
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1411,6 +1536,7 @@ export async function getPostgresConversationById(id: string, tenantId: string):
   if (!p) return null;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM conversations WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
     if (res.rows.length === 0) return null;
@@ -1430,7 +1556,7 @@ export async function getPostgresConversationById(id: string, tenantId: string):
     log.error('Failed to get Postgres conversation by ID:', error);
     return null;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1440,6 +1566,7 @@ export async function insertPostgresConversation(conv: Conversation) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, conv.tenantId);
   try {
     await client.query(
       `INSERT INTO conversations (id, tenant_id, title, mode, model, collection_ids, enabled_mcp_servers, created_at, updated_at)
@@ -1463,7 +1590,7 @@ export async function insertPostgresConversation(conv: Conversation) {
   } catch (error) {
     log.error('Failed to insert Postgres conversation:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1473,6 +1600,7 @@ export async function deletePostgresConversation(id: string, tenantId: string) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('BEGIN');
     await client.query('DELETE FROM messages WHERE conversation_id = $1 AND tenant_id = $2', [id, tenantId]);
@@ -1482,7 +1610,7 @@ export async function deletePostgresConversation(id: string, tenantId: string) {
     await client.query('ROLLBACK');
     log.error('Failed to delete Postgres conversation:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1493,6 +1621,7 @@ export async function getPostgresMessages(conversationId: string, tenantId: stri
   if (!p) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query(
       'SELECT * FROM messages WHERE conversation_id = $1 AND tenant_id = $2 ORDER BY created_at ASC',
@@ -1516,7 +1645,7 @@ export async function getPostgresMessages(conversationId: string, tenantId: stri
     log.error('Failed to get Postgres messages:', error);
     return [];
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1526,6 +1655,7 @@ export async function insertPostgresMessage(msg: Message) {
   if (!p) return;
 
   const client = await p.connect();
+  await setTenantScope(client, msg.tenantId);
   try {
     await client.query(
       `INSERT INTO messages (id, tenant_id, conversation_id, role, content, citations, model_used, tokens_used, feedback, tool_calls, has_pii_redacted, created_at)
@@ -1550,7 +1680,7 @@ export async function insertPostgresMessage(msg: Message) {
   } catch (error) {
     log.error('Failed to insert Postgres message:', error);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1593,6 +1723,7 @@ export async function searchPostgresLexical(
   if (!tenantId) return [];
 
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('BEGIN');
     // Kept for forward-compatibility with a future RLS rollout; the ACTUAL
@@ -1694,7 +1825,7 @@ export async function searchPostgresLexical(
     log.error('PostgreSQL lexical search failed:', error);
     return [];
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -1985,6 +2116,7 @@ export async function insertPostgresApiKey(key: ApiKeyRecord): Promise<void> {
   const p = getPostgresPool();
   if (!p) return;
   const client = await p.connect();
+  await setTenantScope(client, key.tenantId);
   try {
     await client.query(
       `INSERT INTO api_keys (id, tenant_id, user_id, name, prefix, key_hash, scopes, rate_limit_per_minute, mcp_tools, expires_at, last_used_at, revoked_at, created_at)
@@ -2010,7 +2142,7 @@ export async function insertPostgresApiKey(key: ApiKeyRecord): Promise<void> {
     log.error('Failed to insert Postgres API key:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2019,6 +2151,7 @@ export async function getPostgresApiKeys(tenantId: string): Promise<ApiKeyRecord
   const p = getPostgresPool();
   if (!p) return [];
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM api_keys WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
     return res.rows.map(mapApiKeyRow);
@@ -2026,7 +2159,7 @@ export async function getPostgresApiKeys(tenantId: string): Promise<ApiKeyRecord
     log.error('Failed to list Postgres API keys:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2036,14 +2169,19 @@ export async function getPostgresApiKeyByHash(keyHash: string): Promise<ApiKeyRe
   if (!p) return undefined;
   const client = await p.connect();
   try {
-    const res = await client.query('SELECT * FROM api_keys WHERE key_hash = $1 LIMIT 1', [keyHash]);
+    // SECURITY DEFINER lookup: bearer-key auth must find the key across ALL
+    // tenants (the hash IS the credential and selects the tenant from the
+    // matched row). A scoped query cannot express that under RLS, so the
+    // owner-owned definer function performs the lookup — its surface is
+    // exactly one parameterized SELECT (see migrateAndSeedDrizzle).
+    const res = await client.query('SELECT * FROM omnirag_get_api_key_by_hash($1)', [keyHash]);
     if (res.rows.length === 0) return undefined;
     return mapApiKeyRow(res.rows[0]);
   } catch (error) {
     log.error('Failed to look up Postgres API key by hash:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2052,6 +2190,7 @@ export async function revokePostgresApiKey(id: string, tenantId: string): Promis
   const p = getPostgresPool();
   if (!p) return;
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('UPDATE api_keys SET revoked_at = $1 WHERE id = $2 AND tenant_id = $3', [
       new Date().toISOString(),
@@ -2062,7 +2201,7 @@ export async function revokePostgresApiKey(id: string, tenantId: string): Promis
     log.error('Failed to revoke Postgres API key:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2071,12 +2210,14 @@ export async function touchPostgresApiKeyLastUsed(id: string, timestamp: string)
   if (!p) return;
   const client = await p.connect();
   try {
-    await client.query('UPDATE api_keys SET last_used_at = $1 WHERE id = $2', [timestamp, id]);
+    // SECURITY DEFINER: the id comes from the authenticated hash lookup —
+    // there is no tenant context on this path to scope with.
+    await client.query('SELECT omnirag_touch_api_key_last_used($1, $2)', [id, timestamp]);
   } catch (error) {
     // Best-effort stamp — never fail the auth path over telemetry.
     log.warn('Failed to stamp API key last_used_at:', (error as Error)?.message);
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2104,6 +2245,7 @@ export async function insertPostgresWebhookEndpoint(endpoint: WebhookEndpoint): 
   const p = getPostgresPool();
   if (!p) return;
   const client = await p.connect();
+  await setTenantScope(client, endpoint.tenantId);
   try {
     await client.query(
       `INSERT INTO webhook_endpoints (id, tenant_id, name, url, secret, events, enabled, last_delivery_at, last_delivery_status, created_at, updated_at)
@@ -2127,7 +2269,7 @@ export async function insertPostgresWebhookEndpoint(endpoint: WebhookEndpoint): 
     log.error('Failed to insert Postgres webhook endpoint:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2136,6 +2278,7 @@ export async function getPostgresWebhookEndpoints(tenantId: string): Promise<Web
   const p = getPostgresPool();
   if (!p) return [];
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM webhook_endpoints WHERE tenant_id = $1 ORDER BY created_at DESC', [
       tenantId,
@@ -2145,7 +2288,7 @@ export async function getPostgresWebhookEndpoints(tenantId: string): Promise<Web
     log.error('Failed to list Postgres webhook endpoints:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2157,6 +2300,7 @@ export async function getPostgresWebhookEndpointById(
   const p = getPostgresPool();
   if (!p) return undefined;
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2 LIMIT 1', [
       id,
@@ -2167,7 +2311,7 @@ export async function getPostgresWebhookEndpointById(
     log.error('Failed to fetch Postgres webhook endpoint:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2198,6 +2342,7 @@ export async function updatePostgresWebhookEndpoint(
   sets.push(`updated_at = $${values.push(new Date().toISOString())}`);
   values.push(id, tenantId);
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query(
       `UPDATE webhook_endpoints SET ${sets.join(', ')} WHERE id = $${values.length - 1} AND tenant_id = $${values.length}`,
@@ -2207,7 +2352,7 @@ export async function updatePostgresWebhookEndpoint(
     log.error('Failed to update Postgres webhook endpoint:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2216,13 +2361,14 @@ export async function deletePostgresWebhookEndpoint(id: string, tenantId: string
   const p = getPostgresPool();
   if (!p) return;
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('DELETE FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
   } catch (error) {
     log.error('Failed to delete Postgres webhook endpoint:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2246,6 +2392,7 @@ export async function upsertPostgresProviderCredentials(record: ProviderCredenti
   const p = getPostgresPool();
   if (!p) return;
   const client = await p.connect();
+  await setTenantScope(client, record.tenantId);
   try {
     await client.query(
       `INSERT INTO provider_credentials (id, tenant_id, provider_id, credentials, base_url, enabled, created_at, updated_at)
@@ -2270,7 +2417,7 @@ export async function upsertPostgresProviderCredentials(record: ProviderCredenti
     log.error('Failed to upsert Postgres provider credentials:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2282,6 +2429,7 @@ export async function getPostgresProviderCredentials(
   const p = getPostgresPool();
   if (!p) return undefined;
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query(
       'SELECT * FROM provider_credentials WHERE tenant_id = $1 AND provider_id = $2 LIMIT 1',
@@ -2293,7 +2441,7 @@ export async function getPostgresProviderCredentials(
     log.error('Failed to get Postgres provider credentials:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2302,6 +2450,7 @@ export async function getPostgresProviderCredentialsList(tenantId: string): Prom
   const p = getPostgresPool();
   if (!p) return [];
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM provider_credentials WHERE tenant_id = $1 ORDER BY provider_id', [
       tenantId,
@@ -2311,7 +2460,7 @@ export async function getPostgresProviderCredentialsList(tenantId: string): Prom
     log.error('Failed to list Postgres provider credentials:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 
@@ -2320,6 +2469,7 @@ export async function deletePostgresProviderCredentials(tenantId: string, provid
   const p = getPostgresPool();
   if (!p) return;
   const client = await p.connect();
+  await setTenantScope(client, tenantId);
   try {
     await client.query('DELETE FROM provider_credentials WHERE tenant_id = $1 AND provider_id = $2', [
       tenantId,
@@ -2329,7 +2479,7 @@ export async function deletePostgresProviderCredentials(tenantId: string, provid
     log.error('Failed to delete Postgres provider credentials:', error);
     throw error;
   } finally {
-    client.release();
+    await releaseTenantClient(client);
   }
 }
 

@@ -61,12 +61,25 @@ async function seedProbeRows(pool: pg.Pool): Promise<void> {
       [id, tenantId],
     );
   }
+  // One probe API key owned by tenant B — the definer-lookup proof below must
+  // find it across the RLS boundary while a scoped read must not.
+  await pool.query(
+    `INSERT INTO api_keys (id, tenant_id, user_id, name, prefix, key_hash, created_at)
+     VALUES ('rls-probe-key', $1, 'rls-probe-user', 'RLS probe key', 'omnirag_live_probe', 'rls-probe-key-hash', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+     ON CONFLICT (id) DO NOTHING`,
+    [TENANT_B],
+  );
 }
 
 async function cleanup(pool: pg.Pool): Promise<void> {
   try {
     await pool.query(`DELETE FROM documents WHERE id LIKE '${DOC_PREFIX}%'`);
-    await pool.query(`REVOKE ALL ON documents FROM ${PROBE_ROLE}`);
+    await pool.query(`DELETE FROM api_keys WHERE id = 'rls-probe-key'`);
+    // Revoke EVERYTHING the probe role may hold — DROP ROLE refuses while
+    // any grant dependency exists.
+    await pool.query(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${PROBE_ROLE}`);
+    await pool.query(`REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM ${PROBE_ROLE}`);
+    await pool.query(`REVOKE ALL ON SCHEMA public FROM ${PROBE_ROLE}`);
     await pool.query(`DROP ROLE IF EXISTS ${PROBE_ROLE}`);
   } catch (e) {
     console.warn('[verify-rls] cleanup warning (probe artifacts may remain):', (e as Error).message);
@@ -105,7 +118,7 @@ async function runProbe(pool: pg.Pool): Promise<Check[]> {
     return checks;
   }
 
-  // Non-owner probe role, scoped to the documents table only.
+  // Non-owner probe role, scoped to the documents + api_keys tables.
   await pool.query(
     `DO $$
      BEGIN
@@ -116,6 +129,8 @@ async function runProbe(pool: pg.Pool): Promise<Check[]> {
   );
   await pool.query(`GRANT USAGE ON SCHEMA public TO ${PROBE_ROLE}`);
   await pool.query(`GRANT SELECT, INSERT, DELETE ON documents TO ${PROBE_ROLE}`);
+  await pool.query(`GRANT SELECT ON api_keys TO ${PROBE_ROLE}`);
+  await pool.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${PROBE_ROLE}`);
 
   const client = await pool.connect();
   try {
@@ -142,6 +157,9 @@ async function runProbe(pool: pg.Pool): Promise<Check[]> {
     });
 
     // 3. cross-tenant write rejected by WITH CHECK
+    // SAVEPOINT: the expected rejection aborts the transaction — roll back to
+    // the savepoint so the remaining checks can still run inside it.
+    await client.query('SAVEPOINT write_guard');
     let writeRejected = false;
     try {
       await client.query(
@@ -152,10 +170,29 @@ async function runProbe(pool: pg.Pool): Promise<Check[]> {
     } catch {
       writeRejected = true;
     }
+    await client.query('ROLLBACK TO SAVEPOINT write_guard');
     checks.push({
       name: 'write guard: INSERT with foreign tenant_id is rejected',
       pass: writeRejected,
       detail: writeRejected ? 'rejected by WITH CHECK ✓' : 'INSERT SUCCEEDED — WITH CHECK not enforcing!',
+    });
+
+    // 4. SECURITY DEFINER escape: bearer-key auth crosses the RLS boundary
+    //    (the hash IS the credential) while a direct scoped read of the same
+    //    table stays fail-closed.
+    const direct = await client.query(`SELECT count(*)::int AS n FROM api_keys WHERE id = 'rls-probe-key'`);
+    checks.push({
+      name: 'api_keys direct read hidden by RLS (tenant A cannot see B key)',
+      pass: direct.rows[0].n === 0,
+      detail: `visible=${direct.rows[0].n} (expected 0)`,
+    });
+    const viaDefiner = await client.query(`SELECT count(*)::int AS n FROM omnirag_get_api_key_by_hash($1)`, [
+      'rls-probe-key-hash',
+    ]);
+    checks.push({
+      name: 'definer lookup finds the key across the RLS boundary',
+      pass: viaDefiner.rows[0].n === 1,
+      detail: `found=${viaDefiner.rows[0].n} (expected 1)`,
     });
 
     await client.query('ROLLBACK');

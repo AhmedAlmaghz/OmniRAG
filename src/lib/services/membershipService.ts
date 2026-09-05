@@ -3,7 +3,7 @@ import { createLogger } from '@/lib/logging/logger';
 const log = createLogger('LibServicesMembershipService');
 
 import { randomUUID, randomBytes } from 'node:crypto';
-import { getPostgresPool } from '../storage/postgres';
+import { getPostgresPool, queryAsTenant } from '../storage/postgres';
 import { db } from '../storage/db';
 import type { Role } from '../auth/permissions';
 
@@ -217,8 +217,8 @@ export async function upsertMembership(m: Membership): Promise<void> {
     memory.memberships.push(m);
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query(
+  await queryAsTenant(
+    m.tenantId,
     `INSERT INTO memberships (id, user_id, tenant_id, role, status, invited_by, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (user_id, tenant_id) DO UPDATE
@@ -232,8 +232,7 @@ export async function getMembership(tenantId: string, userId: string): Promise<M
     const found = memory.memberships.find((x) => x.tenantId === tenantId && x.userId === userId);
     return found || null;
   }
-  const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM memberships WHERE tenant_id = $1 AND user_id = $2 LIMIT 1', [
+  const res = await queryAsTenant(tenantId, 'SELECT * FROM memberships WHERE tenant_id = $1 AND user_id = $2 LIMIT 1', [
     tenantId,
     userId,
   ]);
@@ -244,8 +243,9 @@ export async function listTenantMemberships(tenantId: string): Promise<Membershi
   if (!usePostgres()) {
     return memory.memberships.filter((x) => x.tenantId === tenantId);
   }
-  const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM memberships WHERE tenant_id = $1 ORDER BY created_at ASC', [tenantId]);
+  const res = await queryAsTenant(tenantId, 'SELECT * FROM memberships WHERE tenant_id = $1 ORDER BY created_at ASC', [
+    tenantId,
+  ]);
   return res.rows.map(rowToMembership);
 }
 
@@ -253,9 +253,12 @@ export async function listUserMemberships(userId: string): Promise<Membership[]>
   if (!usePostgres()) {
     return memory.memberships.filter((x) => x.userId === userId && x.status === 'active');
   }
+  // SECURITY DEFINER: the workspace switcher must list a user's memberships
+  // across ALL tenants by design — the definer is constrained to rows whose
+  // user_id matches (see migrateAndSeedDrizzle).
   const p = getPostgresPool()!;
   const res = await p.query(
-    "SELECT * FROM memberships WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC",
+    "SELECT * FROM omnirag_list_user_memberships($1) WHERE status = 'active' ORDER BY created_at ASC",
     [userId],
   );
   return res.rows.map(rowToMembership);
@@ -266,16 +269,14 @@ export async function deleteMembership(tenantId: string, userId: string): Promis
     memory.memberships = memory.memberships.filter((x) => !(x.tenantId === tenantId && x.userId === userId));
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query('DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2', [tenantId, userId]);
+  await queryAsTenant(tenantId, 'DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2', [tenantId, userId]);
 }
 
 export async function countTenantOwners(tenantId: string): Promise<number> {
   if (!usePostgres()) {
     return memory.memberships.filter((x) => x.tenantId === tenantId && x.role === 'owner').length;
   }
-  const p = getPostgresPool()!;
-  const res = await p.query("SELECT COUNT(*)::int AS n FROM memberships WHERE tenant_id = $1 AND role = 'owner'", [
+  const res = await queryAsTenant(tenantId, "SELECT COUNT(*)::int AS n FROM memberships WHERE tenant_id = $1 AND role = 'owner'", [
     tenantId,
   ]);
   return Number(res.rows[0]?.n || 0);
@@ -333,8 +334,8 @@ export async function createInvitation(inv: Invitation): Promise<void> {
     memory.invitations.push(inv);
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query(
+  await queryAsTenant(
+    inv.tenantId,
     `INSERT INTO invitations (id, tenant_id, email, role, token, invited_by, expires_at, status, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, expires_at = EXCLUDED.expires_at, status = EXCLUDED.status`,
@@ -346,8 +347,10 @@ export async function getInvitationByToken(token: string): Promise<Invitation | 
   if (!usePostgres()) {
     return memory.invitations.find((x) => x.token === token) || null;
   }
+  // SECURITY DEFINER: invitation-acceptance resolves the tenant FROM the
+  // secret token — no tenant scope exists before the lookup.
   const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM invitations WHERE token = $1 LIMIT 1', [token]);
+  const res = await p.query('SELECT * FROM omnirag_get_invitation_by_token($1) LIMIT 1', [token]);
   return res.rows[0] ? rowToInvitation(res.rows[0]) : null;
 }
 
@@ -359,8 +362,8 @@ export async function findPendingInvitationByEmail(tenantId: string, email: stri
       null
     );
   }
-  const p = getPostgresPool()!;
-  const res = await p.query(
+  const res = await queryAsTenant(
+    tenantId,
     "SELECT * FROM invitations WHERE tenant_id = $1 AND email = $2 AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
     [tenantId, normalized],
   );
@@ -378,20 +381,23 @@ export async function listPendingInvitationsByEmail(email: string): Promise<Invi
   if (!usePostgres()) {
     return memory.invitations.filter((x) => x.email === normalized && isInvitationUsable(x, now));
   }
+  // SECURITY DEFINER: a pending-invite banner spans every tenant the email
+  // was invited to — cross-tenant by design, constrained to the email.
   const p = getPostgresPool()!;
   const res = await p.query(
-    "SELECT * FROM invitations WHERE email = $1 AND status = 'pending' AND expires_at > $2 ORDER BY created_at DESC",
-    [normalized, new Date(now).toISOString()],
+    "SELECT * FROM omnirag_list_pending_invitations_by_email($1) ORDER BY created_at DESC",
+    [normalized],
   );
-  return res.rows.map(rowToInvitation);
+  return res.rows.map(rowToInvitation).filter((inv: Invitation) => isInvitationUsable(inv, now));
 }
 
 export async function listTenantInvitations(tenantId: string): Promise<Invitation[]> {
   if (!usePostgres()) {
     return memory.invitations.filter((x) => x.tenantId === tenantId);
   }
-  const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM invitations WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
+  const res = await queryAsTenant(tenantId, 'SELECT * FROM invitations WHERE tenant_id = $1 ORDER BY created_at DESC', [
+    tenantId,
+  ]);
   return res.rows.map(rowToInvitation);
 }
 
@@ -401,8 +407,10 @@ export async function updateInvitationStatus(id: string, status: Invitation['sta
     if (inv) inv.status = status;
     return;
   }
+  // SECURITY DEFINER: acceptance happens from the invite email/token context —
+  // the id arrives before any tenant scope is established.
   const p = getPostgresPool()!;
-  await p.query('UPDATE invitations SET status = $1 WHERE id = $2', [status, id]);
+  await p.query('SELECT omnirag_set_invitation_status($1, $2)', [id, status]);
 }
 
 export async function deleteInvitation(id: string, tenantId: string): Promise<void> {
@@ -410,8 +418,7 @@ export async function deleteInvitation(id: string, tenantId: string): Promise<vo
     memory.invitations = memory.invitations.filter((x) => !(x.id === id && x.tenantId === tenantId));
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query('DELETE FROM invitations WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+  await queryAsTenant(tenantId, 'DELETE FROM invitations WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
 }
 
 export function isInvitationUsable(inv: Invitation, now = Date.now()): boolean {
@@ -467,8 +474,8 @@ export async function createTeam(team: Team): Promise<void> {
     memory.teams.push(team);
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query(
+  await queryAsTenant(
+    team.tenantId,
     `INSERT INTO teams (id, tenant_id, name, description, created_at)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description`,
@@ -480,8 +487,9 @@ export async function listTenantTeams(tenantId: string): Promise<Team[]> {
   if (!usePostgres()) {
     return memory.teams.filter((x) => x.tenantId === tenantId);
   }
-  const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM teams WHERE tenant_id = $1 ORDER BY created_at ASC', [tenantId]);
+  const res = await queryAsTenant(tenantId, 'SELECT * FROM teams WHERE tenant_id = $1 ORDER BY created_at ASC', [
+    tenantId,
+  ]);
   return res.rows.map(rowToTeam);
 }
 
@@ -489,8 +497,10 @@ export async function getTeam(teamId: string, tenantId: string): Promise<Team | 
   if (!usePostgres()) {
     return memory.teams.find((x) => x.id === teamId && x.tenantId === tenantId) || null;
   }
-  const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM teams WHERE id = $1 AND tenant_id = $2 LIMIT 1', [teamId, tenantId]);
+  const res = await queryAsTenant(tenantId, 'SELECT * FROM teams WHERE id = $1 AND tenant_id = $2 LIMIT 1', [
+    teamId,
+    tenantId,
+  ]);
   return res.rows[0] ? rowToTeam(res.rows[0]) : null;
 }
 
@@ -500,9 +510,10 @@ export async function deleteTeam(teamId: string, tenantId: string): Promise<void
     memory.teamMembers = memory.teamMembers.filter((x) => x.teamId !== teamId);
     return;
   }
+  // team_members is a global table (no RLS) — plain pool; teams is scoped.
   const p = getPostgresPool()!;
   await p.query('DELETE FROM team_members WHERE team_id = $1', [teamId]);
-  await p.query('DELETE FROM teams WHERE id = $1 AND tenant_id = $2', [teamId, tenantId]);
+  await queryAsTenant(tenantId, 'DELETE FROM teams WHERE id = $1 AND tenant_id = $2', [teamId, tenantId]);
 }
 
 export async function addTeamMember(tm: TeamMember): Promise<void> {
@@ -574,8 +585,8 @@ export async function upsertResourceShare(share: ResourceShare): Promise<void> {
     memory.resourceShares.push(share);
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query(
+  await queryAsTenant(
+    share.tenantId,
     `INSERT INTO resource_shares
        (id, tenant_id, resource_type, resource_id, grantee_type, grantee_id, permission, link_token, shared_by, expires_at, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -608,8 +619,8 @@ export async function listSharesForResource(
       (x) => x.tenantId === tenantId && x.resourceType === resourceType && x.resourceId === resourceId,
     );
   }
-  const p = getPostgresPool()!;
-  const res = await p.query(
+  const res = await queryAsTenant(
+    tenantId,
     'SELECT * FROM resource_shares WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3 ORDER BY created_at ASC',
     [tenantId, resourceType, resourceId],
   );
@@ -620,8 +631,9 @@ export async function listTenantShares(tenantId: string): Promise<ResourceShare[
   if (!usePostgres()) {
     return memory.resourceShares.filter((x) => x.tenantId === tenantId);
   }
-  const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM resource_shares WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
+  const res = await queryAsTenant(tenantId, 'SELECT * FROM resource_shares WHERE tenant_id = $1 ORDER BY created_at DESC', [
+    tenantId,
+  ]);
   return res.rows.map(rowToShare);
 }
 
@@ -630,8 +642,7 @@ export async function deleteResourceShare(id: string, tenantId: string): Promise
     memory.resourceShares = memory.resourceShares.filter((x) => !(x.id === id && x.tenantId === tenantId));
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query('DELETE FROM resource_shares WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+  await queryAsTenant(tenantId, 'DELETE FROM resource_shares WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
 }
 
 export async function getShareByLinkToken(token: string): Promise<ResourceShare | null> {
@@ -641,8 +652,10 @@ export async function getShareByLinkToken(token: string): Promise<ResourceShare 
     if (found.expiresAt && new Date(found.expiresAt).getTime() <= Date.now()) return null;
     return found;
   }
+  // SECURITY DEFINER: public share links resolve the tenant FROM the secret
+  // link token (unauthenticated access by design) — the token IS the selector.
   const p = getPostgresPool()!;
-  const res = await p.query('SELECT * FROM resource_shares WHERE link_token = $1 LIMIT 1', [token]);
+  const res = await p.query('SELECT * FROM omnirag_get_share_by_link_token($1) LIMIT 1', [token]);
   if (!res.rows[0]) return null;
   const share = rowToShare(res.rows[0]);
   if (share.expiresAt && new Date(share.expiresAt).getTime() <= Date.now()) return null;
@@ -695,8 +708,8 @@ export async function createSsoFlow(flow: SsoFlow): Promise<void> {
     memory.ssoFlows.push(flow);
     return;
   }
-  const p = getPostgresPool()!;
-  await p.query(
+  await queryAsTenant(
+    flow.tenantId,
     `INSERT INTO sso_flows (state, tenant_id, code_verifier, redirect_uri, expires_at, created_at)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (state) DO UPDATE SET code_verifier = EXCLUDED.code_verifier, expires_at = EXCLUDED.expires_at`,
@@ -711,11 +724,12 @@ export async function consumeSsoFlow(state: string): Promise<SsoFlow | null> {
     flow = memory.ssoFlows.find((x) => x.state === state) || null;
     memory.ssoFlows = memory.ssoFlows.filter((x) => x.state !== state);
   } else {
+    // SECURITY DEFINER consume: OIDC callback resolves the tenant FROM the
+    // state cookie — no scope exists yet. Single atomic DELETE … RETURNING.
     const p = getPostgresPool()!;
-    const res = await p.query('SELECT * FROM sso_flows WHERE state = $1 LIMIT 1', [state]);
+    const res = await p.query('DELETE FROM omnirag_consume_sso_flow($1) RETURNING *', [state]);
     if (res.rows[0]) {
       flow = rowToSsoFlow(res.rows[0]);
-      await p.query('DELETE FROM sso_flows WHERE state = $1', [state]);
     }
   }
   if (!flow) return null;
@@ -730,6 +744,7 @@ export async function purgeExpiredSsoFlows(): Promise<void> {
     memory.ssoFlows = memory.ssoFlows.filter((x) => x.expiresAt > nowIso);
     return;
   }
+  // SECURITY DEFINER: housekeeping sweeps flows of ALL tenants.
   const p = getPostgresPool()!;
-  await p.query('DELETE FROM sso_flows WHERE expires_at <= $1', [nowIso]).catch(() => {});
+  await p.query('SELECT omnirag_purge_expired_sso_flows($1)', [nowIso]).catch(() => {});
 }

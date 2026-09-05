@@ -3,7 +3,7 @@ import { createLogger } from '@/lib/logging/logger';
 const log = createLogger('LibStorageVectorsAdaptersPgvector');
 
 import { getEnv } from '../../../env/runtimeEnv';
-import { getPostgresPool } from '../../postgres';
+import { getPostgresPool, getOwnerPool } from '../../postgres';
 import type {
   IVectorStore,
   VectorSearchParams,
@@ -87,7 +87,10 @@ async function ensureTable(dimension: number): Promise<boolean> {
   const table = tableForDimension(dimension);
   if (ensuredTables.has(table)) return true;
 
-  const pool = getPostgresPool();
+  // DDL belongs to the owner connection — under the runtime app role
+  // (DATABASE_APP_URL) CREATE EXTENSION/TABLE would fail, and a table created
+  // by the app role would be owned by it (RLS bypass for that table).
+  const pool = getOwnerPool();
   if (!pool) {
     markUnavailable('no Postgres connection (DATABASE_URL/POSTGRES_URL missing)');
     return false;
