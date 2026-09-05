@@ -24,6 +24,7 @@ export default tseslint.config(
       'dev-server.js',
       'seed_patch.cjs',
       'test-*.{ts,js}',
+      'agent-evolution-deck/**', // standalone deck generator (CommonJS script, not app code)
     ],
   },
   ...tseslint.configs.recommended,
