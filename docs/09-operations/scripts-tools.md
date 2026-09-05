@@ -34,6 +34,7 @@ npm run db:generate          # drizzle-kit generate --config=src/db/drizzle.conf
 npm run db:push              # drizzle-kit push   --config=src/db/drizzle.config.ts
 npm run db:check             # drizzle-kit check  --config=src/db/drizzle.config.ts
 npm run db:migrate:manual    # tsx scripts/run-manual-migration.ts
+npm run db:verify-rls        # tsx scripts/verify-rls.ts — إثبات حي لعقد سياسات RLS
 npm run lint                 # eslint . --ext .ts,.tsx,.js,.jsx,.mjs,.cjs
 npm run lint:fix             # eslint --fix
 npm run format               # prettier --write "src/**/*.{ts,tsx,js,jsx,css,md}" "*.{ts,js,mjs,cjs,md}"

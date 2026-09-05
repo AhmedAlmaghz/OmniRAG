@@ -31,7 +31,7 @@ import { resetDrizzle } from '../../db';
 import pg from 'pg';
 const { Pool } = pg;
 
-import { createLogger } from '../logging/logger';
+import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('PostgresStorage');
 
@@ -360,22 +360,27 @@ export async function ensurePostgresTables() {
         log.warn('tenant_id index creation skipped:', e);
       }
 
-      // Row Level Security is intentionally disabled. Tenant isolation is
-      // enforced at the APPLICATION layer: every persistence handler emits an
-      // explicit `WHERE tenant_id = $1` predicate and binds the server-derived
-      // tenantId (sourced from the authenticated session, never from client
-      // input). The README's claim of RLS-backed isolation is therefore
-      // aspirational, not deployed. A future hardening pass may enable RLS
-      // with `USING (tenant_id = current_setting('app.current_tenant', true))`
-      // once every query path sets the session var — re-enabling RLS now
-      // without that would silently zero-out all tenant reads.
+      // Row Level Security policies (v0.12.9): fail-closed second line of
+      // defense behind the app-layer `WHERE tenant_id = $N` predicates
+      // (server-derived tenantId, never client input — see
+      // docs/06-security/overview.md). ENABLE without FORCE keeps the table
+      // OWNER (the role the app connects as in every current deployment)
+      // bypassing the policies, so behavior is unchanged; the moment a
+      // non-owner app role is used the policies activate: rows are visible
+      // only when app.current_tenant matches, and an unset var compares NULL
+      // → zero rows, never allow-all. Probe contract: `npm run db:verify-rls`.
       try {
-        await client.query(`ALTER TABLE documents DISABLE ROW LEVEL SECURITY;`);
-        await client.query(`ALTER TABLE chunks DISABLE ROW LEVEL SECURITY;`);
-        await client.query(`DROP POLICY IF EXISTS tenant_isolation_documents ON documents;`);
-        await client.query(`DROP POLICY IF EXISTS tenant_isolation_chunks ON chunks;`);
+        for (const t of ['documents', 'chunks']) {
+          await client.query(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;`);
+          await client.query(`DROP POLICY IF EXISTS tenant_isolation_${t} ON ${t};`);
+          await client.query(
+            `CREATE POLICY tenant_isolation_${t} ON ${t}
+             USING (tenant_id = current_setting('app.current_tenant', true))
+             WITH CHECK (tenant_id = current_setting('app.current_tenant', true));`,
+          );
+        }
       } catch (rlsError) {
-        log.warn('RLS cleanup skipped:', rlsError);
+        log.warn('RLS policy installation skipped:', rlsError);
       }
 
       // Seed Initial Data into Postgres

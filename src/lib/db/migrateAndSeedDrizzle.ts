@@ -9,7 +9,7 @@ import {
   INITIAL_AUDIT_LOGS,
 } from '../storage/constants';
 import { getPostgresPool } from '../storage/postgres';
-import { createLogger } from '../logging/logger';
+import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('DrizzleMigrate');
 
@@ -25,7 +25,7 @@ const DDL_BATCH_SIZE = 12;
  * revision. The revision marker makes cold starts a single SELECT instead of
  * the full 4-round-trip DDL transaction.
  */
-const SCHEMA_REVISION = '2026-08-29-perf-indexes';
+const SCHEMA_REVISION = '2026-09-05-rls-policies';
 
 export async function migrateAndSeedWithDrizzle() {
   const pool = getPostgresPool();
@@ -464,6 +464,44 @@ export async function migrateAndSeedWithDrizzle() {
     // Conversation history ordering (list conversations, latest messages).
     ddl(`CREATE INDEX IF NOT EXISTS messages_tenant_conversation_idx
          ON messages (tenant_id, conversation_id);`);
+
+    // ── Row Level Security policies (v0.12.9) ─────────────────────────────
+    // Fail-closed second line of defense behind the app-layer tenant_id
+    // predicates: a row is visible/writable only when the session's
+    // app.current_tenant matches the row. Unset var → NULL comparison → zero
+    // rows, never allow-all. ENABLE without FORCE keeps the table OWNER (the
+    // role the app connects as in every current deployment) bypassing the
+    // policies — zero behavior change today; a non-owner app role activates
+    // them. Activation runbook: docs/06-security/overview.md (قسم RLS) —
+    // live contract probe: npm run db:verify-rls.
+    const RLS_TABLES = [
+      'documents',
+      'chunks',
+      'sources',
+      'sync_logs',
+      'collections',
+      'mcp_servers',
+      'audit_logs',
+      'tool_calls',
+      'conversations',
+      'messages',
+      'api_keys',
+      'provider_credentials',
+      'memberships',
+      'invitations',
+      'teams',
+      'resource_shares',
+      'sso_flows',
+      'webhook_endpoints',
+      'usage_counters',
+    ];
+    for (const t of RLS_TABLES) {
+      ddl(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_${t} ON ${t};
+CREATE POLICY tenant_isolation_${t} ON ${t}
+  USING (tenant_id = current_setting('app.current_tenant', true))
+  WITH CHECK (tenant_id = current_setting('app.current_tenant', true));`);
+    }
 
     // One round-trip per batch; Postgres executes the joined statements
     // sequentially and aborts the whole transaction on the first error.

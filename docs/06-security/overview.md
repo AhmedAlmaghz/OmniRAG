@@ -32,15 +32,23 @@ return await runWithRequestContext(
 
 داخل `src/lib/harness/hook-harness.ts`، الخطّاف `H1 TenantGate` (مرحلة `pre_auth`) يرفض أي عملية استدلال (inference) لا تحمل `tenantId` صالح، ويُسجِّل المحاولة في `audit_logs` بوسم `blocked`. هذا يحمي من تسريب عبر تدفّق RAG يُسرّب بيانات مستأجرين آخرين.
 
-### وضع Row Level Security: معطّل عن عمد
+### وضع Row Level Security: سياسات فاشلة-مغلقة مفعّلة (v0.12.9)
 
-> **الحقيقة المنفَّذة** (اعتباراً من v0.12.8): عزل المستأجرين يُنفَّذ في **طبقة التطبيق**، لا عبر سياسات RLS في Postgres.
+> **الحقيقة المنفَّذة** (اعتباراً من v0.12.9): سياسات RLS **مثبَّتة فعلياً** على كل الجداول الـ 19 الحاملة لـ `tenant_id`، والعزل الأساسي يبقى في طبقة التطبيق — الدفاع مزدوج.
 
-في `src/lib/storage/postgres.ts` (حوالي الأسطر 359–375) يُعطَّل RLS صراحةً على `documents` و`chunks` وتُحذف أي سياسات قديمة، والتعليق هناك يوثّق السبب: كل مسارات الكتابة/القراءة تُصدر predicate صريحاً `WHERE tenant_id = $N` بربط معاملات آمن، ويُشتق `tenantId` من الجلسة الموثّقة (أو مفتاح API) ولا يُقبل أبداً من مدخلات العميل. تفعيل RLS الآن دون ضبط `app.current_tenant` في كل مسار استعلام سيُصفّر قراءات كل المستأجرين بصمت — لذلك القرار: تعطيل صريح وموثّق بدلاً من ادعاء غير منفَّذ.
+في `ensurePostgresTables` (المسار الاحتياطي) وفي مهاجر Drizzle (`migrateAndSeedDrizzle.ts` — مراجعة المخطط `2026-09-05-rls-policies`) وفي `scripts/manual-migration.sql` (القسم 9)، تُنشأ لكل جدول tenant-scoped سياسة idempotent:
 
-- **لماذا لا يُعتمد RLS اليوم:** اتصال التطبيق في Docker (`POSTGRES_USER: omnirag` في `docker-compose.yml`) هو **مالك** الجداول، وسياسات RLS لا تُطبَّق على المالك إلا بـ `FORCE ROW LEVEL SECURITY` — أي تفعيل حقيقي يتطلب دور تطبيق غير مالك + غلاف معاملات يضبط `SET LOCAL app.current_tenant` لكل استعلام. هذا مسار تحصين مستقبلي مخطط، لا يُنفَّذ جزئياً.
-- **التعويض الحالي (شبكة الاختبارات):** `src/__tests__/tenantPredicateCoverage.test.ts` يقرأ مصدر `postgres.ts` وقت الاختبار ويفشل إذا وُجدت عبارة SQL تلامس جدولاً tenant-scoped بلا `tenant_id = $N` (مع allowlist صريحة لعبارات DDL والجداول العالمية)، ويُثبّت الاختبار `lexicalTenantIsolation.test.ts` عقد ربط معاملات FTS.
-- **سابقة تاريخية:** قبل v0.12.2 كان مسار البحث اللفظي يُصدر FTS بلا predicate مستأجر إطلاقاً — اكتُشف وأُصلح وأُثبّت باختبار (راجع `docs/audit/2026-08-29-audit-report.md` البند 4).
+```sql
+CREATE POLICY tenant_isolation_documents ON documents
+  USING (tenant_id = current_setting('app.current_tenant', true))
+  WITH CHECK (tenant_id = current_setting('app.current_tenant', true));
+```
+
+- **فشل-مغلق بطبيعته:** `current_setting(..., true)` يعيد `NULL` عند عدم ضبط المتغير → المقارنة `NULL` → صفر صفوف في القراءة ورفض في الكتابة — لا يوجد سيناريو "allow-all".
+- **وضع التفعيل الحالي — ENABLE دون FORCE:** مالك الجداول يتجاوز السياسات. كل النشرات الحالية (Docker بـ `POSTGRES_USER: omnirag`، وSupabase/Neon بدور مالك قاعدة البيانات) تتصل بدور المالك، لذا **السلوك اليوم بلا أي تغيير**، والسياسات تنتظر كمظلة أمان جاهزة.
+- **مسار التفعيل الفعلي (Hardening):** أنشئ دور تطبيق غير مالك (`CREATE ROLE omnirag_app NOLOGIN; GRANT ...`)، وجّه `DATABASE_URL` إليه — عندئذ تُفعَّل السياسات تلقائياً بلا أي تغيير في الكود، وكل استعلام يجب أن يضبط `app.current_tenant` (مسارات الكتابة الحارة تفعله أصلاً عبر `set_config`). **عوائق التفعيل الموثقة:** الدوال الثلاث العابرة-للمستأجرين عمداً (`getPostgresScheduledSources`, `getPostgresApiKeyByHash`, `touchPostgresApiKeyLastUsed`) ستُحجب تحت دور غير مالك وتحتاج معالجة تصميمية (SECURITY DEFINER أو إعادة تصميم) قبل التبديل.
+- **أداة إثبات العقد:** `npm run db:verify-rls` (`scripts/verify-rls.ts`) تنشئ دوراً مؤقتاً غير مالك وتتحقق حياً من: الفشل-المغلق (بدون متغير → 0 صفوف)، نطاق القراءة (متغير A → صف A فقط)، وحارس الكتابة (`WITH CHECK` يرفض `tenant_id` أجنبياً) — وتنظف أثرها ذاتياً.
+- **سابقة تاريخية:** قبل v0.12.2 كان مسار البحث اللفظي يُصدر FTS بلا predicate مستأجر إطلاقاً — اكتُشف وأُصلح وأُثبّت باختبار. وشبكة `src/__tests__/tenantPredicateCoverage.test.ts` (منذ v0.12.8) تمنع رجوع هذا الصنف كلياً.
 
 ### اختبار العزل المعجمي
 

@@ -430,6 +430,40 @@ BEGIN
   DROP INDEX IF EXISTS chunks_content_fts_arabic_idx; -- قديم: عربي
 END $$;
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- 9. ROW LEVEL SECURITY POLICIES (v0.12.9) — طبقة دفاع ثانية فاشلة-مغلقة
+-- ══════════════════════════════════════════════════════════════════════════
+-- السياسة: كل صف لا يطابق `app.current_tenant` يُخفى/يُرفض. المعرف يُقرأ من
+-- current_setting بحجة `true` (missing_ok) — عند عدم ضبطه يعيد NULL والذي
+-- يجعل المقارنة NULL → صفر صفوف (fail-closed، وليس allow-all).
+--
+-- ملاحظة تشغيلية حاسمة: ENABLE دون FORCE يعني أن **مالك** الجداول يتجاوز
+-- السياسات. النشر الحالي يتصل بدور المالك (POSTGRES_USER: omnirag في
+-- docker-compose) لذا السلوك اليوم بلا أي تغيير. السياسات تُفعَّل فعلياً
+-- لحظة الانتقال إلى دور تطبيق غير مالك — راجع دليل التفعيل:
+-- docs/06-security/overview.md (قسم RLS) و scripts/verify-rls.ts.
+DO $$
+DECLARE
+  t text;
+  tenant_tables text[] := ARRAY[
+    'documents','chunks','sources','sync_logs','collections','mcp_servers',
+    'audit_logs','tool_calls','conversations','messages','api_keys',
+    'provider_credentials','memberships','invitations','teams','resource_shares',
+    'sso_flows','webhook_endpoints','usage_counters'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tenant_tables LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%s ON %I', t, t);
+    EXECUTE format(
+      'CREATE POLICY tenant_isolation_%s ON %I %s %s',
+      t, t,
+      'USING (tenant_id = current_setting(''app.current_tenant'', true))',
+      'WITH CHECK (tenant_id = current_setting(''app.current_tenant'', true))'
+    );
+  END LOOP;
+END $$;
+
 COMMIT;
 
 -- ============================================================================

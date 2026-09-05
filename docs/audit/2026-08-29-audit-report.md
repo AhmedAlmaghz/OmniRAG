@@ -90,6 +90,7 @@ OmniRAG منصة **Enterprise Agentic RAG** متعددة المستأجرين (M
 3. **Rate limiting بالذاكرة فقط** — `src/lib/security/rateLimiter.ts:7` مخزن module-level. الكود نفسه يوثق الضعف (سطور 12-16): per-process، يُمسح مع كل cold start، الحد الفعلي = N× عدد النسخ على serverless. حماية brute-force لتسجيل الدخول ونقاط share tokens ضعيفة على Vercel.
 4. **RLS معطل عن قصد** — `src/lib/storage/postgres.ts:369-372` ينفذ `DISABLE ROW LEVEL SECURITY` ويحذف السياسات؛ العزل يعتمد كليًا على إدراج `tenant_id = $N` يدويًا في كل استعلام عبر ملف SQL خام بـ 2273 سطرًا. أي predicate مفقود = تسريب بين المستأجرين. يوجد اختبار عزل (`lexicalTenantIsolation.test.ts`) لكن شبكة الأمان مُزالة.
    **[معالج v0.12.8]** القرار: بقاء العزل على مستوى التطبيق (توثيق كامل في `docs/06-security/overview.md` — قسم "وضع Row Level Security")، مع شبكة اختبارات `src/__tests__/tenantPredicateCoverage.test.ts` التي تفشل على أي SQL يلامس جدولاً tenant-scoped بلا predicate مستأجر. تصحيح نص شروط الخدمة في `constants.ts` الذي ادّعى تفعيل RLS.
+   **[تحصين v0.12.9]** سياسات RLS فاشلة-مغلقة مثبتة فعلياً على كل الجداول الـ 19 tenant-scoped (ENABLE دون FORCE — المالك يتجاوزها اليوم، ودور غير مالك يفعّلها)، مع أداة إثبات حي `npm run db:verify-rls` ودليل تفعيل موثّق في `docs/06-security/overview.md`.
 
 ### 🟠 متوسطة
 

@@ -17,6 +17,7 @@
     "db:push": "drizzle-kit push --config=src/db/drizzle.config.ts",
     "db:check": "drizzle-kit check --config=src/db/drizzle.config.ts",
     "db:migrate:manual": "tsx scripts/run-manual-migration.ts",
+    "db:verify-rls": "tsx scripts/verify-rls.ts",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx,.mjs,.cjs",
     "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx,.mjs,.cjs --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css,md}\" \"*.{ts,js,mjs,cjs,md}\"",
