@@ -5,6 +5,7 @@ import { isCsrfOk, csrfDenied } from '@/lib/auth/csrf';
 import { setSessionCookie } from '@/lib/auth/session';
 import { createSessionToken, sessionExpiryIso } from '@/lib/auth/sessionInfo';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { originGuardDenied } from '@/lib/api/originGuard';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,10 @@ export async function POST(req: NextRequest) {
   if (!rl.success && rl.response) return rl.response;
 
   if (!isCsrfOk(req)) return csrfDenied();
+  // v0.12.12 (audit item 6): strong Origin gate — blocks login-CSRF (a
+  // cross-site form logging the victim into an attacker-controlled account).
+  const originDenied = originGuardDenied(req);
+  if (originDenied) return originDenied;
   try {
     const body = await req.json().catch(() => ({}));
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';

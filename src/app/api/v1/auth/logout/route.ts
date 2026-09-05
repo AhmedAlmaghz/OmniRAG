@@ -3,6 +3,7 @@ import { db } from '@/lib/storage/db';
 import { isCsrfOk, csrfDenied } from '@/lib/auth/csrf';
 import { clearSessionCookie, getSessionTokenFromRequest } from '@/lib/auth/session';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { originGuardDenied } from '@/lib/api/originGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +13,9 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(req: NextRequest) {
   if (!isCsrfOk(req)) return csrfDenied();
+  // v0.12.12 (audit item 6): strong Origin gate — blocks forced-logout CSRF.
+  const originDenied = originGuardDenied(req);
+  if (originDenied) return originDenied;
   try {
     const token = getSessionTokenFromRequest(req);
     if (token) {

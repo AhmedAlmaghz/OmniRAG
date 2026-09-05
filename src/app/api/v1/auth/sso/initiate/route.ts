@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { db } from '@/lib/storage/db';
 import { getEnv } from '@/lib/env/runtimeEnv';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
+import { originGuardDenied } from '@/lib/api/originGuard';
 import { getTenantConfig } from '@/lib/services/tenantConfigService';
 import { createSsoFlow, SSO_FLOW_TTL_MS } from '@/lib/services/membershipService';
 import { buildAuthorizationUrl, generatePkce, generateState } from '@/lib/auth/sso/oidc';
@@ -45,6 +46,11 @@ export async function POST(req: NextRequest) {
   // Tight limit: this is unauthenticated and hits the DB + provider discovery.
   const rl = await checkRateLimit(req, 10, 60000, 'sso-initiate');
   if (!rl.success && rl.response) return rl.response;
+
+  // v0.12.12 (audit item 6): strong Origin gate — a cross-site initiation
+  // would otherwise be usable for SSO login-CSRF flow seeding.
+  const originDenied = originGuardDenied(req);
+  if (originDenied) return originDenied;
 
   try {
     const body = await req.json().catch(() => ({}));

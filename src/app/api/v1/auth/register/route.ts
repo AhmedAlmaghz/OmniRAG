@@ -10,6 +10,7 @@ import { setSessionCookie } from '@/lib/auth/session';
 import { createSessionToken, sessionExpiryIso } from '@/lib/auth/sessionInfo';
 import { seedNewTenant } from '@/actions/seedTenantAction';
 import { serverErrorResponse } from '@/lib/api/safeError';
+import { originGuardDenied } from '@/lib/api/originGuard';
 import { checkRateLimit } from '@/lib/security/rateLimiter';
 import { TenantSettings } from '@/lib/types/omnirag';
 import { randomUUID } from 'crypto';
@@ -59,6 +60,10 @@ export async function POST(req: NextRequest) {
   if (!rl.success && rl.response) return rl.response;
 
   if (!isCsrfOk(req)) return csrfDenied();
+  // v0.12.12 (audit item 6): strong Origin gate — the same check the 50
+  // wrapped routes apply; the legacy header check above stays as layer two.
+  const originDenied = originGuardDenied(req);
+  if (originDenied) return originDenied;
   try {
     const body = await req.json().catch(() => ({}));
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
