@@ -32,9 +32,19 @@ return await runWithRequestContext(
 
 داخل `src/lib/harness/hook-harness.ts`، الخطّاف `H1 TenantGate` (مرحلة `pre_auth`) يرفض أي عملية استدلال (inference) لا تحمل `tenantId` صالح، ويُسجِّل المحاولة في `audit_logs` بوسم `blocked`. هذا يحمي من تسريب عبر تدفّق RAG يُسرّب بيانات مستأجرين آخرين.
 
+### وضع Row Level Security: معطّل عن عمد
+
+> **الحقيقة المنفَّذة** (اعتباراً من v0.12.8): عزل المستأجرين يُنفَّذ في **طبقة التطبيق**، لا عبر سياسات RLS في Postgres.
+
+في `src/lib/storage/postgres.ts` (حوالي الأسطر 359–375) يُعطَّل RLS صراحةً على `documents` و`chunks` وتُحذف أي سياسات قديمة، والتعليق هناك يوثّق السبب: كل مسارات الكتابة/القراءة تُصدر predicate صريحاً `WHERE tenant_id = $N` بربط معاملات آمن، ويُشتق `tenantId` من الجلسة الموثّقة (أو مفتاح API) ولا يُقبل أبداً من مدخلات العميل. تفعيل RLS الآن دون ضبط `app.current_tenant` في كل مسار استعلام سيُصفّر قراءات كل المستأجرين بصمت — لذلك القرار: تعطيل صريح وموثّق بدلاً من ادعاء غير منفَّذ.
+
+- **لماذا لا يُعتمد RLS اليوم:** اتصال التطبيق في Docker (`POSTGRES_USER: omnirag` في `docker-compose.yml`) هو **مالك** الجداول، وسياسات RLS لا تُطبَّق على المالك إلا بـ `FORCE ROW LEVEL SECURITY` — أي تفعيل حقيقي يتطلب دور تطبيق غير مالك + غلاف معاملات يضبط `SET LOCAL app.current_tenant` لكل استعلام. هذا مسار تحصين مستقبلي مخطط، لا يُنفَّذ جزئياً.
+- **التعويض الحالي (شبكة الاختبارات):** `src/__tests__/tenantPredicateCoverage.test.ts` يقرأ مصدر `postgres.ts` وقت الاختبار ويفشل إذا وُجدت عبارة SQL تلامس جدولاً tenant-scoped بلا `tenant_id = $N` (مع allowlist صريحة لعبارات DDL والجداول العالمية)، ويُثبّت الاختبار `lexicalTenantIsolation.test.ts` عقد ربط معاملات FTS.
+- **سابقة تاريخية:** قبل v0.12.2 كان مسار البحث اللفظي يُصدر FTS بلا predicate مستأجر إطلاقاً — اكتُشف وأُصلح وأُثبّت باختبار (راجع `docs/audit/2026-08-29-audit-report.md` البند 4).
+
 ### اختبار العزل المعجمي
 
-ملف `src/__tests__/lexicalTenantIsolation.test.ts` يتحقق صراحةً أن استعلامات lexical لا تتجاوز حدود المستأجر.
+ملف `src/__tests__/lexicalTenantIsolation.test.ts` يتحقق صراحةً أن استعلامات lexical لا تتجاوز حدود المستأجر، و`src/__tests__/tenantPredicateCoverage.test.ts` يمدّد الضمانة لكل عبارات SQL في طبقة Postgres.
 
 ## الأدوار والصلاحيات (Roles & Permissions)
 

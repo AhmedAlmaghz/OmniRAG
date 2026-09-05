@@ -89,6 +89,7 @@ OmniRAG منصة **Enterprise Agentic RAG** متعددة المستأجرين (M
 2. **لا CSP / HSTS / Referrer-Policy إطلاقًا** — `src/middleware.ts:32-41` يضيف nosniff/X-Frame-Options **فقط** عند تطابق Origin مع قائمة CORS؛ الطلبات غير المتطابقة لا تحصل على أي تحصين. `grep` يؤكد غياب `Content-Security-Policy` و`Strict-Transport-Security` من الكود كله. البند 1 يصبح غير قابل للاستغلال غالبًا مع CSP صارم.
 3. **Rate limiting بالذاكرة فقط** — `src/lib/security/rateLimiter.ts:7` مخزن module-level. الكود نفسه يوثق الضعف (سطور 12-16): per-process، يُمسح مع كل cold start، الحد الفعلي = N× عدد النسخ على serverless. حماية brute-force لتسجيل الدخول ونقاط share tokens ضعيفة على Vercel.
 4. **RLS معطل عن قصد** — `src/lib/storage/postgres.ts:369-372` ينفذ `DISABLE ROW LEVEL SECURITY` ويحذف السياسات؛ العزل يعتمد كليًا على إدراج `tenant_id = $N` يدويًا في كل استعلام عبر ملف SQL خام بـ 2273 سطرًا. أي predicate مفقود = تسريب بين المستأجرين. يوجد اختبار عزل (`lexicalTenantIsolation.test.ts`) لكن شبكة الأمان مُزالة.
+   **[معالج v0.12.8]** القرار: بقاء العزل على مستوى التطبيق (توثيق كامل في `docs/06-security/overview.md` — قسم "وضع Row Level Security")، مع شبكة اختبارات `src/__tests__/tenantPredicateCoverage.test.ts` التي تفشل على أي SQL يلامس جدولاً tenant-scoped بلا predicate مستأجر. تصحيح نص شروط الخدمة في `constants.ts` الذي ادّعى تفعيل RLS.
 
 ### 🟠 متوسطة
 
@@ -101,6 +102,7 @@ OmniRAG منصة **Enterprise Agentic RAG** متعددة المستأجرين (M
 ### 🟡 منخفضة/تشغيلية
 
 10. **مفتاح AES احتياطي dev ملتزم في الكود** — `encryption.ts:19-29` (يفشل hard في الإنتاج، لكنه موجود) + قيمة placeholder في `.env.example:44`.
+    **[معالج v0.12.8]** أُزيلت القيمة المعبأة من `.env.example` وأصبحت سلسلة فارغة مع تحذير صريح بعدم وضع مفتاح حقيقي فيها.
 11. Swagger UI من unpkg CDN بلا CSP على `/api/docs`.
 12. `mysql2` كسطح استعلام إضافي.
 
