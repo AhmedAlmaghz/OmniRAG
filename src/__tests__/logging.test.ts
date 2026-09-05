@@ -15,23 +15,21 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 describe('createLogger', () => {
   let spies: Array<{ mock: any; restore: () => void }>;
-  let savedEnv: Record<string, string | undefined>;
 
   beforeEach(() => {
     spies = ['log', 'warn', 'error', 'info'].map((m) => {
       const spy = vi.spyOn(console, m as 'log').mockImplementation(() => {});
       return { mock: spy, restore: () => spy.mockRestore() };
     });
-    savedEnv = { NODE_ENV: process.env.NODE_ENV, LOG_LEVEL: process.env.LOG_LEVEL };
-    delete process.env.LOG_LEVEL;
-    process.env.NODE_ENV = 'development';
+    // vitest restores everything via unstubAllEnvs(); an empty LOG_LEVEL string
+    // is equivalent to unset for the logger's `|| ''` fallback.
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('LOG_LEVEL', '');
   });
 
   afterEach(() => {
     spies.forEach((s) => s.restore());
-    process.env.NODE_ENV = savedEnv.NODE_ENV;
-    if (savedEnv.LOG_LEVEL === undefined) delete process.env.LOG_LEVEL;
-    else process.env.LOG_LEVEL = savedEnv.LOG_LEVEL;
+    vi.unstubAllEnvs();
   });
 
   const lines = () => spies.flatMap((s) => s.mock.mock.calls.map((c: any[]) => String(c[0])));
@@ -42,7 +40,7 @@ describe('createLogger', () => {
   });
 
   it('emits one-line JSON in production with ts/level/component/msg', () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     log.warn('careful', { source: 'unit-test' });
     const record = JSON.parse(lines()[0]);
     expect(record).toMatchObject({ level: 'warn', component: 'TestComp', msg: 'careful', source: 'unit-test' });
@@ -50,7 +48,7 @@ describe('createLogger', () => {
   });
 
   it('routes error/warn to stderr streams in production', () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     log.error('bad');
     log.info('fine');
     expect(spies.find((s) => s.mock.mock.calls.length > 0 && s.mock.mock.instances.length >= 0)).toBeDefined();
@@ -60,7 +58,7 @@ describe('createLogger', () => {
   });
 
   it('auto-injects request context (requestId/tenantId/userId) inside a request scope', () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     runWithRequestContext({ tenantId: 'tenant-acme-01', userId: 'u-1', requestId: 'req-123' }, async () => {
       log.info('inside request');
     });
@@ -69,7 +67,7 @@ describe('createLogger', () => {
   });
 
   it('serializes Error arguments into err.name/err.message', () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     log.error('operation failed', new Error('db down'));
     const record = JSON.parse(lines()[0]);
     expect(record.err).toMatchObject({ name: 'Error', message: 'db down' });
@@ -77,7 +75,7 @@ describe('createLogger', () => {
   });
 
   it('redacts secret-looking top-level field keys', () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     log.info('auth attempt', { apiKey: 'omnirag_live_secret', password: 'hunter2', user: 'sara' });
     const record = JSON.parse(lines()[0]);
     expect(record.apiKey).toBe('[redacted]');
@@ -86,11 +84,11 @@ describe('createLogger', () => {
   });
 
   it('respects LOG_LEVEL filtering (debug suppressed by default in production)', () => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     log.debug('noisy detail');
     expect(lines()).toHaveLength(0);
 
-    process.env.LOG_LEVEL = 'debug';
+    vi.stubEnv('LOG_LEVEL', 'debug');
     log.debug('now visible');
     expect(lines()).toHaveLength(1);
   });
