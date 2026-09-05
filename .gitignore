@@ -13,6 +13,11 @@ terminal_logs/
 .husky
 .zcode/
 
+# Local runtime object storage (uploads/parse artifacts) — never commit.
+storage/
+# Local agent-tool workspace (ships its own node_modules).
+.kilo/
+
 # TypeScript incremental build artifacts — must not be committed (stale
 # tsbuildinfo causes misleading CI typecheck results across machines).
 *.tsbuildinfo
