@@ -5,7 +5,10 @@ const log = createLogger('AppApiV1Diagnostics');
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuthAndRateLimit } from '@/lib/api/withAuthAndRateLimit';
 import { getPostgresPool } from '@/lib/storage/postgres';
-import { getEnv } from '@/lib/env/runtimeEnv';
+import { getEnv, type EnvRequestSource } from '@/lib/env/runtimeEnv';
+
+/** Whatever getEnv accepts as its optional per-request context. */
+type RequestLike = EnvRequestSource;
 import { serverErrorResponse } from '@/lib/api/safeError';
 import { QdrantClient } from '@qdrant/js-client-rest';
 
@@ -39,7 +42,7 @@ function maskKey(key: string): string {
   return `${key.slice(0, 4)}••••••••${key.slice(-4)}`;
 }
 
-async function runPostgresDiagnostic(req?: any) {
+async function runPostgresDiagnostic(req?: RequestLike) {
   const startTime = Date.now();
   const connStr = getEnv('DATABASE_URL', req) || getEnv('POSTGRES_URL', req);
 
@@ -87,7 +90,7 @@ async function runPostgresDiagnostic(req?: any) {
         FROM information_schema.tables 
         WHERE table_schema = 'public'
       `);
-      const tables = tablesRes.rows.map((r: any) => r.table_name);
+      const tables = tablesRes.rows.map((r: { table_name: string }) => r.table_name);
 
       return {
         service: 'postgresql',
@@ -107,7 +110,7 @@ async function runPostgresDiagnostic(req?: any) {
     } finally {
       client.release();
     }
-  } catch (err: any) {
+  } catch (err) {
     log.error('[diagnostics] PostgreSQL connection failed:', err);
     return {
       service: 'postgresql',
@@ -118,13 +121,13 @@ async function runPostgresDiagnostic(req?: any) {
       maskedUrl: maskConnectionString(connStr),
       message: 'فشل الاتصال بقاعدة بيانات PostgreSQL. تحقق من الرابط وبيانات الاعتماد في سجلات الخادم.',
       details: {
-        code: typeof err?.code === 'string' ? err.code : undefined,
+        code: typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : undefined,
       },
     };
   }
 }
 
-async function runQdrantDiagnostic(req?: any) {
+async function runQdrantDiagnostic(req?: RequestLike) {
   const startTime = Date.now();
   const url = getEnv('QDRANT_URL', req);
   const apiKey = getEnv('QDRANT_API_KEY', req);
@@ -152,7 +155,7 @@ async function runQdrantDiagnostic(req?: any) {
 
     const collectionsRes = await qClient.getCollections();
     const latencyMs = Date.now() - startTime;
-    const omniCollection = collectionsRes.collections?.find((c: any) => c.name === 'omnirag_chunks');
+    const omniCollection = collectionsRes.collections?.find((c: { name: string }) => c.name === 'omnirag_chunks');
 
     let collectionInfo = null;
     if (omniCollection) {
@@ -161,9 +164,9 @@ async function runQdrantDiagnostic(req?: any) {
         collectionInfo = {
           name: 'omnirag_chunks',
           status: detailRes.status || 'green',
-          pointsCount: detailRes.points_count || (detailRes as any).vectors_count || 0,
-          vectorSize: (detailRes.config?.params?.vectors as any)?.size || 3072,
-          distance: (detailRes.config?.params?.vectors as any)?.distance || 'Cosine',
+          pointsCount: detailRes.points_count || (detailRes as { vectors_count?: number }).vectors_count || 0,
+          vectorSize: (detailRes.config?.params?.vectors as { size?: number } | undefined)?.size || 3072,
+          distance: (detailRes.config?.params?.vectors as { distance?: string } | undefined)?.distance || 'Cosine',
         };
       } catch (colErr) {
         collectionInfo = { name: 'omnirag_chunks', status: 'exists' };
@@ -185,7 +188,7 @@ async function runQdrantDiagnostic(req?: any) {
         ? 'Qdrant vector cluster verified. Collection "omnirag_chunks" is active and indexed.'
         : 'Qdrant cluster connected. Ready to provision "omnirag_chunks" collection on first insert.',
     };
-  } catch (err: any) {
+  } catch (err) {
     log.error('[diagnostics] Qdrant connection failed:', err);
     return {
       service: 'qdrant',
@@ -197,13 +200,13 @@ async function runQdrantDiagnostic(req?: any) {
       hasApiKey: !!apiKey,
       message: 'تعذر الاتصال بمجموعة Qdrant. تحقق من الرابط في سجلات الخادم.',
       details: {
-        code: typeof err?.code === 'string' ? err.code : undefined,
+        code: typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : undefined,
       },
     };
   }
 }
 
-async function runMistralDiagnostic(req?: any) {
+async function runMistralDiagnostic(req?: RequestLike) {
   const startTime = Date.now();
   const apiKey = getEnv('MISTRAL_API_KEY', req);
 
@@ -237,7 +240,7 @@ async function runMistralDiagnostic(req?: any) {
     if (res.ok) {
       const data = await res.json();
       const rawModels = data.data || [];
-      const modelIds = rawModels.map((m: any) => m.id);
+      const modelIds = rawModels.map((m: { id: string }) => m.id);
 
       return {
         service: 'mistral',
@@ -271,7 +274,7 @@ async function runMistralDiagnostic(req?: any) {
         },
       };
     }
-  } catch (err: any) {
+  } catch (err) {
     log.error('[diagnostics] Mistral endpoint check failed:', err);
     return {
       service: 'mistral',
@@ -282,13 +285,13 @@ async function runMistralDiagnostic(req?: any) {
       maskedApiKey: maskKey(apiKey),
       message: 'تعذر الوصول إلى واجهة Mistral. تحقق من المفتاح والرابط في سجلات الخادم.',
       details: {
-        code: typeof err?.code === 'string' ? err.code : undefined,
+        code: typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : undefined,
       },
     };
   }
 }
 
-function runEnvAudit(req?: any) {
+function runEnvAudit(req?: RequestLike) {
   const envVars = [
     { name: 'DATABASE_URL', category: 'Storage', desc: 'PostgreSQL Lexical & Metadata DB', required: true },
     { name: 'QDRANT_URL', category: 'Vector DB', desc: 'Qdrant Cluster Endpoint', required: true },
@@ -366,7 +369,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
     const body = await req.json().catch(() => ({}));
     const target = body.target || 'all';
 
-    let result: any = {};
+    let result: Record<string, unknown> = {};
 
     if (target === 'postgres' || target === 'postgresql') {
       result.postgresql = await runPostgresDiagnostic();
@@ -388,7 +391,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       target,
       result,
     });
-  } catch (err: any) {
+  } catch (err) {
     return serverErrorResponse('diagnostics POST', err);
   }
 });

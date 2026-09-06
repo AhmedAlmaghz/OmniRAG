@@ -29,11 +29,13 @@ export interface RemoteMcpServerRef {
   endpointUrl: string;
   headers?: Record<string, string>;
   transportType?: 'http' | 'sse' | 'stdio' | 'websocket';
-  config?: Record<string, any>;
+  config?: Record<string, unknown>;
 }
 
 /** Default budgets for the whole session lifecycle (handshake + call). */
 const SESSION_TIMEOUT_MS = 30_000;
+
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
  * stdio servers spawn local child processes, which only exists on
@@ -104,8 +106,8 @@ export async function withRemoteMcpSession<T>(
         transport,
         initializationOptions: { timeout: callBudget },
         maxRetries: 1,
-        onUncaughtError: (err: any) =>
-          log.warn(`[Remote MCP] Uncaught stdio transport error (${server.name}):`, err?.message || err),
+        onUncaughtError: (err) =>
+          log.warn(`[Remote MCP] Uncaught stdio transport error (${server.name}):`, errorMessage(err)),
       });
       return await fn(client);
     }
@@ -122,13 +124,13 @@ export async function withRemoteMcpSession<T>(
       transport: { type: 'http', url: url.href, headers },
       initializationOptions: { timeout: callBudget },
       maxRetries: 1,
-      onUncaughtError: (err: any) =>
-        log.warn(`[Remote MCP] Uncaught transport error (${server.name}):`, err?.message || err),
+      onUncaughtError: (err) =>
+        log.warn(`[Remote MCP] Uncaught transport error (${server.name}):`, errorMessage(err)),
     });
     return await fn(client);
   } finally {
-    await client?.close().catch((err: any) => {
-      log.warn(`[Remote MCP] Session close failed (${server.name}):`, err?.message || err);
+    await client?.close().catch((err) => {
+      log.warn(`[Remote MCP] Session close failed (${server.name}):`, errorMessage(err));
     });
   }
 }
@@ -137,8 +139,8 @@ export async function withRemoteMcpSession<T>(
  * Extracts a usable payload from a standard MCP CallToolResult: first text
  * part parsed as JSON when possible, otherwise the raw result object.
  */
-function extractToolPayload(result: CallToolResult): any {
-  const content = (result as any).content;
+function extractToolPayload(result: CallToolResult): unknown {
+  const content = result.content;
   if (Array.isArray(content) && content.length > 0 && content[0]?.type === 'text') {
     const text = String(content[0].text ?? '');
     try {
@@ -147,7 +149,7 @@ function extractToolPayload(result: CallToolResult): any {
       return { text };
     }
   }
-  if ((result as any).structuredContent != null) return (result as any).structuredContent;
+  if (result.structuredContent != null) return result.structuredContent;
   return result ?? {};
 }
 
@@ -160,9 +162,9 @@ export async function callRemoteTool(
   tenantId: string,
   server: RemoteMcpServerRef,
   toolName: string,
-  args: Record<string, any>,
+  args: Record<string, unknown>,
   timeoutMs?: number,
-): Promise<any> {
+): Promise<unknown> {
   return withRemoteMcpSession(
     tenantId,
     server,
@@ -173,8 +175,8 @@ export async function callRemoteTool(
         options: { timeout: timeoutMs },
       });
 
-      if ((result as any).isError) {
-        const content = (result as any).content;
+      if (result.isError) {
+        const content = result.content;
         const firstText =
           Array.isArray(content) && content[0]?.type === 'text' ? String(content[0].text ?? '') : undefined;
         throw new Error(firstText || `فشل تنفيذ الأداة (${toolName}) على الخادم البعيد (${server.name})`);
@@ -196,6 +198,9 @@ export async function listRemoteTools(
 ): Promise<Array<{ name: string; description?: string }>> {
   return withRemoteMcpSession(tenantId, server, async (client) => {
     const listed = await client.listTools();
-    return (listed.tools || []).map((t: any) => ({ name: t.name, description: t.description }));
+    return (listed.tools || []).map((t: { name: string; description?: string }) => ({
+      name: t.name,
+      description: t.description,
+    }));
   });
 }

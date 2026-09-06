@@ -103,7 +103,18 @@ export type SetEnvResult =
  * ergonomics when the key is allowed) but is gated to non-production, so an
  * unauthenticated cross-tenant mutation is not reachable in prod.
  */
-export function getEnv(key: string, reqOrHeaders?: any): string {
+/**
+ * Anything the per-request env override accepts: a NextRequest/Request-like
+ * object with `.headers`, or a bare `Headers` instance. Typed here (v0.12.18)
+ * so every `req?:` parameter across storage/diagnostics modules derives a real
+ * type via `Parameters<typeof getEnv>[1]` instead of repeating `any`.
+ */
+export type EnvRequestSource =
+  | { headers: { get(name: string): string | null } }
+  | { get(name: string): string | null }
+  | Record<string, unknown>;
+
+export function getEnv(key: string, reqOrHeaders?: EnvRequestSource): string {
   if (typeof window !== 'undefined') {
     // Client side: read from localStorage if available
     try {
@@ -119,14 +130,20 @@ export function getEnv(key: string, reqOrHeaders?: any): string {
 
   // 1. Check request headers (blocked in production unless explicitly enabled)
   if (reqOrHeaders && isClientEnvAllowed() && ALLOWED_RUNTIME_ENV_KEYS.has(key)) {
-    let headerVal: string | null = null;
+    let headerVal: string | null | undefined;
     try {
-      if (reqOrHeaders.headers && typeof reqOrHeaders.headers.get === 'function') {
-        headerVal = reqOrHeaders.headers.get(headerKey) || reqOrHeaders.headers.get(headerKey.toUpperCase());
-      } else if (typeof reqOrHeaders.get === 'function') {
-        headerVal = reqOrHeaders.get(headerKey) || reqOrHeaders.get(headerKey.toUpperCase());
-      } else if (typeof reqOrHeaders === 'object') {
-        headerVal = reqOrHeaders[headerKey] || reqOrHeaders[headerKey.toUpperCase()];
+      // Three accepted shapes, checked in parallel casts: a NextRequest-like
+      // object with `.headers`, a bare Headers-like `{ get }`, or a plain
+      // record of pre-computed x-env-* keys.
+      const withHeaders = reqOrHeaders as { headers?: { get(name: string): string | null } };
+      const withGet = reqOrHeaders as { get?(name: string): string | null };
+      const record = reqOrHeaders as Record<string, string | undefined>;
+      if (withHeaders.headers && typeof withHeaders.headers.get === 'function') {
+        headerVal = withHeaders.headers.get(headerKey) || withHeaders.headers.get(headerKey.toUpperCase());
+      } else if (typeof withGet.get === 'function') {
+        headerVal = withGet.get(headerKey) || withGet.get(headerKey.toUpperCase());
+      } else {
+        headerVal = record[headerKey] || record[headerKey.toUpperCase()];
       }
     } catch (e) {}
 

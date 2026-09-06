@@ -31,14 +31,13 @@ import { migrateAndSeedWithDrizzle, TENANT_RLS_DDL, applyAppRoleLoginPassword } 
 import { resetDrizzle } from '../../db';
 import pg, { type Pool as PgPool, type PoolClient as PgPoolClient } from 'pg';
 const { Pool } = pg;
-/** Whatever getEnv accepts as its optional per-request context (NextRequest or undefined). */
-type RequestLike = Parameters<typeof getEnv>[1];
 
 import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('PostgresStorage');
 
-import { getEnv } from '../env/runtimeEnv';
+import { getEnv, type EnvRequestSource } from '../env/runtimeEnv';
+type RequestLike = EnvRequestSource;
 import { DEFAULT_AI_MODELS } from '../config/aiModels';
 
 let pool: PgPool | null = null; // runtime pool (least-privilege app role when DATABASE_APP_URL is set)
