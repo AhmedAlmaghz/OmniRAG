@@ -31,8 +31,8 @@ export async function runToolSafely(
 ): Promise<ToolExecutionOutcome> {
   try {
     return await executeMcpToolCall(toolName, args, { tenantId, conversationId });
-  } catch (err: any) {
-    const message = err?.message || 'الأداة غير قابلة للتنفيذ';
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'الأداة غير قابلة للتنفيذ';
     return {
       toolName,
       result: { success: false, error: message },
@@ -94,7 +94,7 @@ export async function collectTenantMcpTools(
   const customSchemas: Record<string, CustomToolSchema> = {};
 
   for (const server of servers) {
-    Object.assign(customSchemas, ((server as any).customToolSchemas || {}) as Record<string, CustomToolSchema>);
+    Object.assign(customSchemas, ((server as { customToolSchemas?: Record<string, CustomToolSchema> }).customToolSchemas || {}) as Record<string, CustomToolSchema>);
     if (server.status === 'healthy') {
       for (const tool of server.enabledTools) {
         enabledTools.push(tool);
@@ -350,6 +350,12 @@ function toNormalizedTokens(input: string, extraStop: Set<string> = new Set()): 
     .filter((t) => t.length > 2 && !AR_STOPWORDS.has(t) && !extraStop.has(t));
 }
 
+type FusionHit = DocumentChunk & {
+  __viewScore?: number;
+  semanticRank?: number | null;
+  lexicalRank?: number | null;
+};
+
 export interface NamedDocumentMatch {
   documentId: string;
   title: string;
@@ -560,7 +566,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   const effectiveSemanticWeight = vectorsStale ? 0 : semanticWeight;
   const effectiveLexicalWeight = vectorsStale ? Math.max(lexicalWeight, 0.7) : lexicalWeight;
 
-  let resultChunks: any[] = [];
+  let resultChunks: FusionHit[] = [];
   let totalCount = 0;
   let semanticMatches = 0;
   let lexicalMatches = 0;
@@ -578,7 +584,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       // the views with RRF (multi-query retrieval): each view contributes
       // its own neighbor ranks, so chapter-title fragments that never
       // resemble the full question embedding still surface.
-      const semanticArm = async (): Promise<any[]> => {
+      const semanticArm = async (): Promise<FusionHit[]> => {
         if (!isVectorActive) return [];
         if (aggregative && searchViews.length > 1) {
           // Multi-view semantic search: embed each view, search, then RRF-
@@ -595,31 +601,46 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
               });
             }),
           );
-          const fused = new Map<string, any>();
+          const fused = new Map<string, FusionHit>();
           for (const viewResults of perViewResults) {
             viewResults.forEach((item, idx) => {
-              const existing = fused.get(item.id);
               const viewRankScore = 1 / (SYSTEM_CONFIG.RAG.RRF_CONSTANT_K + idx + 1);
+              // VectorSearchHit carries no tenantId and a loose language —
+              // normalize into the FusionHit (DocumentChunk-compatible) shape.
+              const hit: FusionHit = {
+                ...item,
+                tenantId,
+                language: item.language === 'en' ? 'en' : 'ar',
+                __viewScore: viewRankScore,
+              };
+              const existing = fused.get(hit.id);
               if (existing) {
-                existing.__viewScore = (existing.__viewScore || 0) + viewRankScore;
+                existing.__viewScore = (existing.__viewScore || 0) + (hit.__viewScore || 0);
                 if ((item.semanticScore || 0) > (existing.semanticScore || 0)) {
                   existing.semanticScore = item.semanticScore;
                 }
               } else {
-                fused.set(item.id, { ...item, __viewScore: viewRankScore });
+                fused.set(hit.id, hit);
               }
             });
           }
           return Array.from(fused.values()).sort((a, b) => (b.__viewScore || 0) - (a.__viewScore || 0));
         }
         const vector = await generateEmbedding(semanticSearchContent);
-        return vectorStore.search({
+        const hits = await vectorStore.search({
           vector,
           tenantId,
           collectionIds,
           limit: overfetchLimit,
           scoreThreshold,
         });
+        // VectorSearchHit has no tenantId and a loose language string — map
+        // into the FusionHit shape (DocumentChunk-compatible) at the boundary.
+        return hits.map((h) => ({
+          ...h,
+          tenantId,
+          language: h.language === 'en' ? ('en' as const) : ('ar' as const),
+        }));
       };
 
       const [semanticResults, lexicalResults] = await Promise.all([
@@ -629,7 +650,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
           : Promise.resolve([]),
       ]);
 
-      const itemMap = new Map<string, any>();
+      const itemMap = new Map<string, FusionHit>();
 
       // Index semantic ranks
       semanticResults.forEach((item, idx) => {
@@ -649,8 +670,13 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
           existing.lexicalRank = idx + 1;
           existing.lexicalScore = item.lexicalScore || 0;
         } else {
+          // Lexical rows carry no tenantId/documentTitle — fill both here so
+          // every fused candidate satisfies the DocumentChunk contract.
           itemMap.set(item.id, {
             ...item,
+            tenantId,
+            documentTitle: '',
+            language: item.language === 'en' ? ('en' as const) : ('ar' as const),
             semanticRank: null,
             lexicalRank: idx + 1,
             semanticScore: 0,
@@ -689,7 +715,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       const semanticFloor = scoreThreshold;
       const filteredList = mergedList.filter((item) => {
         const passedSemantic = (item.semanticScore || 0) >= semanticFloor;
-        const passedLexical = item.lexicalRank !== null && item.lexicalRank > 0;
+        const passedLexical = (item.lexicalRank ?? 0) > 0;
         return passedSemantic || passedLexical;
       });
 
@@ -705,8 +731,8 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
         // vectors the semantic rank carries no real similarity information
         // (cross-space noise), so its weight drops to 0.
         const rrf = computeRrfScore(
-          item.semanticRank,
-          item.lexicalRank,
+          item.semanticRank ?? null,
+          item.lexicalRank ?? null,
           effectiveSemanticWeight,
           effectiveLexicalWeight,
           SYSTEM_CONFIG.RAG.RRF_CONSTANT_K,
@@ -715,14 +741,14 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
         item.tenantId = tenantId;
       }
 
-      filteredList.sort((a, b) => b.score - a.score);
+      filteredList.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
       // No topK slice here — every above-floor chunk is carried forward.
       // The defensive soft cap is applied AFTER reranking, once, below.
       resultChunks = filteredList;
       totalCount = filteredList.length;
 
-      semanticMatches = resultChunks.filter((c) => c.semanticScore >= semanticFloor).length;
-      lexicalMatches = resultChunks.filter((c) => c.lexicalRank !== null && c.lexicalRank > 0).length;
+      semanticMatches = resultChunks.filter((c) => (c.semanticScore ?? 0) >= semanticFloor).length;
+      lexicalMatches = resultChunks.filter((c) => (c.lexicalRank ?? 0) > 0).length;
     } catch (realSearchError) {
       log.error('Real hybrid search failed, falling back to local storage:', realSearchError);
       resultChunks = [];
@@ -829,7 +855,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   // fusion already orders the pool for them.
   if (searchQuery.rerank && !aggregative && resultChunks.length > 1) {
     const preRerankTime = Date.now();
-    resultChunks = await rerankChunks(query, resultChunks as DocumentChunk[]);
+    resultChunks = await rerankChunks(query, resultChunks);
     log.info(`[Reranker] LLM Reranking applied, took ${Date.now() - preRerankTime}ms`);
   }
 
@@ -912,7 +938,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
         `[Hybrid Search] Defensive context cap applied: ${preCapCount} → ${resultChunks.length} (named "${namedDoc.title}" ${namedBudget} chunks + ${Math.min(others.length, slack)} from other documents)`,
       );
     } else {
-      const byDoc = new Map<string, any[]>();
+      const byDoc = new Map<string, FusionHit[]>();
       for (const chunk of resultChunks) {
         const key = chunk.documentId || '_none_';
         const list = byDoc.get(key);
@@ -922,7 +948,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
       const docOrder = Array.from(byDoc.entries())
         .sort((a, b) => b[1].length - a[1].length)
         .map(([id]) => id);
-      const balanced: any[] = [];
+      const balanced: FusionHit[] = [];
       const perDocCursors = new Map<string, number>(docOrder.map((id) => [id, 0]));
       let exhausted = false;
       while (balanced.length < contextChunkCap && !exhausted) {
@@ -953,7 +979,7 @@ export async function performHybridSearch(searchQuery: SearchQuery): Promise<Sea
   // last chapter's exercises) and answering only from it. Multi-document
   // pools keep score order.
   if (namedDoc && resultChunks.length > 1) {
-    resultChunks.sort((a: any, b: any) => {
+    resultChunks.sort((a, b) => {
       const aNamed = a.documentId === namedDoc.documentId ? 0 : 1;
       const bNamed = b.documentId === namedDoc.documentId ? 0 : 1;
       if (aNamed !== bNamed) return aNamed - bNamed;
@@ -1191,7 +1217,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
         };
       }
 
-      const usageAny: any = (response as any).usage || {};
+      const usageAny = (response as unknown as { usage?: Record<string, number | undefined> }).usage || {};
       const tokensUsed = {
         input:
           usageAny.inputTokens ??
@@ -1230,7 +1256,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
         toolCalls: alreadyExecutedToolCalls.length > 0 ? alreadyExecutedToolCalls : undefined,
         suggestions,
       };
-    } catch (err: any) {
+    } catch (err) {
       log.error('AI SDK execution error, using deterministic fallback:', err);
     }
   }
