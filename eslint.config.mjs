@@ -42,6 +42,16 @@ export default tseslint.config(
     },
   },
   {
+    // Security-critical, already-any-free layers: no-explicit-any is an ERROR
+    // here so a new `any` cannot silently land in the auth/API-gateway/security
+    // code. The rest of the codebase is on a documented warn-then-zero plan
+    // (568 → ~418 since v0.12.14).
+    files: ['src/lib/api/**/*.{ts,tsx}', 'src/lib/security/**/*.{ts,tsx}', 'src/lib/auth/**/*.{ts,tsx}', 'proxy.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
+    },
+  },
+  {
     files: ['src/app/api/**/*.{ts,tsx}'],
     rules: {
       // API routes must not leak internal error text to clients.

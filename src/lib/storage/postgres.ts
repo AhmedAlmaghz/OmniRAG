@@ -29,6 +29,7 @@ import {
 } from './constants';
 import { migrateAndSeedWithDrizzle, TENANT_RLS_DDL, applyAppRoleLoginPassword } from '../db/migrateAndSeedDrizzle';
 import { resetDrizzle } from '../../db';
+import type { DocumentVersion } from '../types/omnirag';
 import pg, { type Pool as PgPool, type PoolClient as PgPoolClient } from 'pg';
 const { Pool } = pg;
 
@@ -497,7 +498,7 @@ export async function ensurePostgresTables() {
   await initPromise;
 }
 
-async function seedPostgresData(client: any) {
+async function seedPostgresData(client: PgPoolClient) {
   try {
     // 1. Seed Collections
     const colCountRes = await client.query('SELECT COUNT(*) FROM collections');
@@ -684,21 +685,21 @@ export async function getPostgresDocuments(tenantId: string): Promise<Document[]
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     const res = await client.query('SELECT * FROM documents WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
-    return res.rows.map((row: any) => {
+    return res.rows.map((row: DocumentRow) => {
       const meta = row.metadata || {};
       return {
         id: row.id,
         tenantId: row.tenant_id,
         title: row.title,
         content: row.content,
-        sourceType: row.source_type,
-        language: row.language,
-        status: row.status,
-        chunkCount: row.chunk_count,
+        sourceType: row.source_type as Document['sourceType'],
+        language: row.language as Document['language'],
+        status: row.status as Document['status'],
+        chunkCount: row.chunk_count ?? 0,
         createdAt: row.created_at,
         updatedAt: meta.updatedAt || row.created_at,
-        version: meta.version || row.version || 1,
-        versions: meta.versions || [],
+        version: meta.version || 1,
+        versions: (meta.versions as DocumentVersion[]) || [],
         metadata: meta,
         collectionIds: row.collection_ids || [],
       };
@@ -743,17 +744,17 @@ export async function getPostgresDocumentSummaries(
       [tenantId, limit, offset],
     );
     const totalRes = await client.query(`SELECT count(*)::int AS n FROM documents WHERE tenant_id = $1`, [tenantId]);
-    const documents: DocumentSummary[] = listRes.rows.map((row: any) => {
+    const documents: DocumentSummary[] = listRes.rows.map((row: DocumentSummaryRow) => {
       const meta = row.metadata || {};
       return {
         id: row.id,
         tenantId: row.tenant_id,
         title: row.title,
         content: '',
-        sourceType: row.source_type,
-        language: row.language,
-        status: row.status,
-        chunkCount: row.chunk_count,
+        sourceType: row.source_type as Document['sourceType'],
+        language: row.language as Document['language'],
+        status: row.status as Document['status'],
+        chunkCount: row.chunk_count ?? 0,
         createdAt: row.created_at,
         updatedAt: meta.updatedAt || row.created_at,
         version: meta.version || 1,
@@ -821,8 +822,8 @@ export async function insertPostgresDocument(doc: {
   createdAt: string;
   updatedAt?: string;
   version?: number;
-  versions?: any[];
-  metadata?: any;
+  versions?: DocumentVersion[];
+  metadata?: Record<string, unknown>;
   collectionIds?: string[];
 }) {
   await ensurePostgresTables();
@@ -904,7 +905,7 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
   try {
     await client.query("SELECT set_config('app.current_tenant', $1, true)", [tenantId]);
     const res = await client.query('SELECT * FROM chunks WHERE tenant_id = $1', [tenantId]);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: ChunkRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       documentId: row.document_id,
@@ -912,7 +913,7 @@ export async function getPostgresChunks(tenantId: string): Promise<DocumentChunk
       content: row.content,
       chunkIndex: row.chunk_index,
       pageNumber: row.page_number || 1,
-      language: row.language,
+      language: row.language as DocumentChunk['language'],
       metadata: row.metadata || {},
     }));
   } catch (error) {
@@ -951,7 +952,7 @@ export async function getPostgresChunksByDocument(
       [tenantId, documentId, limit, offset],
     );
     return {
-      chunks: res.rows.map((row: any) => ({
+      chunks: res.rows.map((row: ChunkRow) => ({
         id: row.id,
         tenantId: row.tenant_id,
         documentId: row.document_id,
@@ -959,7 +960,7 @@ export async function getPostgresChunksByDocument(
         content: row.content,
         chunkIndex: row.chunk_index,
         pageNumber: row.page_number || 1,
-        language: row.language,
+        language: row.language as DocumentChunk['language'],
         metadata: row.metadata || {},
       })),
       total: countRes.rows[0]?.total ?? 0,
@@ -1004,7 +1005,7 @@ export async function insertPostgresChunk(chunk: {
   chunkIndex: number;
   pageNumber: number;
   language: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }) {
   await ensurePostgresTables();
   const p = getPostgresPool();
@@ -1053,13 +1054,13 @@ export async function getPostgresSources(tenantId: string): Promise<SourceConnec
   await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM sources WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: SourceRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       name: row.name,
-      type: row.type,
-      status: row.status,
-      config: row.config || {},
+      type: row.type as SourceConnector['type'],
+      status: row.status as SourceConnector['status'],
+      config: (row.config || {}) as SourceConnector['config'],
       syncSchedule: row.sync_schedule || '',
       lastSyncAt: row.last_sync_at || '',
       documentCount: row.document_count || 0,
@@ -1090,9 +1091,9 @@ export async function getPostgresSourceById(id: string, tenantId: string): Promi
       id: row.id,
       tenantId: row.tenant_id,
       name: row.name,
-      type: row.type,
-      status: row.status,
-      config: row.config || {},
+      type: row.type as SourceConnector['type'],
+      status: row.status as SourceConnector['status'],
+      config: (row.config || {}) as SourceConnector['config'],
       syncSchedule: row.sync_schedule || '',
       lastSyncAt: row.last_sync_at || '',
       documentCount: row.document_count || 0,
@@ -1128,7 +1129,7 @@ export async function getPostgresScheduledSources(): Promise<
     const res = await client.query(
       'SELECT id, tenant_id, sync_schedule FROM omnirag_list_scheduled_sources()',
     );
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: SourceScheduleRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       syncSchedule: row.sync_schedule,
@@ -1221,14 +1222,14 @@ export async function getPostgresSyncLogs(
     queryText += ` ORDER BY timestamp DESC LIMIT $${params.length + 1}::int`;
     params.push(Math.min(Math.max(limit, 1), 500));
     const res = await client.query(queryText, params);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: SyncLogRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
-      sourceId: row.source_id,
-      sourceName: row.source_name,
-      status: row.status,
-      itemsProcessed: row.items_processed,
-      durationMs: row.duration_ms,
+      sourceId: row.source_id || '',
+      sourceName: row.source_name || '',
+      status: row.status as SyncLogEntry['status'],
+      itemsProcessed: row.items_processed ?? 0,
+      durationMs: row.duration_ms ?? 0,
       message: row.message || '',
       timestamp: row.timestamp,
     }));
@@ -1286,7 +1287,7 @@ export async function getPostgresCollections(tenantId: string): Promise<Collecti
     const res = await client.query('SELECT * FROM collections WHERE tenant_id = $1 ORDER BY created_at DESC', [
       tenantId,
     ]);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: CollectionRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       name: row.name,
@@ -1337,26 +1338,26 @@ export async function getPostgresMcpServers(tenantId: string): Promise<MCPServer
     const res = await client.query('SELECT * FROM mcp_servers WHERE tenant_id = $1 ORDER BY created_at DESC', [
       tenantId,
     ]);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: McpServerRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       name: row.name,
       description: row.description || '',
       endpointUrl: row.endpoint_url,
-      protocolVersion: row.protocol_version,
-      sandboxTier: row.sandbox_tier,
+      protocolVersion: row.protocol_version as MCPServerConfig['protocolVersion'],
+      sandboxTier: row.sandbox_tier as MCPServerConfig['sandboxTier'],
       enabledTools: row.enabled_tools || [],
       requireConfirmationTools: row.require_confirmation_tools || [],
-      status: row.status,
+      status: row.status as MCPServerConfig['status'],
       latencyMs: row.latency_ms || 0,
-      lastChecked: row.last_checked,
+      lastChecked: row.last_checked || '',
       headers: row.headers || {},
       category: row.category || '',
       url: row.url || '',
-      authType: row.auth_type || 'none',
-      transportType: row.transport_type || 'http',
-      config: row.config || {},
-      customToolSchemas: row.custom_tool_schemas || {},
+      authType: (row.auth_type || 'none') as MCPServerConfig['authType'],
+      transportType: (row.transport_type || 'http') as MCPServerConfig['transportType'],
+      config: (row.config || {}) as MCPServerConfig['config'],
+      customToolSchemas: (row.custom_tool_schemas || {}) as MCPServerConfig['customToolSchemas'],
     }));
   } catch (error) {
     log.error('Failed to get Postgres MCP servers:', error);
@@ -1440,14 +1441,14 @@ export async function getPostgresAuditLogs(tenantId: string): Promise<AuditLogEn
   await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM audit_logs WHERE tenant_id = $1 ORDER BY timestamp DESC', [tenantId]);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: AuditLogRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
-      actorId: row.actor_id,
+      actorId: row.actor_id || '',
       action: row.action,
-      resourceType: row.resource_type,
-      resourceId: row.resource_id,
-      status: row.status,
+      resourceType: row.resource_type || '',
+      resourceId: row.resource_id || '',
+      status: row.status as AuditLogEntry['status'],
       details: row.details || '',
       timestamp: row.timestamp,
     }));
@@ -1499,7 +1500,7 @@ export async function getPostgresToolCalls(tenantId: string): Promise<MCPToolCal
   await setTenantScope(client, tenantId);
   try {
     const res = await client.query('SELECT * FROM tool_calls WHERE tenant_id = $1 ORDER BY timestamp DESC', [tenantId]);
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: ToolCallRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       conversationId: row.conversation_id || undefined,
@@ -1507,7 +1508,7 @@ export async function getPostgresToolCalls(tenantId: string): Promise<MCPToolCal
       inputParams: row.input_params || {},
       outputResult: row.output_result || undefined,
       latencyMs: row.latency_ms || 0,
-      status: row.status,
+      status: row.status as MCPToolCall['status'],
       hasSideEffect: row.has_side_effect || false,
       userConfirmed: row.user_confirmed || false,
       timestamp: row.timestamp,
@@ -1580,11 +1581,11 @@ export async function getPostgresConversations(tenantId: string): Promise<Conver
        ORDER BY c.updated_at DESC`,
       [tenantId],
     );
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: ConversationRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       title: row.title,
-      mode: row.mode,
+      mode: row.mode as Conversation['mode'],
       model: row.model,
       collectionIds: row.collection_ids || [],
       enabledMcpServers: row.enabled_mcp_servers || [],
@@ -1615,7 +1616,7 @@ export async function getPostgresConversationById(id: string, tenantId: string):
       id: row.id,
       tenantId: row.tenant_id,
       title: row.title,
-      mode: row.mode,
+      mode: row.mode as Conversation['mode'],
       model: row.model,
       collectionIds: row.collection_ids || [],
       enabledMcpServers: row.enabled_mcp_servers || [],
@@ -1697,17 +1698,17 @@ export async function getPostgresMessages(conversationId: string, tenantId: stri
       'SELECT * FROM messages WHERE conversation_id = $1 AND tenant_id = $2 ORDER BY created_at ASC',
       [conversationId, tenantId],
     );
-    return res.rows.map((row: any) => ({
+    return res.rows.map((row: MessageRow) => ({
       id: row.id,
       tenantId: row.tenant_id,
       conversationId: row.conversation_id,
-      role: row.role,
+      role: row.role as Message['role'],
       content: row.content,
-      citations: row.citations || [],
+      citations: (row.citations as Message['citations']) || [],
       modelUsed: row.model_used || undefined,
-      tokensUsed: row.tokens_used || undefined,
-      feedback: row.feedback || undefined,
-      toolCalls: row.tool_calls || [],
+      tokensUsed: (row.tokens_used as Message['tokensUsed']) || undefined,
+      feedback: (row.feedback as Message['feedback']) || undefined,
+      toolCalls: (row.tool_calls as Message['toolCalls']) || [],
       hasPiiRedacted: row.has_pii_redacted || false,
       createdAt: row.created_at,
     }));
@@ -1881,7 +1882,7 @@ export async function searchPostgresLexical(
 
     await client.query('COMMIT');
 
-    return result.rows.map((row: any) => ({
+    return result.rows.map((row: LexicalChunkRow) => ({
       id: row.id,
       documentId: row.document_id,
       content: row.content,
@@ -2163,6 +2164,166 @@ export async function deleteExpiredPostgresSessions(): Promise<void> {
 // ── Raw SQL row shapes (v0.12.14, no-explicit-any cleanup) ─────────────────
 // snake_case exactly as Postgres returns it; JSONB columns arrive as
 // parsed JS values whose runtime shape the mappers already guard.
+
+// ── Per-table SQL row shapes for the inline mappers (v0.12.20) ────────────
+// snake_case exactly as the SELECTs return them; JSONB columns are typed
+// narrowly at each mapper's read site.
+interface DocumentRow {
+  id: string;
+  tenant_id: string;
+  title: string;
+  content: string;
+  source_type: string;
+  language: string;
+  status: string;
+  chunk_count: number | null;
+  created_at: string;
+  metadata: { updatedAt?: string; version?: number; versions?: unknown } | null;
+  collection_ids: string[] | null;
+}
+interface DocumentSummaryRow {
+  id: string;
+  tenant_id: string;
+  title: string;
+  source_type: string;
+  language: string;
+  status: string;
+  chunk_count: number | null;
+  created_at: string;
+  metadata: { updatedAt?: string; version?: number } | null;
+  collection_ids: string[] | null;
+  content_chars: number | null;
+  content_preview: string | null;
+}
+interface ChunkRow {
+  id: string;
+  tenant_id: string;
+  document_id: string;
+  document_title: string;
+  content: string;
+  chunk_index: number;
+  page_number: number | null;
+  language: string;
+  metadata: Record<string, unknown> | null;
+}
+interface SourceRow {
+  id: string;
+  tenant_id: string;
+  name: string;
+  type: string;
+  status: string;
+  config: Record<string, unknown> | null;
+  sync_schedule: string | null;
+  last_sync_at: string | null;
+  document_count: number | null;
+  last_error: string | null;
+  created_at: string;
+  collection_ids: string[] | null;
+}
+interface SourceScheduleRow {
+  id: string;
+  tenant_id: string;
+  sync_schedule: string;
+}
+interface SyncLogRow {
+  id: string;
+  tenant_id: string;
+  source_id: string | null;
+  source_name: string | null;
+  status: string;
+  items_processed: number | null;
+  duration_ms: number | null;
+  message: string | null;
+  timestamp: string;
+}
+interface CollectionRow {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  document_count: number | null;
+  created_at: string;
+}
+interface McpServerRow {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  endpoint_url: string;
+  protocol_version: string | null;
+  sandbox_tier: string | null;
+  enabled_tools: string[] | null;
+  require_confirmation_tools: string[] | null;
+  status: string;
+  latency_ms: number | null;
+  last_checked: string;
+  headers: Record<string, string> | null;
+  category: string | null;
+  url: string | null;
+  auth_type: string | null;
+  transport_type: string;
+  config: Record<string, unknown> | null;
+  custom_tool_schemas: unknown;
+}
+interface AuditLogRow {
+  id: string;
+  tenant_id: string;
+  actor_id: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  status: string;
+  details: string | null;
+  timestamp: string;
+}
+interface ToolCallRow {
+  id: string;
+  tenant_id: string;
+  conversation_id: string | null;
+  scoped_tool_name: string;
+  input_params: Record<string, unknown> | null;
+  output_result: unknown;
+  latency_ms: number | null;
+  status: string;
+  has_side_effect: boolean | null;
+  user_confirmed: boolean | null;
+  timestamp: string;
+}
+interface ConversationRow {
+  id: string;
+  tenant_id: string;
+  title: string;
+  mode: string;
+  model: string;
+  collection_ids: string[] | null;
+  enabled_mcp_servers: string[] | null;
+  created_at: string;
+  updated_at: string;
+  first_user_message: string | null;
+}
+interface MessageRow {
+  id: string;
+  tenant_id: string;
+  conversation_id: string;
+  role: string;
+  content: string;
+  citations: unknown;
+  model_used: string | null;
+  tokens_used: unknown;
+  feedback: string | null;
+  tool_calls: unknown;
+  has_pii_redacted: boolean | null;
+  created_at: string;
+}
+interface LexicalChunkRow {
+  id: string;
+  document_id: string;
+  content: string;
+  chunk_index: number;
+  page_number: number | null;
+  language: string;
+  rank: number | null;
+}
 
 interface ApiKeyRow {
   id: string;
