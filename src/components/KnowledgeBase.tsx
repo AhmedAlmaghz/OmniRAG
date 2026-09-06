@@ -147,7 +147,16 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
   const [previewOcrEntry, setPreviewOcrEntry] = useState<OcrCacheEntry | null>(null);
 
   // State arrays
-  const [sources, setSources] = useState<SourceConnector[]>([]);
+  interface StatusPollEntry {
+  id: string;
+  status?: string;
+  chunkCount?: number;
+  indexErrors?: string[];
+  lastSyncAt?: string | null;
+  documentCount?: number;
+  lastError?: string | null;
+}
+const [sources, setSources] = useState<SourceConnector[]>([]);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [mcpResources, setMcpResources] = useState<McpResourceItem[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -244,11 +253,11 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         }
       };
 
-      const sourcesData: any = await parse(sourcesRes);
-      const colsData: any = await parse(colsRes);
-      const docsData: any = await parse(docsRes);
+      const sourcesData: Record<string, unknown> = await parse(sourcesRes);
+      const colsData: Record<string, unknown> = await parse(colsRes);
+      const docsData: Record<string, unknown> = await parse(docsRes);
       // keys status is non-critical — never count its failure.
-      const keysData: any = keysRes?.ok ? await keysRes.json().catch(() => null) : null;
+      const keysData: Record<string, unknown> | null = keysRes?.ok ? await keysRes.json().catch(() => null) : null;
 
       // Surface core failures instead of an empty-looking knowledge base.
       if (failedRequests >= 2) {
@@ -324,14 +333,16 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         const data = await res.json();
         if (cancelled || !Array.isArray(data?.statuses)) return;
 
-        const statusById = new Map<string, any>(data.statuses.map((s: any) => [s.id, s]));
+        const statusById = new Map<string, StatusPollEntry>(
+            (data.statuses as StatusPollEntry[]).map((s) => [s.id, s]),
+          );
         setDocuments((prev) =>
           prev.map((doc) => {
             const fresh = statusById.get(doc.id);
             if (!fresh || fresh.status === doc.status) return doc;
             return {
               ...doc,
-              status: fresh.status,
+              status: fresh.status as Document['status'],
               chunkCount: fresh.chunkCount ?? doc.chunkCount,
               metadata: { ...doc.metadata, indexErrors: fresh.indexErrors },
             };
@@ -386,14 +397,16 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
         const data = await res.json();
         if (cancelled || !Array.isArray(data?.statuses)) return;
 
-        const statusById = new Map<string, any>(data.statuses.map((s: any) => [s.id, s]));
+        const statusById = new Map<string, StatusPollEntry>(
+            (data.statuses as StatusPollEntry[]).map((s) => [s.id, s]),
+          );
         setSources((prev) =>
           prev.map((src) => {
             const fresh = statusById.get(src.id);
             if (!fresh || fresh.status === src.status) return src;
             return {
               ...src,
-              status: fresh.status,
+              status: fresh.status as SourceConnector['status'],
               lastSyncAt: fresh.lastSyncAt ?? src.lastSyncAt,
               documentCount: fresh.documentCount ?? src.documentCount,
               lastError: fresh.lastError ?? src.lastError,
@@ -1283,7 +1296,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
                   {/* Sort selector */}
                   <select
                     value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as any)}
+                    onChange={(e) => setSortBy(e.target.value as 'date' | 'name' | 'chunks' | 'size')}
                     className="px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
                   >
                     <option value="date">{t(lang, 'kb.newest')}</option>
@@ -1577,7 +1590,7 @@ export default function KnowledgeBase({ tenantId = 'tenant-acme-01', lang = 'ar'
             collections={collections}
             lang={lang}
             initialTab={activeTab === 'youtube' ? 'youtube' : undefined}
-            onNavigateTab={(t) => setActiveTab(t as any)}
+            onNavigateTab={(t) => setActiveTab(t as TabType)}
             onIngestionCompleted={() => {
               fetchKnowledgeData({ silent: true });
             }}

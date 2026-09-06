@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Collection, SourceType } from '@/lib/types/omnirag';
+import { type ConnectorCatalogEntry } from '@/lib/connectors/registry';
 import { fetchWithAuth } from '@/lib/auth/fetchWithAuth';
 import { t } from '@/lib/i18n';
 import { useToast } from '../ui/Toast';
@@ -46,7 +47,7 @@ interface AddSourceWizardProps {
 export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCancel }: AddSourceWizardProps) {
   const { toast } = useToast();
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [sourceTypes, setSourceTypes] = useState<any[]>([]);
+  const [sourceTypes, setSourceTypes] = useState<ConnectorCatalogEntry[]>([]);
   const [selectedType, setSelectedType] = useState<SourceType | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [catalogSearch, setCatalogSearch] = useState<string>('');
@@ -54,7 +55,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
   const [name, setName] = useState('');
   const [syncSchedule, setSyncSchedule] = useState('0 */6 * * *');
   const [selectedColIds, setSelectedColIds] = useState<string[]>([]);
-  const [fieldsState, setFieldsState] = useState<Record<string, any>>({});
+  const [fieldsState, setFieldsState] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Connection Test & Diagnostics State
@@ -107,17 +108,17 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     }
   };
 
-  const handleSelectType = (typeMeta: any) => {
-    setSelectedType(typeMeta.id);
+  const handleSelectType = (typeMeta: ConnectorCatalogEntry) => {
+    setSelectedType(sourceTypes.some((st) => st.id === typeMeta.id) ? (typeMeta.id as SourceType) : null);
     setName(lang === 'ar' ? typeMeta.nameAr : typeMeta.nameEn);
     setSyncSchedule(typeMeta.defaultSchedule || 'manual');
 
     // Set default field values
-    const defaults: Record<string, any> = {};
+    const defaults: Record<string, string> = {};
     if (typeMeta.fields) {
-      typeMeta.fields.forEach((f: any) => {
+      typeMeta.fields.forEach((f) => {
         if (f.default !== undefined) {
-          defaults[f.key] = f.default;
+          defaults[f.key] = String(f.default);
         } else if (f.type === 'select' && f.options?.length) {
           defaults[f.key] = f.options[0].value;
         } else {
@@ -128,18 +129,6 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
     setFieldsState(defaults);
     setTestDiagnostics(null);
     setStep(2);
-  };
-
-  const handleApplyPresetDemo = () => {
-    if (!currentTypeMeta || !currentTypeMeta.presetDemo) return;
-    const preset = currentTypeMeta.presetDemo;
-    setName(preset.name || name);
-    setFieldsState({ ...fieldsState, ...preset });
-    setTestDiagnostics({
-      step: 3,
-      logs: [t(lang, 'wizard.presetLoaded'), t(lang, 'wizard.presetReady')],
-      success: true,
-    });
   };
 
   const handleTestConnection = async () => {
@@ -188,13 +177,15 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
       const logs: string[] = [t(lang, 'wizard.inputValidLog')];
 
       let allHealthy = true;
-      const services: Array<[string, any]> = Object.entries(data?.services || {});
+      const services: Array<[string, { status?: string; latencyMs?: number } | undefined]> = Object.entries(
+      (data?.services || {}) as Record<string, { status?: string; latencyMs?: number } | undefined>,
+    );
       if (services.length > 0) {
         for (const [svcName, svc] of services) {
-          const ok = (svc as any)?.status === 'connected';
+          const ok = svc?.status === 'connected';
           if (!ok) allHealthy = false;
           const label = ok ? '✓' : '⚠';
-          logs.push(`${label} ${svcName}: ${(svc as any)?.status} (${(svc as any)?.latencyMs ?? '?'}ms)`);
+          logs.push(`${label} ${svcName}: ${svc?.status} (${svc?.latencyMs ?? '?'}ms)`);
         }
       } else {
         // Diagnostics endpoint shape unexpected — report honestly instead of
@@ -381,12 +372,12 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                     <span>{lang === 'ar' ? st.nameAr : st.nameEn}</span>
                     {/* Honest capability badge: which connectors have a REAL
                         live-sync pipeline today vs manual-only placeholders. */}
-                    {st.liveSync === true && (
+                    {st.supportsLiveSync === true && (
                       <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase font-mono">
                         {t(lang, 'wizard.badgeLive')}
                       </span>
                     )}
-                    {st.liveSync === false && (
+                    {st.supportsLiveSync !== true && (
                       <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 uppercase font-mono">
                         {t(lang, 'wizard.badgeSoon')}
                       </span>
@@ -429,18 +420,6 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                 </p>
               </div>
             </div>
-
-            {/* Quick Preset Demo Button */}
-            {currentTypeMeta.presetDemo && (
-              <button
-                type="button"
-                onClick={handleApplyPresetDemo}
-                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shrink-0 cursor-pointer shadow-xs"
-              >
-                <Zap className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
-                <span>{t(lang, 'wizard.loadPresetBtn')}</span>
-              </button>
-            )}
           </div>
 
           <div className="space-y-4">
@@ -460,7 +439,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
 
             {/* Dynamic Form Fields from Catalog Schema */}
             {currentTypeMeta.fields &&
-              currentTypeMeta.fields.map((field: any) => (
+              currentTypeMeta.fields.map((field) => (
                 <div key={field.key}>
                   <label className="text-xs font-bold text-slate-700 block mb-1">
                     {lang === 'ar' ? field.labelAr : field.labelEn}
@@ -473,7 +452,7 @@ export function AddSourceWizard({ tenantId, collections, lang, onCompleted, onCa
                       onChange={(e) => setFieldsState({ ...fieldsState, [field.key]: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-500"
                     >
-                      {field.options?.map((opt: any) => (
+                      {field.options?.map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>

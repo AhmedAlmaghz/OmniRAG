@@ -2,6 +2,8 @@ import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('LibPdfPdfChunker');
 
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
 import { PDFDocument } from 'pdf-lib';
 import { generateTextResilient } from '../ai/resilientGenerate';
 import { getAiModel, getFallbackModels } from '../config/aiModels';
@@ -88,8 +90,8 @@ export async function slicePdfIntoChunks(
     }
 
     return { totalPages, chunks };
-  } catch (error: any) {
-    log.warn('[PDF Chunker] pdf-lib slice fallback to single chunk:', error?.message || error);
+  } catch (error) {
+    log.warn("[PDF Chunker] pdf-lib slice fallback to single chunk:", errorMessage(error));
     // Fallback: return as single chunk
     return {
       totalPages: 1,
@@ -152,7 +154,7 @@ export async function parsePdfChunkWithMistral(
     const pagesResult: { pageNumber: number; text: string }[] = [];
     const textSections: string[] = [];
 
-    pagesList.forEach((p: any, idx: number) => {
+    pagesList.forEach((p: { markdown?: string; text?: string }, idx: number) => {
       const pageNum = chunk.startPage + idx;
       const pageText = p.markdown || p.text || '';
       pagesResult.push({ pageNumber: pageNum, text: pageText });
@@ -163,8 +165,8 @@ export async function parsePdfChunkWithMistral(
       text: textSections.join('\n\n'),
       pages: pagesResult,
     };
-  } catch (err: any) {
-    log.warn(`[Mistral OCR] Execution failed on chunk ${chunk.chunkIndex}:`, err?.message || err);
+  } catch (err) {
+    log.warn(`[Mistral OCR] Execution failed on chunk ${chunk.chunkIndex}:`, errorMessage(err) || err);
     return null;
   }
 }
@@ -197,8 +199,8 @@ export async function parsePdfChunkWithUnstructured(
     }
     log.warn(`[Unstructured API] Chunk ${chunk.chunkIndex}: ${result.metadata?.error || 'no text'}`);
     return null;
-  } catch (err: any) {
-    log.warn(`[Unstructured API] Chunk ${chunk.chunkIndex} error:`, err?.message);
+  } catch (err) {
+    log.warn(`[Unstructured API] Chunk ${chunk.chunkIndex} error:`, errorMessage(err));
     return null;
   }
 }
@@ -239,8 +241,8 @@ Maintain accurate Arabic text if present. Output ONLY the extracted text with cl
     if (result?.text) {
       return { text: result.text };
     }
-  } catch (err: any) {
-    log.warn(`[Gemini PDF Parser] Chunk ${chunk.chunkIndex} error:`, err?.message || err);
+  } catch (err) {
+    log.warn(`[Gemini PDF Parser] Chunk ${chunk.chunkIndex} error:`, errorMessage(err) || err);
   }
   return null;
 }
@@ -262,9 +264,10 @@ export async function parsePdfChunkWithNativePdfParse(
     const pdfModule = await import('pdf-parse');
     let extracted: string | null = null;
 
-    if (pdfModule && (pdfModule as any).PDFParse) {
+    const pdfModuleShape = pdfModule as unknown as { PDFParse?: new (o: { data: Buffer }) => { load(): Promise<unknown>; getText(): Promise<{ text?: string }>; destroy(): Promise<unknown> }; default?: (b: Buffer) => Promise<{ text?: string }> };
+    if (pdfModule && pdfModuleShape.PDFParse) {
       // pdf-parse v2+
-      const PDFParseClass = (pdfModule as any).PDFParse;
+      const PDFParseClass = pdfModuleShape.PDFParse;
       const parser = new PDFParseClass({ data: chunk.pdfBuffer });
       await parser.load();
       const result = await parser.getText();
@@ -274,7 +277,7 @@ export async function parsePdfChunkWithNativePdfParse(
       }
     } else {
       // pdf-parse v1
-      const parsePdfFunc = typeof pdfModule === 'function' ? pdfModule : (pdfModule as any).default || pdfModule;
+      const parsePdfFunc = typeof pdfModule === 'function' ? pdfModule : pdfModuleShape.default || pdfModule;
       if (typeof parsePdfFunc === 'function') {
         const parsedPdf = await parsePdfFunc(chunk.pdfBuffer);
         if (parsedPdf && parsedPdf.text) {
@@ -286,8 +289,8 @@ export async function parsePdfChunkWithNativePdfParse(
     if (extracted && extracted.length > 0) {
       return { text: extracted, confidence: 'high' };
     }
-  } catch (err: any) {
-    log.warn(`[Native pdf-parse] Chunk ${chunk.chunkIndex} warning:`, err?.message || err);
+  } catch (err) {
+    log.warn(`[Native pdf-parse] Chunk ${chunk.chunkIndex} warning:`, errorMessage(err) || err);
   }
 
   // Stream text operator extraction fallback for text-based PDFs
@@ -415,8 +418,8 @@ export async function processPdfWithBatchedPipeline(
       const { ocrPdfLocally } = await import('../services/localOcr');
       const localText = await ocrPdfLocally(chunk.pdfBuffer);
       return localText.trim();
-    } catch (ocrErr: any) {
-      log.warn(`[Knowledge Pipeline] Local OCR failed on chunk ${chunk.chunkIndex}:`, ocrErr?.message);
+    } catch (ocrErr) {
+      log.warn(`[Knowledge Pipeline] Local OCR failed on chunk ${chunk.chunkIndex}:`, errorMessage(ocrErr));
       return '';
     }
   };
@@ -558,8 +561,8 @@ export async function processPdfWithBatchedPipeline(
         accumulatedTexts.push(localText.trim());
         primaryEngineUsed = 'Local Tesseract OCR (offline ⚡)';
       }
-    } catch (ocrErr: any) {
-      log.warn('[Knowledge Pipeline] Local OCR full-buffer fallback failed:', ocrErr?.message);
+    } catch (ocrErr) {
+      log.warn('[Knowledge Pipeline] Local OCR full-buffer fallback failed:', errorMessage(ocrErr));
     }
   }
 
