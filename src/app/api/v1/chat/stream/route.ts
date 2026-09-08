@@ -164,12 +164,21 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
   const modelConfig = parseModelConfigFromRequest(req);
 
   try {
-    const chatDenied = await guardPermission(authCtx, 'chat:use');
-    if (chatDenied) return chatDenied;
+    // PERFORMANCE: these pre-search gates are independent of each other and
+    // of the request body — running them in parallel (overlapping the
+    // req.json() read) shaves their combined latency off every message's
+    // time-to-first-token.
+    const [chatDenied, budget, authCheck, body] = await Promise.all([
+      guardPermission(authCtx, 'chat:use'),
+      // Monthly token budget (Phase 4): hard-stop when the workspace exhausted
+      // its plan's LLM allowance for the current month.
+      getTokenBudgetStatus(authCtx.tenantId),
+      // Stage 1: Auth check
+      HookHarness.run('pre_auth', { tenantId: authCtx.tenantId, userId: authCtx.userId }),
+      req.json().catch(() => null),
+    ]);
 
-    // Monthly token budget (Phase 4): hard-stop when the workspace exhausted
-    // its plan's LLM allowance for the current month.
-    const budget = await getTokenBudgetStatus(authCtx.tenantId);
+    if (chatDenied) return chatDenied;
     if (budget.exhausted) {
       return NextResponse.json(
         {
@@ -180,8 +189,10 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
         { status: 429 },
       );
     }
+    if (!authCheck.allow) {
+      return blockedStreamResponse(authCheck.reason || 'غير مصرح');
+    }
 
-    const body = await req.json();
     const tenantId = authCtx.tenantId;
     const {
       prompt,
@@ -191,7 +202,7 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
       approvedToolCall,
       conversationId,
       messages: clientMessages,
-    } = body;
+    } = body || {};
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json(
@@ -215,26 +226,28 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
     // because runWithModelConfig only binds AFTER this line.
     if (!targetModel) targetModel = modelConfig.chatStreamModel;
 
-    // Stage 1: Auth check
-    const authCheck = await HookHarness.run('pre_auth', { tenantId, userId: authCtx.userId });
-    if (!authCheck.allow) {
-      return blockedStreamResponse(authCheck.reason || 'غير مصرح');
-    }
-
-    // Stage 2: Inference Check (Prompt injection defense)
+    // Stage 2: Inference Check (Prompt injection defense) — needs the real
+    // mode/prompt, so it runs after the body resolves.
     const inferenceCheck = await HookHarness.run('pre_inference', { tenantId, mode, prompt });
     if (!inferenceCheck.allow) {
       return blockedStreamResponse(inferenceCheck.reason || 'تم حظر الطلب');
     }
 
     return await runWithModelConfig(modelConfig, async () => {
-      const searchResult = await performHybridSearch({
-        query: prompt,
-        tenantId,
-        collectionIds,
-        // Parity with /chat/completions: auto-rerank in analysis mode.
-        rerank: mode === 'analysis',
-      });
+      // PERFORMANCE: retrieval and the tenant MCP tool-surface lookup are
+      // independent DB/vector round-trips — overlap them instead of paying
+      // their latencies serially on every message.
+      const [searchResult, tenantTools] = await Promise.all([
+        performHybridSearch({
+          query: prompt,
+          tenantId,
+          collectionIds,
+          // Parity with /chat/completions: auto-rerank in analysis mode.
+          rerank: mode === 'analysis',
+        }),
+        collectTenantMcpTools(tenantId, mode),
+      ]);
+      const { toolsToOffer, requireApprovalTools, customSchemas } = tenantTools;
 
       // Stage 2b: Pre-Generation — indirect prompt injection scan over chunks.
       const preGenCheck = await HookHarness.run('pre_generation', {
@@ -317,8 +330,8 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
             }`;
           }
 
-          // Tenant tool surface (shared with the completions path).
-          const { toolsToOffer, requireApprovalTools, customSchemas } = await collectTenantMcpTools(tenantId, mode);
+          // Tenant tool surface — already collected in parallel with the
+          // retrieval above; destructure happens there. Nothing to await here.
 
           let aiTools: ToolSet | undefined;
           const pendingApprovalRef: { value: MCPToolCall | null } = { value: null };
@@ -371,7 +384,26 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
             return chain;
           };
 
-          const attemptStream = async (aliasToTry: string) => {
+          // PERFORMANCE (perceived hang): waiting for the FULL generation
+          // timeout before trying the next model left users staring at a
+          // spinner for up to a minute on a slow/hung provider. The FIRST
+          // attempt (the configured primary) gets a short first-token budget —
+          // enough for a slow provider to boot, short enough to move on fast;
+          // subsequent attempts get a longer one since they are the last
+          // resorts before a hard error. Once the first character arrives,
+          // the full GENERATION_TIMEOUT_MS applies to the rest of the stream.
+          const FIRST_TOKEN_BUDGETS_MS = [12_000, 25_000];
+          const firstTokenBudgetFor = (attemptIndex: number): number =>
+            Math.min(
+              FIRST_TOKEN_BUDGETS_MS[Math.min(attemptIndex, FIRST_TOKEN_BUDGETS_MS.length - 1)],
+              GENERATION_TIMEOUT_MS,
+            );
+
+          const attemptStream = async (aliasToTry: string, firstTokenBudgetMs: number) => {
+            // Race the first token against a first-token budget: this abort
+            // only guards "provider never starts streaming"; after the first
+            // chunk the underlying GENERATION_TIMEOUT_MS timer (below) governs.
+            const firstTokenAbort = AbortSignal.timeout(firstTokenBudgetMs);
             const result = streamText({
               model: await resolveLanguageModel(aliasToTry),
               system: buildAgenticSystemInstruction(aliasToTry, mode, toolsToOffer),
@@ -383,7 +415,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
               // Vercel Hobby ceiling: keeps failures inside the stream protocol
               // instead of the platform hard-killing the SSE connection.
               timeout: GENERATION_TIMEOUT_MS,
-              abortSignal: AbortSignal.timeout(GENERATION_TIMEOUT_MS),
+              abortSignal: AbortSignal.any([firstTokenAbort, AbortSignal.timeout(GENERATION_TIMEOUT_MS)]),
             });
             // Await the FIRST element to know whether this provider can serve
             // us at all; a failure here means nothing was streamed yet and we
@@ -403,7 +435,7 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
             const aliasToTry = chain[i];
             if (!(await isModelRefConfigured(aliasToTry))) continue; // no key → skip
             try {
-              const attempt = await attemptStream(aliasToTry);
+              const attempt = await attemptStream(aliasToTry, firstTokenBudgetFor(i));
               result = attempt.result;
               firstChunk = attempt.first;
               if (!firstChunk.done) {
@@ -513,12 +545,18 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
           });
 
           // Best-effort AI follow-up suggestions after the answer completes.
-          // NOTE: this is a SECOND provider call per user message — on free-tier
-          // keys (e.g. Gemini 20 RPM) it doubles quota pressure, so it silently
-          // no-ops when the provider is already rate-limited.
+          // PERFORMANCE: this is a SECOND provider call per user message — on
+          // free-tier keys (e.g. Gemini 20 RPM) it doubles quota pressure AND
+          // used to keep the stream spinning (spinner stuck on a finished
+          // answer) while it ran. Now it races a short window: if the provider
+          // answers within it, suggestions stream to the client; otherwise the
+          // client's instant deterministic fallback (getFallbackSuggestions)
+          // takes over and the stream closes immediately. The request itself
+          // is fire-and-forget — never awaited past the window.
           if (fullText && !fullText.includes('RESOURCE_EXHAUSTED') && !quotaHitRef.value) {
+            const SUGGESTIONS_WINDOW_MS = 3_000;
             try {
-              const suggestionsResult = await generateTextResilient({
+              const suggestionsPromise = generateTextResilient({
                 model: modelAlias,
                 system:
                   'أنت مساعد يولد أسئلة متابعة سياقية ذكية. أجب بـ 3 أسئلة فقط، كل سؤال في سطر منفصل، بدون أي نص إضافي أو ترقيم أو رموز.',
@@ -526,13 +564,19 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
                 temperature: 0.7,
                 maxRetries: 1,
               });
-              const suggestions = (suggestionsResult?.text || '')
-                .split('\n')
-                .map((s) => s.replace(/^[\d.\-*\s]+/, '').trim())
-                .filter((s) => s.length > 10 && s.length < 150)
-                .slice(0, 4);
-              if (suggestions.length > 0) {
-                writer.write({ type: 'data-suggestions', data: suggestions });
+              const suggestionsResult = await Promise.race([
+                suggestionsPromise,
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), SUGGESTIONS_WINDOW_MS)),
+              ]);
+              if (suggestionsResult) {
+                const suggestions = (suggestionsResult?.text || '')
+                  .split('\n')
+                  .map((s) => s.replace(/^[\d.\-*\s]+/, '').trim())
+                  .filter((s) => s.length > 10 && s.length < 150)
+                  .slice(0, 4);
+                if (suggestions.length > 0) {
+                  writer.write({ type: 'data-suggestions', data: suggestions });
+                }
               }
             } catch {
               // Suggestions are an optional enhancement — never break the stream.

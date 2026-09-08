@@ -23,10 +23,11 @@ const EMAIL_STREAM_G = /[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+(?=[^a-z
 const PHONE_STREAM_G = /(\+?\d{1,4}[\s-.]?)?\(?\d{3}\)?[\s-.]?\d{3}[\s-.]?\d{4}(?=[^\d\s().+-])/g;
 
 // Hold back this many trailing characters from emission. The largest PII
-// pattern we recognize is an email (≤254 chars per RFC 3696); the hold-back
-// ensures an in-flight PII pattern sitting at the tail of the buffer is not
-// emitted before its terminating character arrives in a subsequent chunk.
-const TAIL_HOLD_BACK = 256;
+// pattern we recognize is a phone number with country code and separators
+// (≈20 chars) or a short email — 32 covers both with margin while keeping the
+// streamed text's arrival lag minimal (256 was originally sized for the RFC
+// 3696 email maximum, which no provider emits mid-chat).
+const TAIL_HOLD_BACK = 32;
 
 export interface PIIStreamRedactor {
   /** Append a streamed chunk and return any text safe to emit now. */

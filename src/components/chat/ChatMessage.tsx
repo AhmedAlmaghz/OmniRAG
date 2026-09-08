@@ -9,6 +9,8 @@ import { CitationsPanel } from '@/components/chat/CitationsPanel';
 interface ChatMessageProps {
   message: Message;
   lang: 'ar' | 'en';
+  /** True while this message's text is still arriving — renders the light path. */
+  isStreaming?: boolean;
   onCitationClick: (citation: Citation) => void;
   onViewInKnowledge?: () => void;
 }
@@ -41,7 +43,13 @@ function pickBubbleWidth(content: string): string {
   return 'max-w-[min(92%,860px)]';
 }
 
-const ChatMessageInner: React.FC<ChatMessageProps> = ({ message, lang, onCitationClick, onViewInKnowledge }) => {
+const ChatMessageInner: React.FC<ChatMessageProps> = ({
+  message,
+  lang,
+  isStreaming = false,
+  onCitationClick,
+  onViewInKnowledge,
+}) => {
   const isAssistant = message.role === 'assistant';
 
   const bubbleWidth = useMemo(
@@ -72,6 +80,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({ message, lang, onCitatio
           role={message.role}
           lang={lang}
           citations={message.citations}
+          isStreaming={isStreaming}
           onCitationClick={onCitationClick}
           onViewInKnowledge={onViewInKnowledge}
         />
@@ -129,6 +138,7 @@ export const ChatMessage = memo(ChatMessageInner, (prev, next) => {
     prev.message.tokensUsed?.input === next.message.tokensUsed?.input &&
     prev.message.tokensUsed?.output === next.message.tokensUsed?.output &&
     prev.lang === next.lang &&
+    prev.isStreaming === next.isStreaming &&
     prev.onCitationClick === next.onCitationClick &&
     prev.onViewInKnowledge === next.onViewInKnowledge
   );

@@ -47,6 +47,14 @@ interface RichMessageRendererProps {
   onCitationClick?: (citation: Citation) => void;
   citations?: Citation[];
   onViewInKnowledge?: () => void;
+  /**
+   * PERFORMANCE: while a message is still streaming, every text delta changes
+   * `content` and re-parsing the WHOLE markdown tree (GFM + KaTeX + tables)
+   * dozens of times per second is what makes long answers stutter. When true,
+   * the message renders as light plain text (inline citation badges only);
+   * the full pipeline runs once, when the message completes.
+   */
+  isStreaming?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,7 +204,11 @@ const ChartBlock: React.FC<{ code: string; lang: 'ar' | 'en' }> = ({ code, lang 
       const spec = normalizeChartSpec(raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {});
       return { option: toEChartsOption(spec), error: null, title: spec.title };
     } catch (e) {
-      return { option: null, error: e instanceof Error ? e.message : String(e) || 'chart spec parse failed', title: '' };
+      return {
+        option: null,
+        error: e instanceof Error ? e.message : String(e) || 'chart spec parse failed',
+        title: '',
+      };
     }
   }, [code]);
 
@@ -266,8 +278,9 @@ const SortableTable: React.FC<{ children: React.ReactNode; lang: 'ar' | 'en' }> 
 
     let headerCells: React.ReactNode[] = [];
     if (thead) {
-      const tr = React.Children.toArray((thead.props as { children?: React.ReactNode }).children).filter(React.isValidElement)[0] as
-        React.ReactElement | undefined;
+      const tr = React.Children.toArray((thead.props as { children?: React.ReactNode }).children).filter(
+        React.isValidElement,
+      )[0] as React.ReactElement | undefined;
       if (tr) {
         headerCells = React.Children.toArray((tr.props as { children?: React.ReactNode }).children)
           .filter(React.isValidElement)
@@ -276,7 +289,9 @@ const SortableTable: React.FC<{ children: React.ReactNode; lang: 'ar' | 'en' }> 
     }
 
     const rows: React.ReactElement[] = tbody
-      ? (React.Children.toArray((tbody.props as { children?: React.ReactNode }).children).filter(React.isValidElement) as React.ReactElement[])
+      ? (React.Children.toArray((tbody.props as { children?: React.ReactNode }).children).filter(
+          React.isValidElement,
+        ) as React.ReactElement[])
       : [];
 
     return { headerCells, rows };
@@ -383,6 +398,7 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
   onCitationClick,
   citations = [],
   onViewInKnowledge,
+  isStreaming = false,
 }) => {
   const [copied, setCopied] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -792,6 +808,24 @@ export const RichMessageRenderer: React.FC<RichMessageRendererProps> = ({
     ),
     [content, rehypePlugins, components],
   );
+
+  // LIGHT-STREAMING PATH: while the message is still arriving, skip the whole
+  // markdown pipeline (it would re-parse every delta) and render plain text
+  // with inline citation badges only. Cheap enough to keep up with token-rate
+  // deltas; the full pipeline renders once the stream completes.
+  const streamingBody = useMemo(
+    () => <p className="my-2 leading-relaxed whitespace-pre-wrap break-words">{renderTextWithCitations(content)}</p>,
+    [content, renderTextWithCitations],
+  );
+
+  if (isStreaming) {
+    return (
+      <div className={`space-y-3 ${role === 'user' ? 'text-slate-900' : 'text-slate-800'}`}>
+        {streamingBody}
+        <span className="inline-block w-2 h-4 align-middle bg-indigo-400 rounded-sm animate-pulse ml-0.5" aria-hidden />
+      </div>
+    );
+  }
 
   return (
     <div className={`space-y-3 ${role === 'user' ? 'text-slate-900' : 'text-slate-800'}`}>

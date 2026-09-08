@@ -126,7 +126,10 @@ export const ChatMain: React.FC<ChatMainProps> = ({
 
   // Memoize the rendered message list. With stable citation callbacks from the
   // parent, this means typing in the input box never re-creates or re-parses
-  // any message — only the input itself re-renders.
+  // any message — only the input itself re-renders. The LAST assistant
+  // message streams (light plain-text path in RichMessageRenderer) while
+  // isLoading is true; every completed message keeps the full markdown.
+  const lastAssistantId = isLoading ? [...messages].reverse().find((m) => m.role === 'assistant')?.id : undefined;
   const messageList = useMemo(
     () =>
       messages.map((msg) => (
@@ -134,11 +137,12 @@ export const ChatMain: React.FC<ChatMainProps> = ({
           key={msg.id}
           message={msg}
           lang={lang}
+          isStreaming={msg.id === lastAssistantId}
           onCitationClick={onCitationClick}
           onViewInKnowledge={onViewInKnowledge}
         />
       )),
-    [messages, lang, onCitationClick, onViewInKnowledge],
+    [messages, lang, lastAssistantId, onCitationClick, onViewInKnowledge],
   );
 
   // Smart auto-scroll: only when the user is already near the bottom.
