@@ -1,12 +1,25 @@
-# OmniRAG — full self-hosted stack.
+# OmniRAG — full self-hosted stack, one command:
 #
 #   docker compose up -d --build
 #
-# Brings up the app + PostgreSQL + Qdrant with persistent volumes. All cloud
-# API keys (GEMINI_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, …) are read from a
-# local .env file — see .env.example. DATABASE_URL and QDRANT_URL below are
-# intentionally overridden to point at the internal containers, so values in
-# .env for those two never leak into the compose network.
+# or with the deploy helper (waits for health + prints the smoke summary):
+#
+#   npm run docker:deploy
+#
+# Brings up the app + PostgreSQL + Qdrant with persistent volumes and
+# AUTOMATIC configuration:
+#   1. postgres first boot → docker/postgres-init/01-app-role.sh provisions
+#      the least-privilege `omnirag_app` runtime role (password below).
+#   2. app first boot → boot migration creates every table, the RLS policies,
+#      grants, the 10 SECURITY DEFINER escapes, and seeds demo data.
+#   3. everything after that is zero-touch: restart policies + healthchecks
+#      keep the stack converging on its own.
+#
+# All cloud API keys (GEMINI_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, …) are
+# read from a local .env file — see .env.example. DATABASE_URL,
+# DATABASE_APP_URL and QDRANT_URL below are intentionally overridden to point
+# at the internal containers, so values in .env for those never leak into the
+# compose network.
 
 services:
   app:
@@ -23,8 +36,8 @@ services:
       # Internal service addresses (override anything coming from .env).
       # DATABASE_URL = owner connection (migrations/DDL/seeds only).
       # DATABASE_APP_URL = least-privilege runtime role — Row Level Security
-      # policies are ENFORCED on it (staged activation, v0.12.10). Remove this
-      # line to revert to the dormant owner-bypass mode.
+      # policies are ENFORCED on it (staged activation). Remove this line to
+      # revert to the dormant owner-bypass mode.
       DATABASE_URL: postgresql://omnirag:omnirag@postgres:5432/omnirag
       DATABASE_APP_URL: postgresql://omnirag_app:${APP_DB_PASSWORD:-omnirag_app_local}@postgres:5432/omnirag
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-omnirag_app_local}
@@ -36,7 +49,9 @@ services:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
+    # The image ships its own HEALTHCHECK (/api/health, non-root). compose
+    # inherits it; pin the interval explicitly for `depends_on` gating.
 
   postgres:
     image: postgres:17-alpine
@@ -45,8 +60,12 @@ services:
       POSTGRES_USER: omnirag
       POSTGRES_PASSWORD: omnirag
       POSTGRES_DB: omnirag
+      # Consumed by docker/postgres-init/01-app-role.sh on FIRST volume boot.
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-omnirag_app_local}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # First-boot automatic configuration: runtime app role with LOGIN.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     # Exposed so `npx drizzle-kit push` can run from the host; remove the
     # mapping on internet-facing servers.
     ports:
@@ -62,6 +81,12 @@ services:
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6333/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   pgdata:

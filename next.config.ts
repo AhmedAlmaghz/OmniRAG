@@ -3,7 +3,12 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   typescript: {
-    ignoreBuildErrors: false,
+    // Type safety is owned by `npm run typecheck` (local pre-commit + CI), not
+    // by the production image build: inside a memory-constrained Docker VM the
+    // tsc pass ran 13+ minutes and OOM-killed the buildkit engine (observed
+    // v0.12.21). Docker builds set NEXT_SKIP_TYPECHECK=1; every other path
+    // keeps the strict gate on.
+    ignoreBuildErrors: process.env.NEXT_SKIP_TYPECHECK === '1',
   },
   // tesseract.js spawns worker threads and streams its WASM core from
   // node_modules at runtime — bundling it into the server build breaks both.
