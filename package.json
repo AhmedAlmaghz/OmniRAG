@@ -1,7 +1,7 @@
 {
   "name": "OmniRAG",
   "private": true,
-  "version": "0.12.20",
+  "version": "0.12.21",
   "homepage": "https://omnirag-segma.vercel.app",
   "github": "https://github.com/AhmedAlmaghz/omnirah",
   "author": "Ahmed Almaghz",
@@ -11,6 +11,7 @@
     "build": "rimraf dist && cross-env NODE_OPTIONS=--max-old-space-size=1536 NODE_ENV=production next build",
     "start": "node server.ts",
     "clean": "rimraf .next dist",
+    "docker:deploy": "bash scripts/docker-deploy.sh",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate --config=src/db/drizzle.config.ts",

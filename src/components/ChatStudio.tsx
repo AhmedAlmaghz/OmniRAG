@@ -1,7 +1,7 @@
 'use client';
 
 import { APP_VERSION } from '@/lib/config/systemConfig';
-import { getAiModelConfig } from '@/lib/config/aiModels';
+import { getAiModelConfig, MODEL_CONFIG_CHANGE_EVENT } from '@/lib/config/aiModels';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
@@ -209,6 +209,20 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
   const conversationIdRef = useRef(activeConversationId);
   conversationIdRef.current = activeConversationId;
 
+  // The interactive chat follows the user's PRIMARY chat model (settings key
+  // #1, `chatModel`), not `chatStreamModel` (key #5, external-API consumers).
+  // The header alone can't express this choice, so the transport sends the
+  // explicit `model` body field the stream route honors first.
+  const chatModelRef = useRef(getAiModelConfig().chatModel);
+  useEffect(() => {
+    const syncModel = () => {
+      chatModelRef.current = getAiModelConfig().chatModel;
+    };
+    syncModel();
+    window.addEventListener(MODEL_CONFIG_CHANGE_EVENT, syncModel);
+    return () => window.removeEventListener(MODEL_CONFIG_CHANGE_EVENT, syncModel);
+  }, []);
+
   const chatTransport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -221,6 +235,7 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
           mode: modeRef.current,
           collectionIds: collectionIdsRef.current,
           conversationId: conversationIdRef.current,
+          model: chatModelRef.current,
         }),
         // The stream route expects a flat `prompt` plus the UIMessage history.
         prepareSendMessagesRequest: ({ body, messages: outgoing }) => ({
@@ -309,6 +324,15 @@ export default function ChatStudio({ tenantId, lang, onNavigateTab }: ChatStudio
             setAiSuggestions(data as string[]);
           }
           break;
+        case 'data-meta': {
+          // The fallback chain swapped the primary model before any text
+          // streamed — surface it instead of silently serving from Groq/Mistral.
+          const meta = data as { modelUsed?: string; fallbackFrom?: string };
+          if (meta?.fallbackFrom) {
+            setSecurityNotice(t(lang, 'chat.modelFallback', { from: meta.fallbackFrom, model: meta.modelUsed || '' }));
+          }
+          break;
+        }
         default:
           break;
       }

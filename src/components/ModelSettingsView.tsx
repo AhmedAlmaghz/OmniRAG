@@ -273,7 +273,8 @@ export default function ModelSettingsView() {
       key: 'chatModel',
       titleAr: '1. نموذج استوديو المحادثة الرئيسي (Agentic Chat & RAG)',
       titleEn: 'Agentic Chat & RAG Engine',
-      descriptionAr: 'النموذج المعتمد لإجابات المحادثة التفاعلية واستدعاء أدوات MCP واستخلاص المراجع من المستندات.',
+      descriptionAr:
+        'النموذج المعتمد لإجابات الدردشة التفاعلية في الاستوديو والمحرك العام (RAG / MCP / المراجع) — تغييره يُطبَّق فوراً على محادثاتك القادمة.',
       icon: MessageSquare,
       badge: 'الأساسي في الشاشة الرئيسية',
       typeFilter: 'general',
@@ -314,7 +315,8 @@ export default function ModelSettingsView() {
       key: 'chatStreamModel',
       titleAr: '5. نموذج البث المباشر المفتوح (Streaming Chat API)',
       titleEn: 'Streaming API Route',
-      descriptionAr: 'يغذي مسار البث المباشر /api/v1/chat/stream لتقديم ردود سريعة وفورية للمستخدمين.',
+      descriptionAr:
+        'يغذي مسار البث المباشر /api/v1/chat/stream لمستهلكي API الخارجيين فقط — دردشة الاستوديو التفاعلية تستخدم الخيار 1 أعلاه.',
       icon: Zap,
       badge: 'API /v1/chat/stream',
       typeFilter: 'general',

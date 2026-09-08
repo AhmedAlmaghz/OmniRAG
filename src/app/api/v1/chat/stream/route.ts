@@ -210,7 +210,10 @@ export const POST = withAuthAndRateLimit(async (req, authCtx) => {
         } catch {}
       }
     }
-    if (!targetModel) targetModel = getAiModel('chatStreamModel');
+    // modelConfig (parsed above from header → cookie → defaults) is the
+    // pre-context source of truth; getAiModel here would ignore the cookie
+    // because runWithModelConfig only binds AFTER this line.
+    if (!targetModel) targetModel = modelConfig.chatStreamModel;
 
     // Stage 1: Auth check
     const authCheck = await HookHarness.run('pre_auth', { tenantId, userId: authCtx.userId });
@@ -492,7 +495,14 @@ ${contextText || 'لا توجد مستندات مسترجعة.'}
 
           writer.write({
             type: 'data-meta',
-            data: { modelUsed: usedModel, tokensUsed, configured: true },
+            data: {
+              modelUsed: usedModel,
+              tokensUsed,
+              configured: true,
+              // Present only when the fallback chain swapped the primary model
+              // before any text streamed — the UI surfaces it as a notice.
+              ...(usedModel !== modelAlias ? { fallbackFrom: modelAlias } : {}),
+            },
           });
 
           // Audit parity with /chat/completions (H9 post-inference over full text).

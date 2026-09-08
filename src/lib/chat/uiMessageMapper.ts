@@ -21,6 +21,8 @@ export interface ChatStreamMeta {
   modelUsed: string;
   tokensUsed: { input: number; output: number };
   configured: boolean;
+  /** Primary model alias that failed, when the fallback chain served the reply. */
+  fallbackFrom?: string;
 }
 
 /** Structural view of tool / dynamic-tool UI parts (registry + custom tools). */
@@ -201,6 +203,7 @@ export function mapUiMessageToLegacy(ui: UIMessage, ctx: LegacyMapContext): Mess
     const meta = getChatMeta(ui);
     if (meta) {
       if (meta.modelUsed) message.modelUsed = meta.modelUsed;
+      if (meta.fallbackFrom) message.fallbackFrom = meta.fallbackFrom;
       if (meta.tokensUsed) message.tokensUsed = meta.tokensUsed;
     }
   }

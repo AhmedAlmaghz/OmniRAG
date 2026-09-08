@@ -9,7 +9,17 @@ import { createLogger } from '@/lib/logging/logger';
 
 const log = createLogger('ApiGateway');
 
-type ApiHandler = (req: NextRequest, authCtx: AuthenticatedContext, props?: any) => Promise<Response | NextResponse>;
+/**
+ * Second argument Next.js passes to route handlers: an empty object for
+ * non-dynamic routes, `{ params }` for dynamic ones. Generic so each route's
+ * concrete params shape keeps flowing through its own handler signature.
+ * Required (not optional) because dynamic routes destructure it directly.
+ */
+type ApiHandler<P = Record<string, unknown>> = (
+  req: NextRequest,
+  authCtx: AuthenticatedContext,
+  props: P,
+) => Promise<Response | NextResponse>;
 
 /** Echo the correlation id on every response — success, 401/403/429 and 500 alike. */
 function withRequestId<T extends Response>(res: T, requestId: string): T {
@@ -21,8 +31,13 @@ function withRequestId<T extends Response>(res: T, requestId: string): T {
   return res;
 }
 
-export function withAuthAndRateLimit(handler: ApiHandler, options?: { limit?: number; windowMs?: number }) {
-  return async (req: NextRequest, props?: any): Promise<Response | NextResponse> => {
+export function withAuthAndRateLimit<P = Record<string, unknown>>(
+  handler: ApiHandler<P>,
+  options?: { limit?: number; windowMs?: number },
+) {
+  // Next.js always passes the second argument (empty object on non-dynamic
+  // routes); the `?? {}` keeps hand-written invocations equally safe.
+  return async (req: NextRequest, props?: P): Promise<Response | NextResponse> => {
     const requestId = crypto.randomUUID();
     try {
       // 1. Pre-load runtime environment variables to enable global/internal DB calls.
@@ -80,7 +95,7 @@ export function withAuthAndRateLimit(handler: ApiHandler, options?: { limit?: nu
       //    signature.
       const res = await runWithRequestContext(
         { tenantId: authCtx.tenantId, userId: authCtx.userId, apiKeyId: authCtx.apiKeyId, requestId },
-        () => handler(req, authCtx, props),
+        () => handler(req, authCtx, props ?? ({} as P)),
       );
       return withRequestId(res, requestId);
     } catch (err) {

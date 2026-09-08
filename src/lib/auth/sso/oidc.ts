@@ -2,6 +2,9 @@ import crypto from 'crypto';
 import { decryptToken } from '@/lib/mcp/auth/encryption';
 import type { SsoOidcConfig } from '@/lib/services/tenantConfigService';
 
+/** Node's crypto.JsonWebKey (key: 'jwk' expects it) — aliased to avoid clashing with the local JWKS interface. */
+type NodeJsonWebKey = Parameters<typeof crypto.createPublicKey>[0] extends { key: infer K } ? K : never;
+
 /**
  * OIDC Authorization-Code + PKCE client for tenant SSO (Phase 5).
  *
@@ -206,7 +209,10 @@ export async function verifyIdToken(params: {
   const jwk = keys.find((k) => (header.kid ? k.kid === header.kid : true) && k.kty === 'RSA');
   if (!jwk) throw new Error('No matching RSA key found in the issuer JWKS.');
 
-  const publicKey = crypto.createPublicKey({ key: jwk as any, format: 'jwk' });
+  // Node's JsonWebKey requires the union members RSA/EC/OKP to be mutually
+  // assignable; the locally-parsed JWK is a structural superset, so a direct
+  // cast narrows it to the RSA member `createPublicKey` expects.
+  const publicKey = crypto.createPublicKey({ key: jwk as NodeJsonWebKey, format: 'jwk' });
   const signedData = `${headerB64}.${payloadB64}`;
   const signature = Buffer.from(signatureB64, 'base64url');
   const valid = crypto.verify('RSA-SHA256', Buffer.from(signedData), publicKey, signature);

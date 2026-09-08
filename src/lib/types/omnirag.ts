@@ -235,6 +235,8 @@ export interface Message {
   content: string;
   citations?: Citation[];
   modelUsed?: string;
+  /** Set when the fallback chain served this reply because the primary model failed. */
+  fallbackFrom?: string;
   tokensUsed?: {
     input: number;
     output: number;
